@@ -9,3 +9,11 @@
 .env.*
 !.env.example
 .DS_Store
+
+# Node.js dependencies, build output, and test reports.
+/node_modules/
+/dist/
+/coverage/
+
+# Local application state.
+/workspace/

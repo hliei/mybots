@@ -2,10 +2,9 @@
 
 ## Tooling status
 
-These conventions define the development baseline. Node.js tooling has not been
-configured yet; the commands below are requirements for that setup, not commands
-currently available in this checkout. Once configured, `package.json` scripts
-and tool configuration files are authoritative for command details and scope.
+The single-package toolchain is configured. `package.json` scripts and tool
+configuration files are authoritative for command details and scope. See
+[README](../../README.md) for installation and startup instructions.
 
 ## Technical baseline
 
