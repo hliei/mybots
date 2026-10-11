@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() { echo "pre-push: $*" >&2; exit 1; }
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ "$remote_ref" == refs/heads/main ]] || continue
+  [[ ! "$local_sha" =~ ^0+$ ]] || fail "main deletion is blocked"
+  [[ "$local_ref" == refs/heads/main ]] || fail "push main only from local main; deliveries use PRs"
+  range=$local_sha
+  if [[ ! "$remote_sha" =~ ^0+$ ]]; then
+    git cat-file -e "$remote_sha^{commit}" 2>/dev/null || fail "fetch the remote before pushing main"
+    git merge-base --is-ancestor "$remote_sha" "$local_sha" || fail "main push must be a fast-forward"
+    range="$remote_sha..$local_sha"
+  fi
+  for commit in $(git rev-list "$range"); do
+    read -r -a parents <<< "$(git rev-list --parents -n 1 "$commit")"
+    [[ ${#parents[@]} -le 2 ]] || fail "merge deliveries through PRs"
+    subject=$(git log -1 --format=%s "$commit")
+    [[ "$subject" =~ ^(docs|chore)(\([a-z0-9._/-]+\))?!?:\ .+$ ]] ||
+      fail "main direct pushes allow only docs/chore; found $commit: $subject"
+  done
+done

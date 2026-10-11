@@ -1,0 +1,11 @@
+# Local planning and personal tool installations.
+/.scratch
+/.agents/
+/skills-lock.json
+/AGENTS.override.md
+
+# Credentials and machine files.
+.env
+.env.*
+!.env.example
+.DS_Store
