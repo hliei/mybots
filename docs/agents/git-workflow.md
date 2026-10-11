@@ -91,9 +91,10 @@ before cleanup. Use the creating tool's cleanup mechanism for managed worktrees.
 ## Validation and delivery
 
 Implement only the selected scope and update its tests and documentation.
-Run applicable local checks before every code push. As build and test tooling is
-introduced, document its commands here. Currently, workflow changes are checked
-with `bash tests/workflow.sh`; documentation changes require content and link
+Run applicable local checks before every code push. Application and tooling
+checks follow [Development](development.md#validation-and-completion), with test
+rules in [Testing](testing.md). Currently, workflow changes are checked with
+`bash tests/workflow.sh`; documentation changes require content and link
 verification. Inspect selected staged files before committing.
 
 Push a delivery with `git push -u origin <type>/<delivery-name>` and open a PR

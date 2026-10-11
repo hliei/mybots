@@ -1,7 +1,14 @@
 # Development Rules
+
 ## Language
 
 Write workspace files in English. Follow the user's language in conversation.
+
+## Development and testing
+
+Before changing application code, dependencies, or development tooling, read
+`docs/agents/development.md`. Before writing tests or fixing a bug, also read
+`docs/agents/testing.md`. Follow their validation requirements before delivery.
 
 ## Git workflow
 
