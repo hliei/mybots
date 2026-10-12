@@ -337,6 +337,65 @@ it("reports insufficient context and a summary failure in the CLI while allowing
   expect(fixture.requests[3].messages).toHaveLength(6);
 });
 
+it.each([false, true])(
+  "continues CLI chat after automatic compaction (first attempt fails: %s)",
+  async (fails) => {
+    fixture = await chatFixture();
+    const workspace = await fixture.workspace(fixture.root, "  context_window: 100000\n");
+    fixture.responses.push(
+      {
+        status: 200,
+        body: { choices: [{ message: { role: "assistant", content: "Older answer" } }] },
+      },
+      {
+        status: 200,
+        body: {
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "Recent answer",
+                reasoning_content: "Keep thinking",
+              },
+            },
+          ],
+          usage: { prompt_tokens: 89000, completion_tokens: 1000, total_tokens: 90000 },
+        },
+      },
+    );
+    if (fails) fixture.responses.push({ status: 503, body: { error: { message: "Unavailable" } } });
+    fixture.responses.push({
+      status: 200,
+      body: {
+        choices: [
+          {
+            finish_reason: "stop",
+            message: { role: "assistant", content: "Remember the older objective." },
+          },
+        ],
+      },
+    });
+    const result = await run(
+      ["-w", workspace],
+      `Older ${"o".repeat(90000)}\nRecent ${"r".repeat(90000)}\nNext\n${fails ? "Recover\n" : ""}/context\nquit\n`,
+    );
+    expect(result.status).toBe(0);
+    if (fails) expect(result.stderr).toContain("Automatic compaction: Compaction failed");
+    else expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("helper: Hello!");
+    expect(result.stdout).toContain("**Active messages:** 5");
+    const next = fixture.requests.at(-1)?.messages;
+    expect(next?.[1].content).toContain("Remember the older objective.");
+    expect(next?.[3].reasoning_content).toBe("Keep thinking");
+    expect(next?.at(-1)?.content).toBe(fails ? "Recover" : "Next");
+    const history = await ConversationHistory.open(join(workspace, ".history"));
+    const [session] = await history.listSessions();
+    const raw = await history.getMessages(session.id);
+    expect(raw).toHaveLength(fails ? 7 : 6);
+    expect(raw.some((message) => message.content === "Remember the older objective.")).toBe(false);
+  },
+);
+
 it("cancels an in-flight CLI compaction with Ctrl+C and leaves the original history intact", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();

@@ -1,7 +1,7 @@
 # Token-budgeted context compaction
 
 Status: accepted
-Implementation: partial (manual compaction and context reporting delivered; automatic triggering, long-turn prefix summaries, and repeated-compaction integration planned)
+Implementation: delivered (manual and automatic compaction, context reporting, long-turn prefix summaries, and incremental summary updates)
 
 Long conversations need to fit the model's input budget while retaining recent
 work and valid tool exchanges. Compaction replaces older active context with an
@@ -11,8 +11,9 @@ reducing a model request does not erase the recorded conversation.
 ## Token budgets
 
 - The effective compaction threshold is the model context window minus the
-  reserved output budget. Automatic triggering at this threshold is planned.
-  It will start when estimated context tokens exceed that threshold.
+  reserved output budget. Before each chat request, including tool-round
+  continuations, compaction starts when estimated context tokens exceed that
+  threshold; requests at or below it continue without summarization.
 - Reserve at least 16,384 tokens and enough for the configured output allowance.
   Target about 20,000 tokens of recent context, extending the retained tail when
   needed to keep a complete tool exchange.
@@ -39,20 +40,24 @@ Model limits were verified on October 12, 2026.
 1. Select a recent tail by token budget. Cut before a user or assistant message
    and preserve each retained tool call with all its results; a tool-result
    message cannot be the first retained message.
-   Manual compaction currently cuts only before a user message, retaining whole
-   turns and their tool groups even when they exceed the recent-token target.
-2. Planned: if the cut splits a long user turn, summarize the removed turn prefix
-   so its objective and completed work accompany the continuing tail.
+   Manual compaction cuts only before a user message, retaining whole turns and
+   their tool groups even when they exceed the recent-token target. Automatic
+   compaction first tries that boundary, then allows an assistant boundary when
+   no whole turn can be removed or the retained tail exceeds the input budget.
+2. If the cut splits a long user turn, summarize the removed turn prefix with
+   instructions to preserve its objective and completed work for the continuation.
 3. Serialize visible text, tool names, arguments, and bounded tool-result text;
    model reasoning is excluded from the summary input. Tool results are bounded
-   to 2,000 characters each with a truncation marker. Updating the previous
-   summary with newly removed messages and repeated-compaction integration are
-   planned follow-up work.
+   to 2,000 characters each with a truncation marker. Supply any previous summary
+   separately from the newly removed transcript and ask for an incremental update;
+   raw history is never reread for repeated manual or automatic compaction.
 4. Generate the summary in a separate model request without tools. Require a
    successful, usable response before replacing the active context. The request
    must fit the model window with the output reserve. A usable summary finishes
    with `stop`, is nonempty, contains no tool calls, and reduces estimated tokens.
-5. Rebuild active context from a user summary and the retained original messages.
+5. For automatic compaction, require the rebuilt request to fit the input budget
+   before committing any replacement. Rebuild active context from a user summary
+   and the retained original messages.
    Retained assistant messages keep their complete `reasoning_content`; there
    is no generated assistant acknowledgement between the summary and tail.
 6. Invalidate usage measured before compaction, then construct the next chat
@@ -60,9 +65,13 @@ Model limits were verified on October 12, 2026.
 
 ## State and failure behavior
 
-Manual compaction uses this state transition; automatic invocation is planned.
+Manual and automatic compaction use this state transition.
 Failure, cancellation, or an unusable summary leaves the previous active context intact.
 Too little compactable content produces a result without discarding messages.
+Automatic failures stop the current chat instead of sending an oversized request.
+The active context and its usage sample remain as previously committed; raw
+history retains attempted user input and any tool work already recorded. A usable
+summary whose retained tail still exceeds the budget is also rejected atomically.
 
 The summary and retention boundary remain in memory for the current Agent
 session. Original JSONL records are neither truncated nor rewritten. A new CLI
