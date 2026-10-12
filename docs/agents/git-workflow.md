@@ -116,7 +116,17 @@ user's explicit request. Later deliveries use new branches from updated `main`.
 After merge, update ticket outcomes and PR links, then switch a clean, idle
 checkout to `main` and synchronize it with `git pull --ff-only origin main`.
 Local delivery branches may be removed after confirming their heads are in
-`main`; preserve local material before removing any worktree.
+`main`.
+
+After a PR is merged, remove its delivery worktree as part of completion once
+its writer is idle and the worktree is no longer needed. Confirm its head is
+included in updated `main`, inspect tracked, untracked, and ignored files, and
+preserve any needed local material before removal. Use the creating tool's
+cleanup mechanism for managed worktrees; use `git worktree remove <path>` for
+ordinary Git worktrees. Do not force removal to discard unresolved changes.
+Record the cleanup in the canonical ticket. If cleanup must be deferred, record
+the reason and remaining owner in the ticket. Worktree cleanup does not delete
+the retained remote delivery branch.
 
 ## Commit messages and guards
 
