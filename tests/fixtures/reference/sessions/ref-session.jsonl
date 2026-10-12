@@ -1,0 +1,4 @@
+{"timestamp":"2026-10-01T09:15:00.123456","role":"user","content":"Read the README","tool_calls":null,"tool_call_id":null}
+{"timestamp":"2026-10-01T09:15:05.000000","role":"assistant","content":"","tool_calls":[{"id":"ref-call-1","type":"function","function":{"name":"read","arguments":"{\"path\": \"README.md\"}"}}],"tool_call_id":null,"reference_extension":{"streamed":false}}
+{"timestamp":"2026-10-01T09:15:06.000000","role":"tool","content":"# Mybots","tool_calls":null,"tool_call_id":"ref-call-1"}
+{"timestamp":"2026-10-01T09:16:10.000000","role":"assistant","content":"The README describes Mybots.","tool_calls":null,"tool_call_id":null}
