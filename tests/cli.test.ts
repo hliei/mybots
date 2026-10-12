@@ -215,3 +215,44 @@ it("discovers and loads a Skill through the CLI and prints the final reply", asy
     content: "Always mention the temperature unit.",
   });
 });
+
+it("serves inspection commands without contacting the model or recording messages", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace(fixture.root, "", "allow_skills: true\n");
+  await fixture.writeSkill(
+    "weather",
+    "---\nname: Weather\ndescription: Look up the weather\n---\n\nAlways mention the temperature unit.\n",
+    workspace,
+  );
+  const result = await run(
+    ["-w", workspace],
+    "/help\n/session\n/skills\n/skills weather\n/skills missing\nquit\n",
+  );
+  expect(result).toMatchObject({ status: 0, stderr: "" });
+  expect(result.stdout).toContain("**Available Commands:**");
+  expect(result.stdout).toContain("/session - Show current session details");
+  expect(result.stdout).toContain("- `weather`: Look up the weather");
+  expect(result.stdout).toContain("**Name:** Weather");
+  expect(result.stdout).toContain("Always mention the temperature unit.");
+  expect(result.stdout).toContain("✗ Skill `missing` not found.");
+  expect(fixture.requests).toHaveLength(0);
+
+  const history = await ConversationHistory.open(join(workspace, ".history"));
+  const sessions = await history.listSessions();
+  expect(sessions).toHaveLength(1);
+  expect(sessions[0]).toMatchObject({ agent_id: "helper", message_count: 0 });
+  expect(await history.getMessages(sessions[0].id)).toEqual([]);
+});
+
+it("falls back to ordinary chat for unknown and lone slash input", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace();
+  const result = await run(["-w", workspace], "/unknown command\n/\nquit\n");
+  expect(result).toMatchObject({ status: 0, stderr: "" });
+  expect(result.stdout.match(/helper: Hello!/g)).toHaveLength(2);
+  expect(fixture.requests[0].messages.at(-1)).toEqual({
+    role: "user",
+    content: "/unknown command",
+  });
+  expect(fixture.requests[1].messages.at(-1)).toEqual({ role: "user", content: "/" });
+});

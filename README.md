@@ -61,6 +61,7 @@ relative to the process working directory. Without `--agent` / `-a`, the CLI
 uses `default_agent` from `config.user.yaml`. Enter one message per line. Replies
 print after the complete response arrives. Blank lines are ignored; `quit`,
 `exit`, `q`, EOF, and Ctrl+C end the session. Ctrl+C cancels an in-flight request.
+Type `/help` to list the inspection commands.
 
 Workspace settings preserve `llm`, `default_agent`, `agents_path`, `skills_path`,
 and `history_path`. Relative paths resolve against the Workspace. Optional
@@ -84,7 +85,25 @@ model response do not enter session context. Completed tool-call/result groups
 are retained if a later model request fails or is cancelled; local changes
 already made by tools remain in place. The shared Agent interface rejects
 overlapping `chat()` calls in the same session; the CLI submits turns sequentially.
-Slash commands, compaction, and web tools are later deliveries.
+Compaction and web tools are later deliveries.
+
+### Slash commands
+
+The CLI recognizes `/help` (alias `/?`), `/session`, and `/skills` as inspection
+commands. Command names are case-insensitive. Successful inspection commands
+neither call the model nor append conversation-history messages. Any other slash
+input, including a lone `/`, is sent to the model as ordinary chat.
+
+| Command | Behavior |
+| --- | --- |
+| `/help`, `/?` | List the available commands and descriptions. |
+| `/session` | Show the current session ID, Agent name and ID, creation time, and in-memory active-message count without creating or switching sessions. |
+| `/skills` | List each discovered Skill ID and description, or `No skills configured.` when none are valid. |
+| `/skills <id>` | Show one Skill's name, description, and instruction body, or ``✗ Skill `<id>` not found.`` for an unknown ID. |
+
+Inspecting a Skill only reads it to render text. It does not register the `skill`
+tool, load the instructions into active context, or change `allow_skills`, and it
+works whether or not the Agent enables Skills.
 
 ### Local tools
 
@@ -161,8 +180,9 @@ ignored and the instruction body may be empty. When the Agent sets
 the Agent registers no `skill` tool. Requesting an ID that is not among the
 discovered Skills returns
 `Error: Skill '<id>' not found. It may have been removed or is unavailable.`
-Skills load only when the model requests them; interactive listing and
-inspection from the CLI are a later delivery.
+Skills load only when the model requests them. `/skills` and `/skills <id>`
+inspect discovered Skills from the CLI without loading them into context; see
+[Slash commands](#slash-commands).
 
 ### Conversation history
 
@@ -241,6 +261,7 @@ src/
 ├── cli/chat.ts            # Arguments and terminal interaction
 ├── core/
 │   ├── agent.ts           # Session and tool-loop orchestration
+│   ├── commands.ts        # Slash-command registry and inspection handlers
 │   ├── history.ts         # JSONL conversation history and session index
 │   ├── messages.ts        # Shared messages and tool protocol types
 │   └── skills.ts          # Skill discovery and loading
