@@ -4,7 +4,8 @@ A TypeScript and Node.js project for an interactive CLI and a message-platform
 bot, with a shared agent core.
 
 The CLI supports non-streaming, multi-turn conversations, local tool execution,
-Skill loading, and optional Brave web search with DeepSeek through a shared Agent core. Each launch creates
+Skill loading, and optional web search and rendered page reading with DeepSeek
+through a shared Agent core. Each launch creates
 a fresh session in memory. The bot server currently prints a setup message or
 help and exits.
 
@@ -65,7 +66,7 @@ Type `/help` to list the available commands.
 
 Workspace settings preserve `llm`, `default_agent`, `agents_path`, `skills_path`,
 and `history_path`. Relative paths resolve against the Workspace. Optional
-`websearch` enables Brave Search; `webread` settings are preserved for a later capability.
+`websearch` enables Brave Search; `webread` enables Chromium page reading.
 Agent definitions default to `.agents/bots/<id>/AGENT.md` (configured by `agents_path`); frontmatter preserves
 `name`, `description`, `llm`, and `allow_skills`. The Markdown body supplies the
 system instructions. Agent `llm` fields override matching Workspace fields.
@@ -230,6 +231,69 @@ services in offline Agent and CLI tests. Ordinary tests explicitly select local
 endpoints and fixture credentials, even when real credentials exist in the
 environment. No live Brave acceptance has been performed by these tests.
 
+### Web page reading
+
+Install Playwright's matching Chromium browser before using `webread` or running
+the full ordinary test suite and `verify`:
+
+```sh
+npm ci --ignore-scripts
+npx playwright install chromium
+```
+
+On Linux, install Chromium's system dependencies too:
+
+```sh
+npx playwright install --with-deps chromium
+```
+
+Browser installation downloads binaries; subsequent tests use only local pages
+and controlled HTTP services. Repeat installation after updating Playwright.
+No Python runtime is required. The browser lives in Playwright's cache rather
+than the repository. If the browser is missing, the read returns an error with
+Playwright's installation instructions; ordinary browser tests fail rather than
+being skipped. See [Playwright browser installation](https://playwright.dev/docs/browsers).
+
+Enable the tool in `config.user.yaml`:
+
+```yaml
+webread:
+  provider: crawl4ai
+```
+
+The legacy provider name `crawl4ai` preserves the reference configuration;
+Playwright and Turndown implement it in Node.js. `webread: {}` uses the same
+default. Omit the setting or use `null` to disable the tool. No browser starts
+until the model requests `webread` with a string `url`.
+
+Each read launches a fresh headless Chromium instance and closes it before
+returning, including after failures or cancellation. It accepts HTTP(S) URLs,
+follows redirects, executes page JavaScript, and waits for 500 milliseconds of
+network inactivity before taking a snapshot. A 30-second deadline bounds the
+browser operation, including launch and navigation. Ctrl+C closes an active
+browser; cancellation during launch is handled as soon as launch settles.
+Pages with continuously active requests can time out. Content added after the
+snapshot, including later timers or interactions, is not guaranteed to appear.
+
+The normalized result retains the original requested `url`, page `title`,
+Markdown `content`, and a null `error` on success. Failure returns the original
+URL, empty title/content, and an error string. The tool supplies success as
+`**<title>**` followed by a blank line and Markdown, or failure as
+`Error reading <original URL>: <error>`; both return to the model for continuation.
+HTTP status codes of 400 or greater are errors, and transport errors use
+Playwright's wording. A redirect does not replace the original URL in an error.
+
+Extraction differs from Crawl4AI: it converts the rendered document body with
+Turndown, preserving navigation and other body content rather than applying
+Crawl4AI's content-cleaning heuristics. It removes scripts, styles, templates,
+noscript content, hidden attributes, and elements with computed `display: none`
+or `visibility: hidden`. Links and image sources resolve against the rendered
+document's base URL. Markdown uses ATX headings, fenced code blocks, and dash
+lists; escaping, whitespace, tables, and other formatting can differ from
+Crawl4AI. Iframe documents and shadow DOM are not traversed. Service workers
+are blocked, and each read starts with a fresh browser session without existing
+login cookies.
+
 ### Skills
 
 A Skill is a named set of instructions in a directory under `skills_path`
@@ -309,6 +373,8 @@ There is no history-listing or resume command.
 - [DeepSeek model limits](https://api-docs.deepseek.com/quick_start/pricing/)
 - [Compaction design and pi sources](docs/adr/0002-token-budgeted-context-compaction.md)
 - [Brave Web Search API](https://api-dashboard.search.brave.com/app/documentation/web-search)
+- [Playwright browser API](https://playwright.dev/docs/api/class-browser)
+- [Turndown HTML-to-Markdown conversion](https://github.com/mixmark-io/turndown)
 
 Compaction deviations from the fixed pi sources: manual compaction retains whole
 user turns, while automatic compaction can summarize a long turn's prefix;
@@ -329,7 +395,10 @@ npm run verify
 includes application source, tests, and the Vitest configuration. Run
 `npm run format` to apply formatting fixes.
 
-Ordinary tests use Vitest in Node.js and do not require credentials. Run a
+Ordinary tests use Vitest in Node.js and do not require credentials. Install
+matching Chromium as described in [Web page reading](#web-page-reading)
+before browser tests or the full suite. Tests serve all pages and subresources
+locally; they do not use real model or search credentials. Run a
 specific file with `npm test -- tests/startup.test.ts`. Live-service tests belong
 in `tests/live/` and are excluded from ordinary test discovery; no live-test
 command is configured yet.
@@ -374,11 +443,13 @@ src/
 ├── config/workspace.ts    # Workspace and Agent settings
 ├── providers/deepseek.ts  # DeepSeek request/response conversion
 ├── providers/brave.ts     # Brave HTTP requests and search-result normalization
+├── providers/webread.ts   # Chromium lifecycle, rendered snapshots, and Markdown
 ├── tools/
 │   ├── builtin.ts         # Local tool definitions and execution
 │   ├── shell.ts           # Shell execution and cleanup
 │   ├── skill.ts           # Dynamic skill tool
 │   ├── websearch.ts       # Configured search tool and reference result formatting
+│   ├── webread.ts         # Page-read tool and reference success/error formatting
 │   └── toolbox.ts         # Tool schemas, argument validation, and dispatch
 └── bot/startup.ts          # Bot startup placeholder
 ```

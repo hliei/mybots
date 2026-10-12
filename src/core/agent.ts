@@ -5,6 +5,7 @@ import { DeepSeek } from "../providers/deepseek.ts";
 import { builtinTools } from "../tools/builtin.ts";
 import { createSkillTool } from "../tools/skill.ts";
 import { Toolbox } from "../tools/toolbox.ts";
+import { createWebReadTool } from "../tools/webread.ts";
 import { createWebSearchTool } from "../tools/websearch.ts";
 import type { CommandContext, CommandRegistry } from "./commands.ts";
 import { sessionCommands } from "./commands.ts";
@@ -266,5 +267,6 @@ async function buildToolbox(
     if (discovered.length) tools.push(createSkillTool(skills, discovered));
   }
   if (config.websearch) tools.push(createWebSearchTool(config.websearch));
+  if (config.webread) tools.push(createWebReadTool());
   return new Toolbox(tools);
 }

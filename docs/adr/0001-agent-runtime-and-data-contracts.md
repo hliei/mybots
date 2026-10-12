@@ -1,7 +1,7 @@
 # Agent runtime and data contracts
 
 Status: accepted
-Implementation: partial (conversation history, CLI inspection, compaction, and Brave web search delivered; web reading planned)
+Implementation: conversation history, CLI inspection, compaction, Brave web search, and rendered web reading delivered
 
 The application uses TypeScript and Node.js in one npm package, with a shared
 Agent core called by the CLI. Terminal interaction and provider APIs remain at
@@ -38,9 +38,30 @@ response-body consumption rather than applying separately to network operations;
 transport-error wording is Node.js-specific. HTTP errors and empty results are
 returned through the tool loop for model continuation.
 
-Web reading is planned to use Chromium controlled by Node.js
-to obtain rendered content and convert it to Markdown. The web-tool data shapes
-are:
+Web reading uses Playwright-controlled Chromium and Turndown in Node.js, with
+no Python requirement. Optional `webread` configuration retains the reference's
+`provider: crawl4ai` selector (also the default for an empty mapping). Omitted or
+null settings disable the tool. The browser must be installed separately through
+Playwright's CLI. Each read launches a fresh headless browser and closes it on
+success, failure, or cancellation. A 30-second deadline bounds launch and browser
+operations; cancellation during launch is handled when launch settles.
+
+HTTP(S) navigation follows redirects, executes JavaScript, and waits for 500 ms
+of network inactivity. The snapshot converts rendered body HTML into Markdown,
+excluding scripts, styles, templates, noscript, hidden attributes, and elements
+with computed display:none or visibility:hidden. Links and image sources resolve
+against the document base URL. Service workers are blocked. Fresh browser sessions
+do not inherit login cookies; iframe documents and shadow DOM are not traversed.
+
+This replaces Crawl4AI's extraction and formatting: body navigation is retained
+rather than applying its content-cleaning heuristics, and Turndown uses ATX
+headings, fenced code, and dash lists. Escaping, whitespace, tables, and other
+Markdown details can differ. Content added after the snapshot is not guaranteed,
+and continuous network activity can time out. HTTP status codes of 400 or greater
+are failures; transport errors retain Playwright wording. Shared result fields
+and tool success/error formatting remain compatible.
+
+The web-tool data shapes are:
 
 | Result | Fields |
 | --- | --- |
@@ -97,3 +118,6 @@ rebuilds the active context used for subsequent model requests.
 - [Workspace and Agent configuration](https://github.com/czl9707/build-your-own-openclaw/blob/37ae5dd255a0451609e67ad6d6a51fa5de80523c/06-web-tools/src/mybot/utils/config.py).
 - [Session and message schemas](https://github.com/czl9707/build-your-own-openclaw/blob/37ae5dd255a0451609e67ad6d6a51fa5de80523c/06-web-tools/src/mybot/core/history.py).
 - [DeepSeek thinking-mode request requirements](https://api-docs.deepseek.com/guides/thinking_mode/).
+- [Playwright browser installation](https://playwright.dev/docs/browsers).
+- [Playwright navigation](https://playwright.dev/docs/api/class-page#page-goto).
+- [Turndown conversion](https://github.com/mixmark-io/turndown).

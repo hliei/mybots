@@ -19,6 +19,10 @@ export interface WebSearchSettings {
   api_base?: string;
 }
 
+export interface WebReadSettings {
+  provider: "crawl4ai";
+}
+
 export interface WorkspaceSettings {
   workspace: string;
   llm: ModelSettings;
@@ -27,7 +31,7 @@ export interface WorkspaceSettings {
   skills_path: string;
   history_path: string;
   websearch?: WebSearchSettings;
-  webread?: unknown;
+  webread?: WebReadSettings;
 }
 
 export interface AgentDefinition {
@@ -128,6 +132,14 @@ function webSearchSettings(value: unknown): WebSearchSettings | undefined {
   return { provider: "brave", api_key, api_base };
 }
 
+function webReadSettings(value: unknown): WebReadSettings | undefined {
+  if (value == null) return undefined;
+  const raw = mapping(value, "webread");
+  if ((raw.provider ?? "crawl4ai") !== "crawl4ai")
+    throw new Error("Only the crawl4ai webread provider is supported.");
+  return { provider: "crawl4ai" };
+}
+
 export async function loadSettings(
   workspace: string,
   agentId?: string,
@@ -149,7 +161,7 @@ export async function loadSettings(
     skills_path: resolve(workspace, text(raw.skills_path ?? ".agents/skills", "skills_path")),
     history_path: resolve(workspace, text(raw.history_path ?? ".history", "history_path")),
     websearch: webSearchSettings(raw.websearch),
-    webread: raw.webread,
+    webread: webReadSettings(raw.webread),
   };
   const id = agentId ?? config.default_agent;
   const source = (await readFile(resolve(config.agents_path, id, "AGENT.md"), "utf8")).replace(
