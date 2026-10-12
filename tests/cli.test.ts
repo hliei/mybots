@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
 import { ConversationHistory } from "../src/core/history.ts";
 import { chatFixture, toolReply } from "./chat-fixture.ts";
+import { pageFixture } from "./page-fixture.ts";
+import { searchFixture } from "./search-fixture.ts";
 
 const entry = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 let fixture: Awaited<ReturnType<typeof chatFixture>> | undefined;
@@ -452,5 +454,98 @@ it("cancels an in-flight CLI compaction with Ctrl+C and leaves the original hist
       choices: [{ finish_reason: "stop", message: { role: "assistant", content: "Late summary" } }],
     });
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  }
+});
+
+it("answers through the CLI after a real local Brave search exchange", async () => {
+  fixture = await chatFixture();
+  const search = await searchFixture();
+  try {
+    fixture.responses.push({
+      status: 200,
+      body: toolReply([{ name: "websearch", id: "cli-search", args: { query: "Brave docs" } }]),
+    });
+    const result = await run(
+      ["-w", await fixture.workspace(undefined, search.settings)],
+      "Find Brave docs\nquit\n",
+    );
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(result.stdout).toContain("helper: Hello!");
+    expect(search.requests).toHaveLength(1);
+    expect(fixture.requests[1].messages.at(-1)).toEqual({
+      role: "tool",
+      tool_call_id: "cli-search",
+      content:
+        "1. **Brave docs**\n   https://example.test/docs\n   Search documentation.\n\n2. **Release**\n   https://example.test/news\n   New release.",
+    });
+  } finally {
+    await search.close();
+  }
+});
+
+it("searches and reads a JavaScript-rendered local page before answering through the CLI", async () => {
+  fixture = await chatFixture();
+  const search = await searchFixture();
+  const pages = await pageFixture();
+  try {
+    const url = `${pages.endpoint}/rendered`;
+    search.responses.push({
+      status: 200,
+      body: {
+        web: {
+          results: [{ title: "Local source", url, description: "Read the rendered source." }],
+        },
+      },
+    });
+    pages.pages.set("/rendered", {
+      body: '<title>Local source</title><div id="content"></div><script>fetch("/data").then(r => r.text()).then(text => document.getElementById("content").textContent = text);</script>',
+    });
+    pages.pages.set("/data", {
+      body: "Browser rendered content.",
+      headers: { "Content-Type": "text/plain" },
+    });
+    fixture.responses.push(
+      {
+        status: 200,
+        body: toolReply([
+          { name: "websearch", id: "find-source", args: { query: "local source" } },
+        ]),
+      },
+      { status: 200, body: toolReply([{ name: "webread", id: "read-source", args: { url } }]) },
+      {
+        status: 200,
+        body: {
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "The source says: Browser rendered content.",
+                reasoning_content: "Read the source.",
+              },
+            },
+          ],
+        },
+      },
+    );
+    const result = await run(
+      ["-w", await fixture.workspace(undefined, `${search.settings}webread: {}\n`)],
+      "Find and read the source\nquit\n",
+    );
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(result.stdout).toContain("helper: The source says: Browser rendered content.");
+    expect(fixture.requests[1].messages.at(-1)).toMatchObject({
+      role: "tool",
+      tool_call_id: "find-source",
+      content: `1. **Local source**\n   ${url}\n   Read the rendered source.`,
+    });
+    expect(fixture.requests[2].messages.at(-1)).toMatchObject({
+      role: "tool",
+      tool_call_id: "read-source",
+      content: "**Local source**\n\nBrowser rendered content.",
+    });
+    expect(pages.requests).toContain("/data");
+  } finally {
+    await pages.close();
+    await search.close();
   }
 });
