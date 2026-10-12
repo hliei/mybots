@@ -7,8 +7,8 @@
     "node": "24.x"
   },
   "scripts": {
-    "dev:cli": "tsx watch src/cli.ts",
-    "dev:bot": "tsx watch src/server.ts",
+    "dev:cli": "node src/cli.ts",
+    "dev:bot": "node src/server.ts",
     "typecheck": "tsc --noEmit",
     "check": "biome check --error-on-warnings . && npm run typecheck",
     "format": "biome format --write .",
@@ -23,7 +23,6 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@types/node": "24.19.2",
-    "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vitest": "5.0.3"
   }

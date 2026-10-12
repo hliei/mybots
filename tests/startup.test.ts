@@ -9,7 +9,7 @@ describe.each([
   { entry: "server", command: "bot", message: "Bot server is not implemented yet." },
 ])("$command startup", ({ entry, command, message }) => {
   function run(...args: string[]) {
-    return spawnSync(process.execPath, ["--import", "tsx", `src/${entry}.ts`, ...args], {
+    return spawnSync(process.execPath, [`src/${entry}.ts`, ...args], {
       cwd: projectRoot,
       encoding: "utf8",
       timeout: 5000,

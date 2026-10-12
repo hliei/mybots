@@ -35,9 +35,9 @@ npm run dev:cli
 npm run dev:bot
 ```
 
-These commands watch their TypeScript entry point and restart after changes.
-The current entry points exit after printing their setup message; the watcher
-stays active until stopped with Ctrl+C. Pass `-- --help` to print help.
+These commands run TypeScript source directly using Node.js native type
+stripping. Restart the command manually after changing code. The current entry
+points exit after printing their setup message. Pass `-- --help` to print help.
 
 ## Checks and tests
 

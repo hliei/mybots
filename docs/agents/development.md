@@ -16,8 +16,9 @@ configuration files are authoritative for command details and scope. See
 - Use `.ts` extensions for relative TypeScript imports. Configure `tsc` to
   rewrite those extensions to `.js` in build output, and verify Node.js can
   execute the result.
-- Use `tsx` for development, `tsc` for type checking and compilation, Vitest for
-  tests, and Biome for formatting and linting.
+- Use Node.js native type stripping for development and keep TypeScript syntax
+  erasable. Use `tsc` for type checking and compilation, Vitest for tests, and
+  Biome for formatting and linting.
 - Keep application source in `src/` and build output in `dist/`. Type-check
   source, tests, and TypeScript configuration files; compile only application
   source into `dist/`.
@@ -57,9 +58,10 @@ configuration files are authoritative for command details and scope. See
 | `start:bot` | Run the built bot server with Node.js. |
 | `verify` | Run `check`, ordinary tests, build, and an offline startup smoke check for each entry point. |
 
-Development commands may watch and restart the process. Start commands use the
-existing build; they do not build automatically. Startup smoke checks must exit
-without live credentials and cover executable entry points, not only imports.
+Development commands run source without building or watching; restart manually
+after code changes. Start commands use the existing build; they do not build
+automatically. Startup smoke checks must exit without live credentials and cover
+executable entry points, not only imports.
 Introduce a separate live-test script when live-service checks are implemented;
 keep it outside `test`, `test:watch`, and `verify`.
 
