@@ -1,7 +1,7 @@
 default_agent: helper
 agents_path: .agents/bots
 skills_path: .agents/skills
-history_path: .history
+history_path: .agent/history
 llm:
   provider: deepseek
   model: deepseek-flash
@@ -11,11 +11,8 @@ llm:
   max_tokens: 2048
   thinking: true
 
-# Web tools are disabled unless their configuration is enabled.
-# Choose either brave or serpapi; the provider has no default or fallback.
+# Optional web tools.
 # web_search:
-#   provider: brave # Use serpapi for Google search through SerpApi.
+#   provider: brave # or serpapi
 #   api_key: YOUR_SEARCH_API_KEY
-#   api_base: https://api.search.brave.com/res/v1/web/search # Optional complete endpoint.
-# SerpApi's default endpoint is https://serpapi.com/search; omit api_base normally.
 # fetch_content: {} # Direct HTTP HTML/Markdown/plain text; no JavaScript rendering.
