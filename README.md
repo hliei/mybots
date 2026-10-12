@@ -84,7 +84,7 @@ model response do not enter session context. Completed tool-call/result groups
 are retained if a later model request fails or is cancelled; local changes
 already made by tools remain in place. The shared Agent interface rejects
 overlapping `chat()` calls in the same session; the CLI submits turns sequentially.
-Saved history, slash commands, compaction, and web tools are later deliveries.
+Slash commands, compaction, and web tools are later deliveries.
 
 ### Local tools
 
@@ -164,6 +164,28 @@ discovered Skills returns
 Skills load only when the model requests them; interactive listing and
 inspection from the CLI are a later delivery.
 
+### Conversation history
+
+Each CLI launch creates a new Agent session and records it under `history_path`
+(the Workspace default is `.history`):
+
+- `index.jsonl` holds one record per session with `id`, `agent_id`, `title`,
+  `message_count`, `created_at`, and `updated_at`. The first user message supplies
+  the title, truncated to 50 Unicode code points plus `...`. Sessions list most recently
+  updated first.
+- `sessions/<session_id>.jsonl` appends one record per message with `timestamp`,
+  `role`, `content`, `tool_calls`, and `tool_call_id`, plus `reasoning_content` on
+  assistant messages that have it.
+
+User input is saved before requesting a model response, including failed or
+cancelled turns. Assistant responses are saved before tool execution, and tool
+results are saved as they arrive. Active context retains completed tool groups;
+failed inputs remain in saved history even when excluded from active context.
+The reference Python implementation ignores reasoning content and drops it when
+rewriting records; Mybots preserves the original value and never fabricates
+reasoning a record lacks. Records written by the reference remain readable.
+There is no history-listing or resume command.
+
 ### API sources
 
 - [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)
@@ -219,6 +241,7 @@ src/
 ├── cli/chat.ts            # Arguments and terminal interaction
 ├── core/
 │   ├── agent.ts           # Session and tool-loop orchestration
+│   ├── history.ts         # JSONL conversation history and session index
 │   ├── messages.ts        # Shared messages and tool protocol types
 │   └── skills.ts          # Skill discovery and loading
 ├── config/workspace.ts    # Workspace and Agent settings

@@ -1,7 +1,7 @@
 # Agent runtime and data contracts
 
 Status: accepted
-Implementation: planned
+Implementation: partial (conversation history delivered; web tools planned)
 
 The application uses TypeScript and Node.js in one npm package, with a shared
 Agent core called by the CLI. Terminal interaction and provider APIs remain at
@@ -58,8 +58,9 @@ system.
 ## Conversation history
 
 Each CLI launch creates a new Agent session. The configured history directory
-contains a JSONL session index and a separate append-only message log for each
-session. Index metadata is updated as messages are recorded.
+contains a JSONL session index (`index.jsonl`) and a separate append-only
+message log (`sessions/<session_id>.jsonl`) for each session. Index metadata is
+updated as messages are recorded.
 
 - Index records contain `id`, `agent_id`, `title`, `message_count`, `created_at`,
   and `updated_at`.
@@ -68,9 +69,12 @@ session. Index metadata is updated as messages are recorded.
 - Tool calls contain `id`, `type`, and `function`; function data contains `name`
   and JSON-string `arguments`. Results retain the corresponding call ID.
 
-Records without reasoning content remain readable. Readers that discard unknown
-fields lose this information when rewriting a record; histories lacking the
-original reasoning cannot guarantee thinking-mode tool continuation.
+Records without reasoning content remain readable. The Python reference ignores
+reasoning content and drops it when rewriting records, so common-field exchange
+is compatible while Mybots preserves reasoning losslessly. Missing reasoning is
+never fabricated; histories lacking the original reasoning cannot guarantee
+thinking-mode tool continuation. Unknown extension fields are retained when the
+index is rewritten, and message records are append-only.
 
 Full conversation history remains saved while [context compaction](0002-token-budgeted-context-compaction.md)
 rebuilds the active context used for subsequent model requests.

@@ -3,6 +3,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
+import { ConversationHistory } from "../src/core/history.ts";
 import { chatFixture, toolReply } from "./chat-fixture.ts";
 
 const entry = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
@@ -115,6 +116,38 @@ it("reports missing Workspace configuration", async () => {
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("config.user.yaml");
   expect(fixture.requests).toHaveLength(0);
+});
+
+it("saves each CLI launch as a separate session a reader can open", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace();
+  expect((await run(["-w", workspace], "Remember Alice\nquit\n")).status).toBe(0);
+  expect((await run(["-w", workspace], "Second launch\nexit\n")).status).toBe(0);
+
+  const history = await ConversationHistory.open(join(workspace, ".history"));
+  const sessions = await history.listSessions();
+  expect(sessions.map((session) => session.title)).toEqual(["Second launch", "Remember Alice"]);
+  expect(sessions[0].id).not.toBe(sessions[1].id);
+  expect(sessions).toContainEqual(
+    expect.objectContaining({ agent_id: "helper", message_count: 2 }),
+  );
+  expect(await history.getMessages(sessions[1].id)).toEqual([
+    {
+      timestamp: expect.any(String),
+      role: "user",
+      content: "Remember Alice",
+      tool_calls: null,
+      tool_call_id: null,
+    },
+    {
+      timestamp: expect.any(String),
+      role: "assistant",
+      content: "Hello!",
+      reasoning_content: "Full reasoning.",
+      tool_calls: null,
+      tool_call_id: null,
+    },
+  ]);
 });
 
 it("executes multiple tool rounds from the CLI using relative paths from process cwd", async () => {
