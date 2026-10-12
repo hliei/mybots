@@ -487,8 +487,23 @@ it("answers through the CLI after a real local Brave search exchange", async () 
     expect(fixture.requests[1].messages.at(-1)).toEqual({
       role: "tool",
       tool_call_id: "cli-search",
-      content:
-        "1. **Brave docs**\n   https://example.test/docs\n   Search documentation.\n\n2. **Release**\n   https://example.test/news\n   New release.",
+      content: JSON.stringify({
+        queries: [
+          {
+            query: "Brave docs",
+            provider: "brave",
+            results: [
+              {
+                title: "Brave docs",
+                url: "https://example.test/docs",
+                snippet: "Search documentation.",
+              },
+              { title: "Release", url: "https://example.test/news", snippet: "New release." },
+            ],
+            error: null,
+          },
+        ],
+      }),
     });
   } finally {
     await search.close();
@@ -551,7 +566,16 @@ it("searches and reads a JavaScript-rendered local page before answering through
     expect(fixture.requests[1].messages.at(-1)).toMatchObject({
       role: "tool",
       tool_call_id: "find-source",
-      content: `1. **Local source**\n   ${url}\n   Read the rendered source.`,
+      content: JSON.stringify({
+        queries: [
+          {
+            query: "local source",
+            provider: "brave",
+            results: [{ title: "Local source", url, snippet: "Read the rendered source." }],
+            error: null,
+          },
+        ],
+      }),
     });
     expect(fixture.requests[2].messages.at(-1)).toMatchObject({
       role: "tool",

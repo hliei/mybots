@@ -208,40 +208,43 @@ or set it to `null` to leave the tool disabled. Credentials come only from the
 Workspace configuration, with no environment-variable fallback. Keep keys in
 your ignored local Workspace.
 
-The replacement contracts and module layout are in place; full search and
-content execution are still being implemented under [ADR 0003](docs/adr/0003-web-search-and-content-fetching.md).
-Search declares exactly one of a nonempty `query` or one through five `queries`,
-plus optional `numResults` (1–20), `recencyFilter` (`day`, `week`, `month`, `year`),
-and a string-array `domainFilter`. Invalid arguments fail before requests.
-The current execution path supports Brave with a single query or one-item array;
-SerpApi, multiple queries, and optional search arguments return an explicit
-unsupported error until search execution is implemented.
+Search accepts exactly one of a nonempty `query` or one through five `queries`,
+plus optional `numResults` (default 5, range 1–20), `recencyFilter` (`day`, `week`,
+`month`, `year`), and a string-array `domainFilter`. Invalid arguments fail before
+requests. Workspace configuration selects Brave or SerpApi Google search.
 
-The retained Brave path sends a GET request to
-`https://api.search.brave.com/res/v1/web/search` with `q`, `count=10`,
-`Accept: application/json`, and `X-Subscription-Token`. Brave's `description`
-becomes the normalized result's `snippet`; missing title, URL, or description
-defaults to an empty string. Results retain their order and use this format:
+Brave uses `q`, `count`, and native `freshness` values (`pd`, `pw`, `pm`, `py`),
+with `X-Subscription-Token` authentication. SerpApi uses `engine=google`, `q`,
+`api_key`, and native `tbs` date filters (`qdr:d`, `qdr:w`, `qdr:m`, `qdr:y`).
+SerpApi's Google endpoint no longer supports the `num` parameter; result bounds
+are enforced locally. Default endpoints are
+`https://api.search.brave.com/res/v1/web/search` and `https://serpapi.com/search`.
+An optional `web_search.api_base` overrides the complete HTTP(S) endpoint.
 
-```text
-1. **Result title**
-   https://example.com/page
-   Result snippet
+Domains use `site:` query operators and are also enforced against source URLs,
+including subdomains. A leading `-` excludes a domain; exclusions win over
+inclusions. Filtering preserves source ranking. `numResults` is an upper bound;
+there are no additional requests to fill a short result list.
+
+Single queries and batches return the same JSON envelope in the tool message:
+
+```json
+{"queries":[{"query":"example","provider":"brave","results":[{"title":"Example","url":"https://example.com/","snippet":"Example text"}],"error":null}]}
 ```
 
-Results are separated by blank lines. Empty results return `No results found.`
-Request failures return `Error executing tool: ...` to the model for continuation.
-HTTP errors include the status code; transport error wording follows Node.js
-rather than Python httpx. There are no automatic retries or redirects.
-Requests have a 30-second overall deadline, including response-body consumption;
-this differs from httpx's timeout per network operation. Ctrl+C cancels an
-in-flight search through the Agent's cancellation signal.
+The `queries` array retains input order and query text. Empty results succeed.
+HTTP failures, malformed provider payloads, timeouts, oversized bodies, and
+transport failures produce item errors with an empty results array; other items
+still complete. At most three queries run concurrently. Each request has a
+30-second deadline covering response-body consumption and a 5 MiB limit enforced
+while reading the decoded response body. Cancellation aborts active requests,
+prevents queued queries from starting, and follows the Agent cancellation path.
+There are no retries, provider fallback, pagination, source-body fetching,
+additional summaries, background jobs, or storage IDs.
 
-An optional `web_search.api_base` is an extension to the reference configuration.
-It overrides the complete HTTP(S) search endpoint, allowing controlled local
-services in offline Agent and CLI tests. Ordinary tests explicitly select local
-endpoints and fixture credentials, even when real credentials exist in the
-environment. No live Brave acceptance has been performed by these tests.
+Ordinary Agent and CLI tests use local endpoints and fixture credentials. They
+do not establish live provider acceptance. Content execution remains the
+intermediate route described below until the remaining replacement tickets finish.
 
 ### Web page reading
 
