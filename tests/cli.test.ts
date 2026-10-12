@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
 import { ConversationHistory } from "../src/core/history.ts";
 import { chatFixture, toolReply } from "./chat-fixture.ts";
+import { searchFixture } from "./search-fixture.ts";
 
 const entry = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 let fixture: Awaited<ReturnType<typeof chatFixture>> | undefined;
@@ -452,5 +453,31 @@ it("cancels an in-flight CLI compaction with Ctrl+C and leaves the original hist
       choices: [{ finish_reason: "stop", message: { role: "assistant", content: "Late summary" } }],
     });
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  }
+});
+
+it("answers through the CLI after a real local Brave search exchange", async () => {
+  fixture = await chatFixture();
+  const search = await searchFixture();
+  try {
+    fixture.responses.push({
+      status: 200,
+      body: toolReply([{ name: "websearch", id: "cli-search", args: { query: "Brave docs" } }]),
+    });
+    const result = await run(
+      ["-w", await fixture.workspace(undefined, search.settings)],
+      "Find Brave docs\nquit\n",
+    );
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(result.stdout).toContain("helper: Hello!");
+    expect(search.requests).toHaveLength(1);
+    expect(fixture.requests[1].messages.at(-1)).toEqual({
+      role: "tool",
+      tool_call_id: "cli-search",
+      content:
+        "1. **Brave docs**\n   https://example.test/docs\n   Search documentation.\n\n2. **Release**\n   https://example.test/news\n   New release.",
+    });
+  } finally {
+    await search.close();
   }
 });

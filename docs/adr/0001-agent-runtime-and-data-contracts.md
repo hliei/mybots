@@ -1,7 +1,7 @@
 # Agent runtime and data contracts
 
 Status: accepted
-Implementation: partial (conversation history, CLI inspection, and manual and automatic compaction delivered; web tools planned)
+Implementation: partial (conversation history, CLI inspection, compaction, and Brave web search delivered; web reading planned)
 
 The application uses TypeScript and Node.js in one npm package, with a shared
 Agent core called by the CLI. Terminal interaction and provider APIs remain at
@@ -28,7 +28,17 @@ The initial model provider is DeepSeek through Chat Completions. The boolean
 messages retain their original `reasoning_content`, which is sent back with
 retained conversation messages during thinking-mode tool calls.
 
-Web search uses Brave Search. Web reading uses Chromium controlled by Node.js
+Web search uses Brave Search when the optional `websearch` configuration is present.
+It contains `provider` (defaults to `brave`) and a required string `api_key`.
+The optional `api_base` extension selects a complete HTTP(S) endpoint for local
+controlled services; otherwise requests use Brave's web-search endpoint.
+Requests ask for ten results, use a 30-second overall deadline, and support
+Agent cancellation. Node.js fetch replaces httpx, so the deadline includes
+response-body consumption rather than applying separately to network operations;
+transport-error wording is Node.js-specific. HTTP errors and empty results are
+returned through the tool loop for model continuation.
+
+Web reading is planned to use Chromium controlled by Node.js
 to obtain rendered content and convert it to Markdown. The web-tool data shapes
 are:
 

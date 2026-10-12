@@ -13,6 +13,12 @@ export interface ModelSettings {
   context_window?: number;
 }
 
+export interface WebSearchSettings {
+  provider: "brave";
+  api_key: string;
+  api_base?: string;
+}
+
 export interface WorkspaceSettings {
   workspace: string;
   llm: ModelSettings;
@@ -20,7 +26,7 @@ export interface WorkspaceSettings {
   agents_path: string;
   skills_path: string;
   history_path: string;
-  websearch?: unknown;
+  websearch?: WebSearchSettings;
   webread?: unknown;
 }
 
@@ -109,6 +115,19 @@ function yamlMapping(source: string, field: string): Record<string, unknown> {
   return mapping(value, field);
 }
 
+function webSearchSettings(value: unknown): WebSearchSettings | undefined {
+  if (value == null) return undefined;
+  const raw = mapping(value, "websearch");
+  if ((raw.provider ?? "brave") !== "brave")
+    throw new Error("Only the brave websearch provider is supported.");
+  const api_key = optionalText(raw.api_key, "websearch.api_key");
+  if (raw.api_base == null) return { provider: "brave", api_key };
+  const api_base = text(raw.api_base, "websearch.api_base");
+  if (!["http:", "https:"].includes(new URL(api_base).protocol))
+    throw new Error("websearch.api_base must be an HTTP(S) URL.");
+  return { provider: "brave", api_key, api_base };
+}
+
 export async function loadSettings(
   workspace: string,
   agentId?: string,
@@ -129,7 +148,7 @@ export async function loadSettings(
     agents_path: resolve(workspace, text(raw.agents_path ?? ".agents/bots", "agents_path")),
     skills_path: resolve(workspace, text(raw.skills_path ?? ".agents/skills", "skills_path")),
     history_path: resolve(workspace, text(raw.history_path ?? ".history", "history_path")),
-    websearch: raw.websearch,
+    websearch: webSearchSettings(raw.websearch),
     webread: raw.webread,
   };
   const id = agentId ?? config.default_agent;
