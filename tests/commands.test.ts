@@ -27,6 +27,8 @@ const helpText = [
   "/help, /? - Show available commands",
   "/skills - List all skills or show skill details",
   "/session - Show current session details",
+  "/context - Show active context and token budget",
+  "/compact - Summarize older active context",
 ].join("\n");
 
 it("lists available commands through /help and its aliases regardless of case", async () => {

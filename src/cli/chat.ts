@@ -54,7 +54,7 @@ export async function runCli(args: string[]): Promise<number> {
         if (["quit", "exit", "q"].includes(input.toLowerCase())) break;
         if (input) {
           try {
-            const command = await agent.runCommand(input);
+            const command = await agent.runCommand(input, controller.signal);
             if (command !== undefined) {
               console.log(command);
             } else {
