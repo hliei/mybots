@@ -126,6 +126,61 @@ it("accepts an empty optional Agent description", async () => {
   expect(agent.definition.description).toBe("");
 });
 
+it.each(["brave", "serpapi"])("loads explicit %s web search configuration", async (provider) => {
+  fixture = await chatFixture();
+  const agent = await Agent.open({
+    workspace: await fixture.workspace(
+      undefined,
+      `web_search:\n  provider: ${provider}\n  api_key: offline-web-key\n  api_base: ${fixture.endpoint}/search\nfetch_content: {}\n`,
+    ),
+  });
+  expect(agent.config).toMatchObject({
+    web_search: { provider, api_key: "offline-web-key", api_base: `${fixture.endpoint}/search` },
+    fetch_content: {},
+  });
+  expect(fixture.requests).toHaveLength(0);
+});
+
+it.each([
+  "websearch: null\n",
+  "webread: {}\n",
+  "websearch: {}\nweb_search:\n  provider: brave\n  api_key: test\n",
+  "webread: null\nfetch_content: {}\n",
+])("rejects legacy web configuration with migration instructions: %s", async (settings) => {
+  fixture = await chatFixture();
+  await expect(
+    Agent.open({ workspace: await fixture.workspace(undefined, settings) }),
+  ).rejects.toThrow(/Migrate websearch to web_search.*replace webread with fetch_content: \{\}/);
+  expect(fixture.requests).toHaveLength(0);
+});
+
+it.each([
+  ["web_search: {}\n", "web_search.provider"],
+  ["web_search: []\n", "web_search must be a mapping"],
+  ["web_search:\n  api_key: test\n", "web_search.provider"],
+  ["web_search:\n  provider: other\n  api_key: test\n", "web_search.provider"],
+  ["web_search:\n  provider: brave\n", "web_search.api_key"],
+  ["web_search:\n  provider: brave\n  api_key: 123\n", "web_search.api_key"],
+  ["web_search:\n  provider: serpapi\n  api_key: '  '\n", "web_search.api_key"],
+  ["web_search:\n  provider: brave\n  api_key: test\n  api_base: /search\n", "web_search.api_base"],
+  [
+    "web_search:\n  provider: brave\n  api_key: test\n  api_base: http:search\n",
+    "web_search.api_base",
+  ],
+  [
+    "web_search:\n  provider: serpapi\n  api_key: test\n  api_base: file:///tmp/search\n",
+    "web_search.api_base",
+  ],
+  ["fetch_content: []\n", "fetch_content must be a mapping"],
+  ["fetch_content:\n  provider: crawl4ai\n", "fetch_content must be an empty mapping"],
+])("rejects invalid replacement settings: %s", async (settings, error) => {
+  fixture = await chatFixture();
+  await expect(
+    Agent.open({ workspace: await fixture.workspace(undefined, settings) }),
+  ).rejects.toThrow(error);
+  expect(fixture.requests).toHaveLength(0);
+});
+
 it.each([
   ["  thinking: 'false'\n", "llm.thinking must be a boolean"],
   ["  temperature: 3\n", "llm.temperature must be between 0 and 2"],
@@ -145,15 +200,15 @@ it("loads custom Workspace paths and preserves optional web settings", async () 
   await rename(join(workspace, ".agents", "bots"), join(workspace, "definitions"));
   await appendFile(
     join(workspace, "config.user.yaml"),
-    "agents_path: definitions\nskills_path: abilities\nhistory_path: logs\nwebsearch:\n  provider: brave\n  api_key: offline-web-key\nwebread:\n  provider: crawl4ai\n",
+    "agents_path: definitions\nskills_path: abilities\nhistory_path: logs\nweb_search:\n  provider: brave\n  api_key: offline-web-key\nfetch_content: {}\n",
   );
   const agent = await Agent.open({ workspace });
   expect(agent.config).toMatchObject({
     agents_path: join(workspace, "definitions"),
     skills_path: join(workspace, "abilities"),
     history_path: join(workspace, "logs"),
-    websearch: { provider: "brave", api_key: "offline-web-key" },
-    webread: { provider: "crawl4ai" },
+    web_search: { provider: "brave", api_key: "offline-web-key" },
+    fetch_content: {},
   });
   expect(await agent.chat("Hi")).toBe("Hello!");
 });

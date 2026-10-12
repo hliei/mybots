@@ -38,7 +38,7 @@ export async function searchFixture() {
     requests,
     responses,
     endpoint,
-    settings: `websearch:\n  api_key: offline-search-key\n  api_base: ${endpoint}\n`,
+    settings: `web_search:\n  provider: brave\n  api_key: offline-search-key\n  api_base: ${endpoint}\n`,
     async close() {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) =>

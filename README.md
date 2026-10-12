@@ -66,7 +66,9 @@ Type `/help` to list the available commands.
 
 Workspace settings preserve `llm`, `default_agent`, `agents_path`, `skills_path`,
 and `history_path`. Relative paths resolve against the Workspace. Optional
-`websearch` enables Brave Search; `webread` enables Chromium page reading.
+`web_search` enables search; `fetch_content: {}` enables page reading. The legacy
+`websearch` and `webread` settings fail startup with migration instructions,
+including when new settings are also present.
 Agent definitions default to `.agents/bots/<id>/AGENT.md` (configured by `agents_path`); frontmatter preserves
 `name`, `description`, `llm`, and `allow_skills`. The Markdown body supplies the
 system instructions. Agent `llm` fields override matching Workspace fields.
@@ -192,20 +194,30 @@ process-tree termination has not been verified.
 
 ### Web search
 
-Add the following to your Workspace's `config.user.yaml` to enable `websearch`:
+Add the following to your Workspace's `config.user.yaml` to enable `web_search`:
 
 ```yaml
-websearch:
+web_search:
   provider: brave
   api_key: YOUR_BRAVE_SEARCH_API_KEY
 ```
 
-`provider` defaults to `brave`; other providers are rejected. Omit `websearch`
+`provider` must explicitly select `brave` or `serpapi`, and `api_key` must be a
+nonempty string. Omit `web_search`
 or set it to `null` to leave the tool disabled. Credentials come only from the
 Workspace configuration, with no environment-variable fallback. Keep keys in
 your ignored local Workspace.
 
-The tool accepts a string `query`. It sends a GET request to
+The replacement contracts and module layout are in place; full search and
+content execution are still being implemented under [ADR 0003](docs/adr/0003-web-search-and-content-fetching.md).
+Search declares exactly one of a nonempty `query` or one through five `queries`,
+plus optional `numResults` (1–20), `recencyFilter` (`day`, `week`, `month`, `year`),
+and a string-array `domainFilter`. Invalid arguments fail before requests.
+The current execution path supports Brave with a single query or one-item array;
+SerpApi, multiple queries, and optional search arguments return an explicit
+unsupported error until search execution is implemented.
+
+The retained Brave path sends a GET request to
 `https://api.search.brave.com/res/v1/web/search` with `q`, `count=10`,
 `Accept: application/json`, and `X-Subscription-Token`. Brave's `description`
 becomes the normalized result's `snippet`; missing title, URL, or description
@@ -225,7 +237,7 @@ Requests have a 30-second overall deadline, including response-body consumption;
 this differs from httpx's timeout per network operation. Ctrl+C cancels an
 in-flight search through the Agent's cancellation signal.
 
-An optional `websearch.api_base` is an extension to the reference configuration.
+An optional `web_search.api_base` is an extension to the reference configuration.
 It overrides the complete HTTP(S) search endpoint, allowing controlled local
 services in offline Agent and CLI tests. Ordinary tests explicitly select local
 endpoints and fixture credentials, even when real credentials exist in the
@@ -233,7 +245,7 @@ environment. No live Brave acceptance has been performed by these tests.
 
 ### Web page reading
 
-Install Playwright's matching Chromium browser before using `webread` or running
+Install Playwright's matching Chromium browser before using `fetch_content` or running
 the full ordinary test suite and `verify`:
 
 ```sh
@@ -257,14 +269,17 @@ being skipped. See [Playwright browser installation](https://playwright.dev/docs
 Enable the tool in `config.user.yaml`:
 
 ```yaml
-webread:
-  provider: crawl4ai
+fetch_content: {}
 ```
 
-The legacy provider name `crawl4ai` preserves the reference configuration;
-Playwright and Turndown implement it in Node.js. `webread: {}` uses the same
-default. Omit the setting or use `null` to disable the tool. No browser starts
-until the model requests `webread` with a string `url`.
+The mapping must be empty and has no provider selector. Omit the setting or use
+`null` to disable the tool. The contract declares exactly one of a string `url`
+or one through five `urls`, with optional nonnegative integer `offset` and
+integer `limit` (1–20,000). Continuations will fetch the page again; changing
+pages can produce inconsistent text between calls. The retained execution path
+currently supports only a single `url` without pagination, through Playwright
+and Turndown. Batch fetching, direct HTTP extraction, and pagination remain
+pending. No browser starts until the model requests the tool.
 
 Each read launches a fresh headless Chromium instance and closes it before
 returning, including after failures or cancellation. It accepts HTTP(S) URLs,
@@ -442,14 +457,15 @@ src/
 │   └── skills.ts          # Skill discovery and loading
 ├── config/workspace.ts    # Workspace and Agent settings
 ├── providers/deepseek.ts  # DeepSeek request/response conversion
-├── providers/brave.ts     # Brave HTTP requests and search-result normalization
-├── providers/webread.ts   # Chromium lifecycle, rendered snapshots, and Markdown
 ├── tools/
 │   ├── builtin.ts         # Local tool definitions and execution
 │   ├── shell.ts           # Shell execution and cleanup
 │   ├── skill.ts           # Dynamic skill tool
-│   ├── websearch.ts       # Configured search tool and reference result formatting
-│   ├── webread.ts         # Page-read tool and reference success/error formatting
+│   ├── web-access/
+│   │   ├── web-search.ts  # Search arguments and tool entry point
+│   │   ├── fetch-content.ts # Content arguments and tool entry point
+│   │   ├── brave.ts       # Internal Brave adapter
+│   │   └── rendered-page.ts # Retained Chromium implementation pending replacement
 │   └── toolbox.ts         # Tool schemas, argument validation, and dispatch
 └── bot/startup.ts          # Bot startup placeholder
 ```

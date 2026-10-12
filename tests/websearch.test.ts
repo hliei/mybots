@@ -20,7 +20,7 @@ it("searches Brave and continues the Agent answer with numbered sources and orig
   model.responses.push({
     status: 200,
     body: toolReply(
-      [{ name: "websearch", id: "search-1", args: { query: "Brave 中文 & docs" } }],
+      [{ name: "web_search", id: "search-1", args: { query: "Brave 中文 & docs" } }],
       "Need current sources.",
     ),
   });
@@ -34,10 +34,10 @@ it("searches Brave and continues the Agent answer with numbered sources and orig
     },
   ]);
   expect(
-    model.requests[0].tools.find((tool) => tool.function.name === "websearch")?.function,
+    model.requests[0].tools.find((tool) => tool.function.name === "web_search")?.function,
   ).toMatchObject({
     parameters: {
-      required: ["query"],
+      required: [],
       properties: { query: { type: "string", description: "The search query" } },
     },
   });
@@ -71,7 +71,7 @@ it.each([
   const agent = await Agent.open({ workspace: await model.workspace(undefined, search.settings) });
   model.responses.push({
     status: 200,
-    body: toolReply([{ name: "websearch", id: "empty", args: { query: "missing" } }]),
+    body: toolReply([{ name: "web_search", id: "empty", args: { query: "missing" } }]),
   });
   expect(await agent.chat("Search")).toBe("Hello!");
   expect(model.requests[1].messages.at(-1)).toEqual({
@@ -92,7 +92,7 @@ it.each([429, 503])(
     });
     model.responses.push({
       status: 200,
-      body: toolReply([{ name: "websearch", id: "failed", args: { query: "news" } }]),
+      body: toolReply([{ name: "web_search", id: "failed", args: { query: "news" } }]),
     });
     expect(await agent.chat("Search")).toBe("Hello!");
     expect(model.requests[1].messages.at(-1)).toEqual({
@@ -104,22 +104,22 @@ it.each([429, 503])(
   },
 );
 
-it.each([undefined, "websearch: null\n"])(
-  "omits the tool without websearch configuration",
+it.each([undefined, "web_search: null\n"])(
+  "omits the tool without web_search configuration",
   async (settings) => {
     model = await chatFixture();
     const agent = await Agent.open({ workspace: await model.workspace(undefined, settings) });
     await agent.chat("Hello");
-    expect(model.requests[0].tools.map((tool) => tool.function.name)).not.toContain("websearch");
+    expect(model.requests[0].tools.map((tool) => tool.function.name)).not.toContain("web_search");
   },
 );
 
 it.each([
-  "websearch: {}\n",
-  "websearch: []\n",
-  "websearch:\n  provider: other\n  api_key: test\n",
-  "websearch:\n  api_key: 123\n",
-  "websearch:\n  api_key: test\n  api_base: file:///tmp/search\n",
+  "web_search: {}\n",
+  "web_search: []\n",
+  "web_search:\n  provider: other\n  api_key: test\n",
+  "web_search:\n  api_key: 123\n",
+  "web_search:\n  api_key: test\n  api_base: file:///tmp/search\n",
 ])("rejects invalid search configuration before calling any service", async (settings) => {
   model = await chatFixture();
   await expect(
@@ -139,7 +139,7 @@ it.each([
   const agent = await Agent.open({ workspace: await model.workspace(undefined, search.settings) });
   model.responses.push({
     status: 200,
-    body: toolReply([{ name: "websearch", id: "bad", args: { query: "news" } }]),
+    body: toolReply([{ name: "web_search", id: "bad", args: { query: "news" } }]),
   });
   expect(await agent.chat("Search")).toBe("Hello!");
   expect(model.requests[1].messages.at(-1)?.content).toMatch(
@@ -156,7 +156,7 @@ it("supplies connection failures to the model", async () => {
   const agent = await Agent.open({ workspace: await model.workspace(undefined, settings) });
   model.responses.push({
     status: 200,
-    body: toolReply([{ name: "websearch", id: "offline", args: { query: "news" } }]),
+    body: toolReply([{ name: "web_search", id: "offline", args: { query: "news" } }]),
   });
   expect(await agent.chat("Search")).toBe("Hello!");
   expect(model.requests[1].messages.at(-1)?.content).toMatch(/^Error executing tool:/);
@@ -175,7 +175,7 @@ it("times out a stalled response body after 30 seconds and continues with a tool
   const agent = await Agent.open({ workspace: await model.workspace(undefined, search.settings) });
   model.responses.push({
     status: 200,
-    body: toolReply([{ name: "websearch", id: "timeout", args: { query: "news" } }]),
+    body: toolReply([{ name: "web_search", id: "timeout", args: { query: "news" } }]),
   });
   const start = performance.now();
   expect(await agent.chat("Search")).toBe("Hello!");
@@ -198,7 +198,7 @@ it("cancels a pending search, closes its connection, and saves the associated to
   const agent = await Agent.open({ workspace: await model.workspace(undefined, search.settings) });
   model.responses.push({
     status: 200,
-    body: toolReply([{ name: "websearch", id: "cancelled", args: { query: "news" } }]),
+    body: toolReply([{ name: "web_search", id: "cancelled", args: { query: "news" } }]),
   });
   await expect(agent.chat("Search", controller.signal)).rejects.toThrow();
   await closed;

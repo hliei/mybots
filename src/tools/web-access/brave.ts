@@ -1,4 +1,4 @@
-import type { WebSearchSettings } from "../config/workspace.ts";
+import type { WebSearchSettings } from "../../config/workspace.ts";
 
 export interface SearchResult {
   title: string;

@@ -120,6 +120,18 @@ it("reports missing Workspace configuration", async () => {
   expect(fixture.requests).toHaveLength(0);
 });
 
+it.each(["websearch: null\n", "webread: {}\nfetch_content: {}\n"])(
+  "reports web configuration migration instructions at CLI startup: %s",
+  async (settings) => {
+    fixture = await chatFixture();
+    const result = await run(["-w", await fixture.workspace(undefined, settings)]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Migrate websearch to web_search");
+    expect(result.stderr).toContain("replace webread with fetch_content: {}");
+    expect(fixture.requests).toHaveLength(0);
+  },
+);
+
 it("saves each CLI launch as a separate session a reader can open", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
@@ -463,7 +475,7 @@ it("answers through the CLI after a real local Brave search exchange", async () 
   try {
     fixture.responses.push({
       status: 200,
-      body: toolReply([{ name: "websearch", id: "cli-search", args: { query: "Brave docs" } }]),
+      body: toolReply([{ name: "web_search", id: "cli-search", args: { query: "Brave docs" } }]),
     });
     const result = await run(
       ["-w", await fixture.workspace(undefined, search.settings)],
@@ -508,10 +520,13 @@ it("searches and reads a JavaScript-rendered local page before answering through
       {
         status: 200,
         body: toolReply([
-          { name: "websearch", id: "find-source", args: { query: "local source" } },
+          { name: "web_search", id: "find-source", args: { query: "local source" } },
         ]),
       },
-      { status: 200, body: toolReply([{ name: "webread", id: "read-source", args: { url } }]) },
+      {
+        status: 200,
+        body: toolReply([{ name: "fetch_content", id: "read-source", args: { url } }]),
+      },
       {
         status: 200,
         body: {
@@ -528,7 +543,7 @@ it("searches and reads a JavaScript-rendered local page before answering through
       },
     );
     const result = await run(
-      ["-w", await fixture.workspace(undefined, `${search.settings}webread: {}\n`)],
+      ["-w", await fixture.workspace(undefined, `${search.settings}fetch_content: {}\n`)],
       "Find and read the source\nquit\n",
     );
     expect(result).toMatchObject({ status: 0, stderr: "" });

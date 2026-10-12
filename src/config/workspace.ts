@@ -14,14 +14,12 @@ export interface ModelSettings {
 }
 
 export interface WebSearchSettings {
-  provider: "brave";
+  provider: "brave" | "serpapi";
   api_key: string;
   api_base?: string;
 }
 
-export interface WebReadSettings {
-  provider: "crawl4ai";
-}
+export type FetchContentSettings = Record<string, never>;
 
 export interface WorkspaceSettings {
   workspace: string;
@@ -30,8 +28,8 @@ export interface WorkspaceSettings {
   agents_path: string;
   skills_path: string;
   history_path: string;
-  websearch?: WebSearchSettings;
-  webread?: WebReadSettings;
+  web_search?: WebSearchSettings;
+  fetch_content?: FetchContentSettings;
 }
 
 export interface AgentDefinition {
@@ -121,23 +119,30 @@ function yamlMapping(source: string, field: string): Record<string, unknown> {
 
 function webSearchSettings(value: unknown): WebSearchSettings | undefined {
   if (value == null) return undefined;
-  const raw = mapping(value, "websearch");
-  if ((raw.provider ?? "brave") !== "brave")
-    throw new Error("Only the brave websearch provider is supported.");
-  const api_key = optionalText(raw.api_key, "websearch.api_key");
-  if (raw.api_base == null) return { provider: "brave", api_key };
-  const api_base = text(raw.api_base, "websearch.api_base");
-  if (!["http:", "https:"].includes(new URL(api_base).protocol))
-    throw new Error("websearch.api_base must be an HTTP(S) URL.");
-  return { provider: "brave", api_key, api_base };
+  const raw = mapping(value, "web_search");
+  const provider = raw.provider;
+  if (provider !== "brave" && provider !== "serpapi")
+    throw new Error("web_search.provider must explicitly select brave or serpapi.");
+  const api_key = text(raw.api_key, "web_search.api_key");
+  if (raw.api_base == null) return { provider, api_key };
+  const api_base = text(raw.api_base, "web_search.api_base");
+  let url: URL;
+  try {
+    url = new URL(api_base);
+  } catch {
+    throw new Error("web_search.api_base must be a complete HTTP(S) URL.");
+  }
+  if (!/^https?:\/\/[^/]/i.test(api_base) || !["http:", "https:"].includes(url.protocol))
+    throw new Error("web_search.api_base must be a complete HTTP(S) URL.");
+  return { provider, api_key, api_base };
 }
 
-function webReadSettings(value: unknown): WebReadSettings | undefined {
+function fetchContentSettings(value: unknown): FetchContentSettings | undefined {
   if (value == null) return undefined;
-  const raw = mapping(value, "webread");
-  if ((raw.provider ?? "crawl4ai") !== "crawl4ai")
-    throw new Error("Only the crawl4ai webread provider is supported.");
-  return { provider: "crawl4ai" };
+  const raw = mapping(value, "fetch_content");
+  if (Object.keys(raw).length)
+    throw new Error("fetch_content must be an empty mapping; no provider selector is supported.");
+  return {};
 }
 
 export async function loadSettings(
@@ -152,6 +157,10 @@ export async function loadSettings(
     await readFile(resolve(workspace, "config.user.yaml"), "utf8"),
     "workspace configuration",
   );
+  if ("websearch" in raw || "webread" in raw)
+    throw new Error(
+      "Legacy websearch/webread configuration is unsupported. Migrate websearch to web_search with an explicit brave or serpapi provider and nonempty api_key; replace webread with fetch_content: {}.",
+    );
   const llm = modelSettings(mapping(raw.llm, "llm"));
   const config: WorkspaceSettings = {
     workspace,
@@ -160,8 +169,8 @@ export async function loadSettings(
     agents_path: resolve(workspace, text(raw.agents_path ?? ".agents/bots", "agents_path")),
     skills_path: resolve(workspace, text(raw.skills_path ?? ".agents/skills", "skills_path")),
     history_path: resolve(workspace, text(raw.history_path ?? ".history", "history_path")),
-    websearch: webSearchSettings(raw.websearch),
-    webread: webReadSettings(raw.webread),
+    web_search: webSearchSettings(raw.web_search),
+    fetch_content: fetchContentSettings(raw.fetch_content),
   };
   const id = agentId ?? config.default_agent;
   const source = (await readFile(resolve(config.agents_path, id, "AGENT.md"), "utf8")).replace(

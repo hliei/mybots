@@ -20,11 +20,13 @@ it("reads a real page as Markdown through the Agent and continues with the match
   pages.pages.set("/static", {
     body: '<title>Local guide</title><h1>Guide</h1><p>Read <strong>carefully</strong>.</p><p><a href="/next">Next page</a></p>',
   });
-  const agent = await Agent.open({ workspace: await model.workspace(undefined, "webread: {}\n") });
+  const agent = await Agent.open({
+    workspace: await model.workspace(undefined, "fetch_content: {}\n"),
+  });
   model.responses.push({
     status: 200,
     body: toolReply(
-      [{ name: "webread", id: "read-page", args: { url: `${pages.endpoint}/static` } }],
+      [{ name: "fetch_content", id: "read-page", args: { url: `${pages.endpoint}/static` } }],
       "Read this source.",
     ),
   });
@@ -36,10 +38,10 @@ it("reads a real page as Markdown through the Agent and continues with the match
   });
   expect(model.requests[1].messages.at(-2)?.reasoning_content).toBe("Read this source.");
   expect(
-    model.requests[0].tools.find((tool) => tool.function.name === "webread")?.function,
+    model.requests[0].tools.find((tool) => tool.function.name === "fetch_content")?.function,
   ).toMatchObject({
     parameters: {
-      required: ["url"],
+      required: [],
       properties: { url: { type: "string", description: "The URL to read" } },
     },
   });
@@ -62,12 +64,12 @@ it("includes fetched client-side content and excludes hidden and executable mark
     headers: { "Content-Type": "application/json" },
   });
   const agent = await Agent.open({
-    workspace: await model.workspace(undefined, "webread:\n  provider: crawl4ai\n"),
+    workspace: await model.workspace(undefined, "fetch_content: {}\n"),
   });
   model.responses.push({
     status: 200,
     body: toolReply([
-      { name: "webread", id: "rendered", args: { url: `${pages.endpoint}/rendered` } },
+      { name: "fetch_content", id: "rendered", args: { url: `${pages.endpoint}/rendered` } },
     ]),
   });
   expect(await agent.chat("Read the rendered page")).toBe("Hello!");
@@ -83,10 +85,12 @@ it("follows a redirect while keeping the requested URL in saved tool-call argume
   pages.pages.set("/redirect", { status: 302, headers: { Location: "/final" }, body: "" });
   pages.pages.set("/final", { body: "<title>Final page</title><p>Redirect destination.</p>" });
   const requested = `${pages.endpoint}/redirect`;
-  const agent = await Agent.open({ workspace: await model.workspace(undefined, "webread: {}\n") });
+  const agent = await Agent.open({
+    workspace: await model.workspace(undefined, "fetch_content: {}\n"),
+  });
   model.responses.push({
     status: 200,
-    body: toolReply([{ name: "webread", id: "redirect", args: { url: requested } }]),
+    body: toolReply([{ name: "fetch_content", id: "redirect", args: { url: requested } }]),
   });
   await agent.chat("Read this URL");
   expect(model.requests[1].messages.at(-1)?.content).toBe(
@@ -111,11 +115,11 @@ it.each([404, 503])(
     });
     const url = `${pages.endpoint}/redirect`;
     const agent = await Agent.open({
-      workspace: await model.workspace(undefined, "webread: {}\n"),
+      workspace: await model.workspace(undefined, "fetch_content: {}\n"),
     });
     model.responses.push({
       status: 200,
-      body: toolReply([{ name: "webread", id: "failure", args: { url } }]),
+      body: toolReply([{ name: "fetch_content", id: "failure", args: { url } }]),
     });
     expect(await agent.chat("Read this URL")).toBe("Hello!");
     expect(model.requests[1].messages.at(-1)).toEqual({
@@ -131,11 +135,11 @@ it.each(["not a URL", "file:///tmp/page.html"])(
   async (url) => {
     model = await chatFixture();
     const agent = await Agent.open({
-      workspace: await model.workspace(undefined, "webread: {}\n"),
+      workspace: await model.workspace(undefined, "fetch_content: {}\n"),
     });
     model.responses.push({
       status: 200,
-      body: toolReply([{ name: "webread", id: "invalid", args: { url } }]),
+      body: toolReply([{ name: "fetch_content", id: "invalid", args: { url } }]),
     });
     expect(await agent.chat("Read this URL")).toBe("Hello!");
     expect(model.requests[1].messages.at(-1)?.content).toMatch(
@@ -144,15 +148,20 @@ it.each(["not a URL", "file:///tmp/page.html"])(
   },
 );
 
-it.each([undefined, "webread: null\n"])("omits webread when unconfigured", async (settings) => {
-  model = await chatFixture();
-  const agent = await Agent.open({ workspace: await model.workspace(undefined, settings) });
-  await agent.chat("Hello");
-  expect(model.requests[0].tools.map((tool) => tool.function.name)).not.toContain("webread");
-});
+it.each([undefined, "fetch_content: null\n"])(
+  "omits fetch_content when unconfigured",
+  async (settings) => {
+    model = await chatFixture();
+    const agent = await Agent.open({ workspace: await model.workspace(undefined, settings) });
+    await agent.chat("Hello");
+    expect(model.requests[0].tools.map((tool) => tool.function.name)).not.toContain(
+      "fetch_content",
+    );
+  },
+);
 
-it.each(["webread: []\n", "webread:\n  provider: playwright\n"])(
-  "rejects unsupported webread configuration before calling the model",
+it.each(["fetch_content: []\n", "fetch_content:\n  provider: playwright\n"])(
+  "rejects unsupported fetch_content configuration before calling the model",
   async (settings) => {
     model = await chatFixture();
     await expect(
@@ -168,10 +177,12 @@ it("returns a connection failure to the model instead of page content", async ()
   const url = `${pages.endpoint}/closed`;
   await pages.close();
   pages = undefined;
-  const agent = await Agent.open({ workspace: await model.workspace(undefined, "webread: {}\n") });
+  const agent = await Agent.open({
+    workspace: await model.workspace(undefined, "fetch_content: {}\n"),
+  });
   model.responses.push({
     status: 200,
-    body: toolReply([{ name: "webread", id: "offline", args: { url } }]),
+    body: toolReply([{ name: "fetch_content", id: "offline", args: { url } }]),
   });
   expect(await agent.chat("Read this URL")).toBe("Hello!");
   expect(model.requests[1].messages.at(-1)?.content).toContain(`Error reading ${url}:`);
@@ -197,10 +208,14 @@ it("closes the browser's live page connection after a successful read", async ()
   pages.pages.set("/live", {
     body: '<title>Connecting</title><p>Connected page.</p><script>const ws = new WebSocket("ws://" + location.host + "/socket"); ws.onopen = () => document.title = "Connected";</script>',
   });
-  const agent = await Agent.open({ workspace: await model.workspace(undefined, "webread: {}\n") });
+  const agent = await Agent.open({
+    workspace: await model.workspace(undefined, "fetch_content: {}\n"),
+  });
   model.responses.push({
     status: 200,
-    body: toolReply([{ name: "webread", id: "live", args: { url: `${pages.endpoint}/live` } }]),
+    body: toolReply([
+      { name: "fetch_content", id: "live", args: { url: `${pages.endpoint}/live` } },
+    ]),
   });
   await agent.chat("Read this URL");
   expect(model.requests[1].messages.at(-1)?.content).toBe("**Connected**\n\nConnected page.");
@@ -218,10 +233,12 @@ it("times out a stalled page within 30 seconds, closes the connection, and conti
     response.write("<title>Still loading</title>");
   });
   const url = `${pages.endpoint}/stall`;
-  const agent = await Agent.open({ workspace: await model.workspace(undefined, "webread: {}\n") });
+  const agent = await Agent.open({
+    workspace: await model.workspace(undefined, "fetch_content: {}\n"),
+  });
   model.responses.push({
     status: 200,
-    body: toolReply([{ name: "webread", id: "timeout", args: { url } }]),
+    body: toolReply([{ name: "fetch_content", id: "timeout", args: { url } }]),
   });
   const start = performance.now();
   expect(await agent.chat("Read this URL")).toBe("Hello!");
@@ -244,10 +261,12 @@ it("cancels a pending page read, closes the connection, and saves its tool error
     controller.abort(new Error("Cancelled by user."));
   });
   const url = `${pages.endpoint}/stall`;
-  const agent = await Agent.open({ workspace: await model.workspace(undefined, "webread: {}\n") });
+  const agent = await Agent.open({
+    workspace: await model.workspace(undefined, "fetch_content: {}\n"),
+  });
   model.responses.push({
     status: 200,
-    body: toolReply([{ name: "webread", id: "cancelled", args: { url } }]),
+    body: toolReply([{ name: "fetch_content", id: "cancelled", args: { url } }]),
   });
   await expect(agent.chat("Read this URL", controller.signal)).rejects.toThrow();
   await disconnected;

@@ -17,7 +17,7 @@ after failure. Keeping selection explicit makes credentials, request behavior,
 and failures predictable without a provider discovery or fallback system.
 
 `src/providers/` contains LLM integrations used by the Agent runtime. Web tools
-and their integrations belong together in `src/tools/web/`, concentrating the
+and their integrations belong together in `src/tools/web-access/`, concentrating the
 search and extraction behavior with the tools that own it. Brave and SerpApi
 remain separate internal adapters returning normalized source results. This
 preserves a real adapter seam without creating a top-level web-provider layer.
