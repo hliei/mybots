@@ -33,6 +33,7 @@ export class Agent {
   private readonly messages: Message[];
   private replying = false;
   private usage: { tokens: number; messageCount: number } | undefined;
+  private summary: Message | undefined;
 
   private constructor(
     config: WorkspaceSettings,
@@ -104,30 +105,71 @@ export class Agent {
     return this.commands.dispatch(input, context);
   }
 
-  private contextTokens(): number {
-    return this.usage
-      ? this.usage.tokens + estimateTokens(this.messages.slice(this.usage.messageCount))
-      : estimateTokens([this.system, ...this.messages, ...this.toolbox.schemas]);
+  private contextTokens(
+    messages = this.messages,
+    usage: typeof this.usage | null = this.usage,
+  ): number {
+    return usage
+      ? usage.tokens + estimateTokens(messages.slice(usage.messageCount))
+      : estimateTokens([this.system, ...messages, ...this.toolbox.schemas]);
+  }
+
+  private get inputBudget(): number {
+    return Math.max(0, this.model.contextWindow - Math.max(16_384, this.definition.llm.max_tokens));
   }
 
   private async compact(signal?: AbortSignal): Promise<string> {
     if (this.replying) throw new Error("An Agent reply or compaction is already in progress.");
     this.replying = true;
     try {
-      if (signal?.aborted) return "Compaction cancelled; active context unchanged.";
-      const cut = retentionStart(this.messages);
-      if (cut === 0) return "Not enough compactable context; active context unchanged.";
-      const older = this.messages.slice(0, cut);
+      const result = await this.compactContext(this.messages, signal);
+      if (result.messages) {
+        this.messages.splice(0, this.messages.length, ...result.messages);
+        this.summary = result.messages[0];
+        this.usage = undefined;
+      }
+      return result.report;
+    } finally {
+      this.replying = false;
+    }
+  }
+
+  private async compactContext(
+    messages: Message[],
+    signal?: AbortSignal,
+    automatic = false,
+  ): Promise<{ messages?: Message[]; report: string }> {
+    try {
+      if (signal?.aborted) return { report: "Compaction cancelled; active context unchanged." };
+      let cut = retentionStart(messages);
+      if (
+        automatic &&
+        (cut === 0 || this.contextTokens(messages.slice(cut), null) > this.inputBudget)
+      ) {
+        cut = retentionStart(messages, true);
+      }
+      const hasSummary = messages[0] === this.summary;
+      if (cut <= (hasSummary ? 1 : 0)) {
+        return { report: "Not enough compactable context; active context unchanged." };
+      }
+      const older = messages.slice(0, cut);
+      const transcript = summaryInput(hasSummary ? older.slice(1) : older);
       const request: Message[] = [
-        { role: "system", content: summaryInstructions },
-        { role: "user", content: summaryInput(older) },
+        {
+          role: "system",
+          content: `${summaryInstructions}\nUpdate any previous summary using only the newly removed transcript.\nIf the transcript ends within a user turn, preserve its continuing objective and completed work for the retained continuation.`,
+        },
+        {
+          role: "user",
+          content: `${hasSummary ? `[Previous summary]:\n${this.summary?.content}\n\n` : ""}[Newly removed transcript]:\n${transcript}`,
+        },
       ];
       const reserve = Math.max(16_384, this.definition.llm.max_tokens);
       if (estimateTokens(request) + reserve > this.model.contextWindow) {
-        return "Not enough model budget to summarize; active context unchanged.";
+        return { report: "Not enough model budget to summarize; active context unchanged." };
       }
       const reply = await this.model.reply(request, [], signal);
-      if (signal?.aborted) return "Compaction cancelled; active context unchanged.";
+      if (signal?.aborted) return { report: "Compaction cancelled; active context unchanged." };
       const summary = summaryMessage(reply.message.content.trim());
       if (
         reply.finishReason !== "stop" ||
@@ -135,16 +177,18 @@ export class Agent {
         reply.message.tool_calls?.length ||
         estimateTokens([summary]) >= estimateTokens(older)
       ) {
-        return "Unusable summary; active context unchanged.";
+        return { report: "Unusable summary; active context unchanged." };
       }
-      this.messages.splice(0, cut, summary);
-      this.usage = undefined;
-      return `Compacted ${cut} older messages; ${this.messages.length} active messages remain.`;
+      const compacted = [summary, ...messages.slice(cut)];
+      return {
+        messages: compacted,
+        report: `Compacted ${cut} older messages; ${compacted.length} active messages remain.`,
+      };
     } catch (error) {
-      if (signal?.aborted) return "Compaction cancelled; active context unchanged.";
-      return `Compaction failed; active context unchanged: ${error instanceof Error ? error.message : String(error)}`;
-    } finally {
-      this.replying = false;
+      if (signal?.aborted) return { report: "Compaction cancelled; active context unchanged." };
+      return {
+        report: `Compaction failed; active context unchanged: ${error instanceof Error ? error.message : String(error)}`,
+      };
     }
   }
 
@@ -157,6 +201,25 @@ export class Agent {
       const pending: Message[] = [user];
       let usage = this.usage;
       while (true) {
+        const context = [...this.messages, ...pending];
+        if (this.contextTokens(context, usage) > this.inputBudget) {
+          const result = await this.compactContext(context, signal, true);
+          if (!result.messages) throw new Error(`Automatic compaction: ${result.report}`);
+          if (this.contextTokens(result.messages, null) > this.inputBudget) {
+            throw new Error(
+              "Automatic compaction cannot fit the input budget; active context unchanged.",
+            );
+          }
+          // The newest input stays pending until a response or complete tool group is saved.
+          this.messages.splice(
+            0,
+            this.messages.length,
+            ...result.messages.slice(0, result.messages.length - pending.length),
+          );
+          this.summary = result.messages[0];
+          usage = undefined;
+          this.usage = undefined;
+        }
         const { message: reply, usageTokens } = await this.model.reply(
           [this.system, ...this.messages, ...pending],
           this.toolbox.schemas,

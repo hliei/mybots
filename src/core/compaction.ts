@@ -8,12 +8,17 @@ export function estimateTokens(items: readonly unknown[]): number {
   );
 }
 
-/** Retain at least 20,000 estimated tokens, extending to a whole user turn. */
-export function retentionStart(messages: readonly Message[]): number {
+/** Retain at least 20,000 tokens, extending to a whole turn or tool exchange. */
+export function retentionStart(messages: readonly Message[], splitTurns = false): number {
   let tokens = 0;
   for (let index = messages.length - 1; index >= 0; index--) {
     tokens += estimateTokens([messages[index]]);
-    if (tokens >= 20_000 && messages[index]?.role === "user") return index;
+    if (
+      tokens >= 20_000 &&
+      (messages[index]?.role === "user" || (splitTurns && messages[index]?.role === "assistant"))
+    ) {
+      return index;
+    }
   }
   return 0;
 }

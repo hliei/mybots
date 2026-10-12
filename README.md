@@ -85,7 +85,7 @@ model response do not enter session context. Completed tool-call/result groups
 are retained if a later model request fails or is cancelled; local changes
 already made by tools remain in place. The shared Agent interface rejects
 overlapping `chat()` calls in the same session; the CLI submits turns sequentially.
-Manual compaction is available through `/compact`; web tools are later deliveries.
+Automatic context compaction and manual `/compact` are available; web tools are later deliveries.
 
 ### Slash commands
 
@@ -107,7 +107,7 @@ Inspecting a Skill only reads it to render text. It does not register the `skill
 tool, load the instructions into active context, or change `allow_skills`, and it
 works whether or not the Agent enables Skills.
 
-### Manual compaction
+### Context compaction
 
 `/compact` replaces older active context with a user summary followed by the
 original recent messages. It uses a separate model request without tools and
@@ -130,9 +130,13 @@ The provider's published 1M context window is used for `deepseek-flash`,
 in Workspace or Agent settings for another model or endpoint's actual limit.
 This setting controls budgeting and is not sent to the API.
 
-The retained tail targets at least 20,000 estimated tokens and extends backward
-to a user-turn boundary so tool calls and all their results stay together.
-Compaction retains whole turns, even when one turn exceeds the tail target.
+The retained tail targets at least 20,000 estimated tokens. Manual compaction
+extends backward to a user-turn boundary, retaining whole turns even when one
+turn exceeds the tail target. Automatic compaction first tries the same boundary;
+when a long turn prevents progress or its retained tail exceeds the input budget,
+it can cut before an assistant message while preserving every retained tool call
+and all its results. The removed prefix is summarized with instructions to carry
+forward the continuing user objective and completed work.
 Too little older content causes no summary request. The separate summary request
 must fit the model window with the output reserve. Blank, truncated, tool-calling,
 or non-reducing summaries are rejected. Failure and cancellation keep active
@@ -141,8 +145,20 @@ context intact. Chat and compaction cannot mutate the same Agent concurrently.
 A successful compaction clears usage from the old context; the next chat request
 uses the rebuilt context. Original JSONL history is unchanged, and neither the
 command nor generated summary is recorded as conversation history. Compaction
-state remains in memory for this launch. Automatic triggering, long-turn prefix
-summaries, and repeated-compaction integration are planned follow-up work.
+state remains in memory for this launch. Repeated manual and automatic compaction
+update the previous summary with only newly removed content, without rereading
+raw history.
+
+Before each chat request, including every tool-round continuation, the Agent
+checks the estimated input against the effective threshold. Requests at or below
+the threshold proceed normally; requests above it require compaction. The rebuilt
+request must fit the budget before the summary is committed. If summarization
+fails, is cancelled, has no usable removable prefix, or leaves an oversized tail,
+the chat stops with an error and preserves committed context and usage. Raw
+history still records the attempted user input and any completed tool work.
+The CLI reports the error and accepts further input; Ctrl+C exits. Oversized
+individual messages or tool exchanges may require smaller inputs or outputs.
+There is no automatic retry after a provider context-overflow error.
 
 ### Local tools
 
@@ -252,11 +268,11 @@ There is no history-listing or resume command.
 - [DeepSeek model limits](https://api-docs.deepseek.com/quick_start/pricing/)
 - [Compaction design and pi sources](docs/adr/0002-token-budgeted-context-compaction.md)
 
-Compaction deviations from the fixed pi sources: retain whole user turns rather
-than using finer cut points with a turn-prefix summary; estimate UTF-8 bytes
-with a framing margin rather than characters; and keep summary state in memory
-instead of persisted checkpoints. The initial delivery exposes manual commands;
-automatic triggering and repeated-compaction integration remain planned.
+Compaction deviations from the fixed pi sources: manual compaction retains whole
+user turns, while automatic compaction can summarize a long turn's prefix;
+token estimates use UTF-8 bytes with a framing margin rather than characters;
+and summary state stays in memory instead of persisted checkpoints. Manual and
+automatic compaction both support incremental summary updates.
 
 ## Checks and tests
 

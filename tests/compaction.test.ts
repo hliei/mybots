@@ -36,6 +36,25 @@ function summaryResponse(
   };
 }
 
+it("automatically compacts before the next request exceeds the effective input budget", async () => {
+  fixture = await chatFixture();
+  const agent = await Agent.open({
+    workspace: await fixture.workspace(fixture.root, "  context_window: 100000\n"),
+  });
+  await agent.chat(`Older objective ${"o".repeat(90000)}`);
+  await agent.chat(`Recent objective ${"r".repeat(90000)}`);
+  fixture.responses.push(summaryResponse("Remember the older objective."));
+  expect(await agent.chat(`Continue ${"c".repeat(90000)}`)).toBe("Hello!");
+  expect(fixture.requests[2].tools).toBeUndefined();
+  expect(fixture.requests[2].messages[1].content).toContain("Older objective");
+  const next = fixture.requests[3].messages;
+  expect(next[1].content).toContain("Remember the older objective.");
+  expect(next[2].content).toContain("Continue");
+  expect(next.some((message) => message.content.startsWith("Older objective"))).toBe(false);
+  const history = await ConversationHistory.open(join(fixture.root, ".history"));
+  expect(await history.getMessages(agent.sessionId)).toHaveLength(6);
+});
+
 it("compacts older visible tool work while preserving the complete recent turn, reasoning, and original history", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
@@ -355,10 +374,271 @@ it("leaves context unchanged when the separate summary request cannot fit the mo
   const agent = await Agent.open({
     workspace: await fixture.workspace(fixture.root, "  context_window: 24000\n"),
   });
-  await agent.chat(`Older ${"o".repeat(90000)}`);
-  await agent.chat(`Recent ${"r".repeat(90000)}`);
+  for (const content of ["o".repeat(90000), "r".repeat(90000)]) {
+    fixture.responses.push({
+      status: 200,
+      body: {
+        ...summaryResponse(content).body,
+        usage: { prompt_tokens: 50, completion_tokens: 50, total_tokens: 100 },
+      },
+    });
+    await agent.chat("Short input");
+  }
   const before = await agent.runCommand("/context");
   expect(await agent.runCommand("/compact")).toContain("Not enough model budget");
   expect(await agent.runCommand("/context")).toBe(before);
   expect(fixture.requests).toHaveLength(2);
+});
+
+it("continues a long tool turn with incremental prefix summaries and complete retained exchanges", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace(fixture.root, "  context_window: 100000\n");
+  const path = join(workspace, "large.txt");
+  await writeFile(path, "Artifact ".repeat(11250));
+  const agent = await Agent.open({ workspace });
+  const round = (id: string) => ({
+    status: 200,
+    body: toolReply(
+      [
+        { name: "read", id: `${id}-a`, args: { path } },
+        { name: "read", id: `${id}-b`, args: { path } },
+      ],
+      `Complete reasoning for ${id} ${"r".repeat(9000)}`,
+    ),
+  });
+  fixture.responses.push(
+    round("first"),
+    round("second"),
+    summaryResponse("Goal: inspect both artifacts. Done: first round."),
+    round("third"),
+    summaryResponse("Goal: inspect both artifacts. Done: first and second rounds."),
+  );
+  expect(await agent.chat("Inspect both artifacts and report differences")).toBe("Hello!");
+  const summaries = fixture.requests.filter((request) => !request.tools);
+  expect(summaries).toHaveLength(2);
+  expect(summaries[0].messages[1].content).toContain(
+    "Inspect both artifacts and report differences",
+  );
+  expect(summaries[0].messages[1].content).toContain("first-a");
+  expect(summaries[0].messages[1].content).not.toContain("second-a");
+  expect(summaries[1].messages[1].content).toContain(
+    "Goal: inspect both artifacts. Done: first round.",
+  );
+  expect(summaries[1].messages[1].content).toContain("second-a");
+  expect(summaries[1].messages[1].content).not.toContain("first-a");
+  const last = fixture.requests.at(-1)?.messages;
+  expect(last?.[1].role).toBe("user");
+  expect(last?.[1].content).toContain("Goal: inspect both artifacts");
+  expect(last?.[2]).toMatchObject({
+    role: "assistant",
+    reasoning_content: `Complete reasoning for third ${"r".repeat(9000)}`,
+  });
+  expect(last?.[2].tool_calls?.map((call) => call.id)).toEqual(["third-a", "third-b"]);
+  expect(last?.slice(3).map((message) => message.tool_call_id)).toEqual(["third-a", "third-b"]);
+  const history = await ConversationHistory.open(join(workspace, ".history"));
+  expect(await history.getMessages(agent.sessionId)).toHaveLength(11);
+});
+
+it.each([
+  [75981, false],
+  [75982, true],
+])(
+  "checks appended input against the output-adjusted boundary after usage %i",
+  async (tokens, compacted) => {
+    fixture = await chatFixture();
+    const agent = await Agent.open({
+      workspace: await fixture.workspace(
+        fixture.root,
+        "  context_window: 100000\n  max_tokens: 24000\n",
+      ),
+    });
+    await agent.chat(`Older ${"o".repeat(90000)}`);
+    fixture.responses.push({
+      status: 200,
+      body: {
+        ...summaryResponse("Recent answer").body,
+        usage: { prompt_tokens: tokens - 1, completion_tokens: 1, total_tokens: tokens },
+      },
+    });
+    await agent.chat(`Recent ${"r".repeat(90000)}`);
+    if (compacted) fixture.responses.push(summaryResponse("Older work completed."));
+    // "Next" is a 32-byte serialized user message: 11 estimate tokens + 8 framing.
+    expect(await agent.chat("Next")).toBe("Hello!");
+    expect(fixture.requests.filter((request) => !request.tools)).toHaveLength(compacted ? 1 : 0);
+    const report = await agent.runCommand("/context");
+    if (compacted) {
+      expect(Number(/Estimated tokens:\*\* (\d+)/.exec(report ?? "")?.[1])).toBeLessThan(40000);
+    } else {
+      expect(report).toContain("**Estimated tokens:** 76034");
+    }
+  },
+);
+
+it("adds tool-result estimates to provider usage before continuing the current turn", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace(fixture.root, "  context_window: 100000\n");
+  const path = join(workspace, "large.txt");
+  await writeFile(path, "x".repeat(90000));
+  const agent = await Agent.open({ workspace });
+  fixture.responses.push(
+    {
+      status: 200,
+      body: {
+        ...toolReply([{ name: "read", id: "usage-read", args: { path } }], "Retain real reasoning"),
+        usage: { prompt_tokens: 59000, completion_tokens: 1000, total_tokens: 60000 },
+      },
+    },
+    summaryResponse("Goal: read the large artifact and report its content."),
+  );
+  expect(await agent.chat(`Read and report ${"o".repeat(90000)}`)).toBe("Hello!");
+  expect(fixture.requests[1].tools).toBeUndefined();
+  expect(fixture.requests[2].messages[2]).toMatchObject({
+    role: "assistant",
+    reasoning_content: "Retain real reasoning",
+  });
+  expect(fixture.requests[2].messages[3].tool_call_id).toBe("usage-read");
+});
+
+it("rejects an oversized retained exchange without committing a partial automatic summary", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace(fixture.root, "  context_window: 100000\n");
+  const path = join(workspace, "huge.txt");
+  await writeFile(path, "x".repeat(270000));
+  const agent = await Agent.open({ workspace });
+  fixture.responses.push(
+    { status: 200, body: toolReply([{ name: "read", id: "huge", args: { path } }]) },
+    summaryResponse("Goal: read the file."),
+  );
+  await expect(agent.chat(`Read the file ${"o".repeat(9000)}`)).rejects.toThrow(
+    "cannot fit the input budget",
+  );
+  expect(fixture.requests).toHaveLength(2);
+  expect(await agent.runCommand("/context")).toContain("**Active messages:** 3");
+  const history = await ConversationHistory.open(join(workspace, ".history"));
+  const raw = await history.getMessages(agent.sessionId);
+  expect(raw).toHaveLength(3);
+  expect(raw[0].content).toContain("Read the file");
+  expect(raw[2].tool_call_id).toBe("huge");
+});
+
+it("cancels automatic summarization while preserving committed usage, context, and raw history", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace(fixture.root, "  context_window: 100000\n");
+  const agent = await Agent.open({ workspace });
+  await agent.chat(`Older ${"o".repeat(90000)}`);
+  await agent.chat(`Recent ${"r".repeat(90000)}`);
+  const before = await agent.runCommand("/context");
+  let release = (_value: unknown) => {};
+  fixture.responses.push({
+    status: 200,
+    body: new Promise((resolve) => {
+      release = resolve;
+    }),
+  });
+  const controller = new AbortController();
+  const requested = once(fixture.server, "request");
+  const running = agent.chat(`Next ${"n".repeat(90000)}`, controller.signal);
+  const cancelled = expect(running).rejects.toThrow("Compaction cancelled");
+  try {
+    await requested;
+    await expect(agent.runCommand("/compact")).rejects.toThrow("already in progress");
+    controller.abort();
+    await cancelled;
+    expect(await agent.runCommand("/context")).toBe(before);
+    const history = await ConversationHistory.open(join(workspace, ".history"));
+    expect(await history.getMessages(agent.sessionId)).toHaveLength(5);
+    expect(fixture.requests).toHaveLength(3);
+  } finally {
+    controller.abort();
+    release(summaryResponse().body);
+    await cancelled;
+  }
+  expect(await agent.chat("Recover below the budget")).toBe("Hello!");
+  expect(fixture.requests.at(-1)?.messages[1].content).toContain("Older");
+});
+
+it("updates summaries across alternating manual and automatic compaction without rereading raw history", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace(fixture.root, "  context_window: 100000\n");
+  const agent = await Agent.open({ workspace });
+  await agent.chat(`First raw objective ${"a".repeat(90000)}`);
+  await agent.chat(`Second objective ${"b".repeat(90000)}`);
+  fixture.responses.push(summaryResponse("Checkpoint one: first objective."));
+  expect(await agent.runCommand("/compact")).toContain("Compacted");
+  await agent.chat(`Third objective ${"c".repeat(90000)}`);
+  fixture.responses.push(summaryResponse("Checkpoint two: first through third objectives."));
+  await agent.chat(`Fourth objective ${"d".repeat(90000)}`);
+  const automatic = fixture.requests.at(-2)?.messages[1].content;
+  expect(automatic).toContain("Checkpoint one");
+  expect(automatic).toContain("Second objective");
+  expect(automatic).toContain("Third objective");
+  expect(automatic).not.toContain("First raw objective");
+  await agent.chat(`Fifth objective ${"e".repeat(90000)}`);
+  fixture.responses.push(summaryResponse("Checkpoint three: first through fourth objectives."));
+  expect(await agent.runCommand("/compact")).toContain("Compacted");
+  const manual = fixture.requests.at(-1)?.messages[1].content;
+  expect(manual).toContain("Checkpoint two");
+  expect(manual).toContain("Fourth objective");
+  expect(manual).not.toContain("Second objective");
+  expect(manual).not.toContain("Third objective");
+  await agent.chat("Next");
+  expect(fixture.requests.at(-1)?.messages[1].content).toContain("Checkpoint three");
+  const history = await ConversationHistory.open(join(workspace, ".history"));
+  expect(await history.getMessages(agent.sessionId)).toHaveLength(12);
+});
+
+it.each([
+  ["provider failure", { status: 503, body: { error: { message: "Unavailable" } } }],
+  ["empty summary", summaryResponse(" ")],
+  ["nonreducing summary", summaryResponse("s".repeat(120000))],
+])("stops automatic compaction atomically after %s", async (_name, response) => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace(fixture.root, "  context_window: 100000\n");
+  const agent = await Agent.open({ workspace });
+  await agent.chat(`Older ${"o".repeat(90000)}`);
+  fixture.responses.push({
+    status: 200,
+    body: {
+      ...summaryResponse("Recent answer").body,
+      usage: { prompt_tokens: 89000, completion_tokens: 1000, total_tokens: 90000 },
+    },
+  });
+  await agent.chat(`Recent ${"r".repeat(90000)}`);
+  const before = await agent.runCommand("/context");
+  fixture.responses.push(response);
+  await expect(agent.chat("Next")).rejects.toThrow("Automatic compaction");
+  expect(await agent.runCommand("/context")).toBe(before);
+  expect(fixture.requests).toHaveLength(3);
+  const history = await ConversationHistory.open(join(workspace, ".history"));
+  const raw = await history.getMessages(agent.sessionId);
+  expect(raw).toHaveLength(5);
+  expect(raw[0].content).toContain("Older");
+  expect(raw.at(-1)?.content).toBe("Next");
+  fixture.responses.push(summaryResponse("Recovered checkpoint."));
+  expect(await agent.chat("Recover")).toBe("Hello!");
+  expect(fixture.requests.at(-1)?.messages[1].content).toContain("Recovered checkpoint.");
+});
+
+it("keeps an unanswered input out of committed context when chat fails after successful compaction", async () => {
+  fixture = await chatFixture();
+  const agent = await Agent.open({
+    workspace: await fixture.workspace(fixture.root, "  context_window: 100000\n"),
+  });
+  await agent.chat(`Older ${"o".repeat(90000)}`);
+  await agent.chat(`Recent ${"r".repeat(90000)}`);
+  fixture.responses.push(summaryResponse("Checkpoint."), {
+    status: 503,
+    body: { error: { message: "Unavailable" } },
+  });
+  await expect(agent.chat(`Unanswered ${"n".repeat(90000)}`)).rejects.toThrow("HTTP 503");
+  expect(await agent.runCommand("/context")).toContain("**Active messages:** 1");
+  await agent.chat("Recover");
+  expect(fixture.requests.at(-1)?.messages.map((message) => message.role)).toEqual([
+    "system",
+    "user",
+    "user",
+  ]);
+  expect(
+    fixture.requests.at(-1)?.messages.some((message) => message.content.startsWith("Unanswered")),
+  ).toBe(false);
 });
