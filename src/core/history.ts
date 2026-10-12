@@ -218,9 +218,10 @@ export class ConversationHistory {
     entry.record.message_count += 1;
     entry.record.updated_at = nowIso(this.now());
     if (entry.record.title === null && record.role === "user") {
+      const characters = Array.from(record.content);
       entry.record.title =
-        record.content.length > titleLength
-          ? `${record.content.slice(0, titleLength)}...`
+        characters.length > titleLength
+          ? `${characters.slice(0, titleLength).join("")}...`
           : record.content;
     }
     await this.writeIndex(entries);

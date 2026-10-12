@@ -351,3 +351,36 @@ it("keeps unknown index fields from another writer when recording a message", as
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it("records user input even when the first model request fails", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace();
+  fixture.responses.push({ status: 503, body: { error: { message: "Unavailable" } } });
+  const agent = await Agent.open({ workspace });
+  await expect(agent.chat("Keep this failed turn")).rejects.toThrow("HTTP 503");
+  const reader = await ConversationHistory.open(join(workspace, ".history"));
+  expect(await reader.getMessages(agent.sessionId)).toEqual([
+    expect.objectContaining({ role: "user", content: "Keep this failed turn" }),
+  ]);
+  expect(await reader.getSession(agent.sessionId)).toMatchObject({
+    title: "Keep this failed turn",
+    message_count: 1,
+  });
+});
+
+it("counts Unicode code points when deriving the reference session title", async () => {
+  const root = await temporaryDirectory();
+  try {
+    const history = await ConversationHistory.open(root);
+    for (const [id, content, title] of [
+      ["short", "😀".repeat(26), "😀".repeat(26)],
+      ["long", `${"a".repeat(49)}😀x`, `${"a".repeat(49)}😀...`],
+    ]) {
+      await history.createSession("helper", id);
+      await history.saveMessage(id, { role: "user", content });
+      expect((await history.getSession(id))?.title).toBe(title);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

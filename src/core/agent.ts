@@ -45,33 +45,30 @@ export class Agent {
     this.replying = true;
     try {
       const user: Message = { role: "user", content: input };
+      await this.history.saveMessage(this.sessionId, user);
       const pending: Message[] = [user];
       while (true) {
         const reply = await this.model.reply([...this.messages, ...pending], toolSchemas, signal);
+        await this.history.saveMessage(this.sessionId, reply);
         pending.push(reply);
         if (!reply.tool_calls?.length) {
-          await this.record(...pending);
+          this.messages.push(...pending);
           return reply.content;
         }
         for (const call of reply.tool_calls) {
-          pending.push({
+          const result: Message = {
             role: "tool",
             tool_call_id: call.id,
             content: await executeTool(call, signal),
-          });
+          };
+          await this.history.saveMessage(this.sessionId, result);
+          pending.push(result);
         }
-        await this.record(...pending);
+        this.messages.push(...pending);
         pending.length = 0;
       }
     } finally {
       this.replying = false;
-    }
-  }
-
-  private async record(...messages: Message[]): Promise<void> {
-    for (const message of messages) {
-      await this.history.saveMessage(this.sessionId, message);
-      this.messages.push(message);
     }
   }
 }
