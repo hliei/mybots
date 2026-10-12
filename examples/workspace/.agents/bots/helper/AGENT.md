@@ -1,7 +1,7 @@
 ---
 name: Helper
 description: A concise conversational assistant.
-allow_skills: false
+allow_skills: true
 # Optional model overrides use the same fields as workspace llm settings.
 # llm:
 #   thinking: false

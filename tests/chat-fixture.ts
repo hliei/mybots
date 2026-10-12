@@ -14,7 +14,17 @@ export interface ModelRequest {
     tool_calls?: { id: string; type: string; function: { name: string; arguments: string } }[];
     tool_call_id?: string;
   }[];
-  tools: { type: string; function: { name: string; parameters: { required: string[] } } }[];
+  tools: {
+    type: string;
+    function: {
+      name: string;
+      description: string;
+      parameters: {
+        required: string[];
+        properties: Record<string, { type: string; description: string; enum?: string[] }>;
+      };
+    };
+  }[];
   thinking: { type: string };
   temperature: number;
   max_tokens: number;
@@ -49,16 +59,21 @@ export async function chatFixture() {
   const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
 
   async function workspace(path = root, settings = "", frontmatter = "") {
-    await mkdir(join(path, "bots", "helper"), { recursive: true });
+    await mkdir(join(path, ".agents", "bots", "helper"), { recursive: true });
     await writeFile(
       join(path, "config.user.yaml"),
       `default_agent: helper\nllm:\n  api_key: offline-test-key\n  api_base: ${endpoint}\n${settings}`,
     );
     await writeFile(
-      join(path, "bots", "helper", "AGENT.md"),
+      join(path, ".agents", "bots", "helper", "AGENT.md"),
       `---\nname: Helper\n${frontmatter}---\n\nGive concise answers.\n`,
     );
     return path;
+  }
+
+  async function writeSkill(id: string, source: string, path = root) {
+    await mkdir(join(path, ".agents", "skills", id), { recursive: true });
+    await writeFile(join(path, ".agents", "skills", id, "SKILL.md"), source);
   }
 
   return {
@@ -69,6 +84,7 @@ export async function chatFixture() {
     transports,
     responses,
     workspace,
+    writeSkill,
     async close() {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) =>

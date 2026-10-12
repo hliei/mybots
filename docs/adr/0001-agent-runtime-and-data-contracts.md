@@ -17,6 +17,12 @@ Workspace YAML contains `llm`, `default_agent`, `agents_path`, `skills_path`, an
 Agent definitions contain `name`, `description`, `llm` overrides, and
 `allow_skills` in frontmatter, followed by their system instructions.
 
+Agent definitions default to `.agents/bots/<id>/AGENT.md` and Skills default to
+`.agents/skills/<id>/SKILL.md`, relative to the Workspace. Explicit `agents_path`
+and `skills_path` override these defaults. This layout intentionally differs from
+the reference's default `bots/` and `skills/` directories; the configuration fields
+and definition formats remain compatible.
+
 The initial model provider is DeepSeek through Chat Completions. The boolean
 `llm.thinking` defaults to `true` and supports Agent-level overrides. Assistant
 messages retain their original `reasoning_content`, which is sent back with
@@ -33,6 +39,21 @@ are:
 
 Page-read results retain the requested URL. Successful reads contain Markdown
 and a null error; failed reads contain empty title/content and an error message.
+
+## Skills
+
+Skills are lazy-loaded instruction sets. The configured `skills_path` contains
+one directory per Skill, each with a `SKILL.md` whose `name` and `description`
+frontmatter identify the Skill and whose body supplies its instructions. The
+directory name is the Skill ID.
+
+When an Agent allows Skills and at least one valid definition exists, its toolset
+includes a `skill` tool. The tool description lists the discovered names and
+descriptions, and the `skill_name` argument accepts a discovered ID. Loading a
+Skill returns its instruction body without frontmatter as the tool result.
+Definitions without both string fields are skipped; requesting an ID that is not
+among the discovered Skills returns an error result instead of reading the file
+system.
 
 ## Conversation history
 
