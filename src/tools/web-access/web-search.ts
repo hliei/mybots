@@ -1,3 +1,4 @@
+import { domainToASCII } from "node:url";
 import type { WebSearchSettings } from "../../config/workspace.ts";
 import type { Tool } from "../toolbox.ts";
 import { searchBrave } from "./brave.ts";
@@ -60,9 +61,13 @@ export function createWebSearchTool(config: WebSearchSettings): Tool<WebSearchAr
     strictArguments: true,
     async execute(args, { signal }) {
       const queries = args.queries ?? [args.query as string];
-      const domains = (args.domainFilter ?? []).map((domain) =>
-        domain.trim().toLowerCase().replace(/\.$/, ""),
-      );
+      const domains = (args.domainFilter ?? []).map((domain) => {
+        const value = domain.trim().toLowerCase().replace(/\.$/, "");
+        const excluded = value.startsWith("-");
+        const host = excluded ? value.slice(1) : value;
+        const normalized = domainToASCII(host) || host;
+        return excluded ? `-${normalized}` : normalized;
+      });
       const includes = domains.filter((domain) => domain && !domain.startsWith("-"));
       const excludes = domains
         .filter((domain) => domain.startsWith("-"))

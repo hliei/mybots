@@ -848,3 +848,60 @@ it.each(["brave", "serpapi"] as const)(
     expect(requests).toBe(1);
   },
 );
+
+it.each(["brave", "serpapi"] as const)(
+  "matches %s international domains and their subdomains for inclusions and exclusions",
+  async (provider) => {
+    model = await chatFixture();
+    search = await searchFixture(provider);
+    const sources = [
+      { title: "Root", url: "https://bücher.example/", snippet: "root" },
+      { title: "Subdomain", url: "https://sub.bücher.example/", snippet: "subdomain" },
+      { title: "Other", url: "https://other.example/", snippet: "other" },
+    ];
+    const body =
+      provider === "brave"
+        ? {
+            web: {
+              results: sources.map(({ title, url, snippet }) => ({
+                title,
+                url,
+                description: snippet,
+              })),
+            },
+          }
+        : {
+            organic_results: sources.map(({ title, url, snippet }) => ({
+              title,
+              link: url,
+              snippet,
+            })),
+          };
+    search.responses.push({ status: 200, body }, { status: 200, body });
+    const agent = await Agent.open({
+      workspace: await model.workspace(undefined, search.settings),
+    });
+    model.responses.push({
+      status: 200,
+      body: toolReply([
+        {
+          name: "web_search",
+          id: "international-include",
+          args: { query: "books", domainFilter: ["bücher.example", "-sub.bücher.example"] },
+        },
+        {
+          name: "web_search",
+          id: "international-exclude",
+          args: { query: "books", domainFilter: ["-bücher.example"] },
+        },
+      ]),
+    });
+    await agent.chat("Search books");
+    expect(JSON.parse(model.requests[1].messages.at(-2)?.content ?? "")).toEqual({
+      queries: [{ query: "books", provider, results: [sources[0]], error: null }],
+    });
+    expect(JSON.parse(model.requests[1].messages.at(-1)?.content ?? "")).toEqual({
+      queries: [{ query: "books", provider, results: [sources[2]], error: null }],
+    });
+  },
+);
