@@ -10,6 +10,7 @@ export interface ModelSettings {
   temperature: number;
   max_tokens: number;
   thinking: boolean;
+  context_window?: number;
 }
 
 export interface WorkspaceSettings {
@@ -77,7 +78,17 @@ function modelSettings(raw: Record<string, unknown>): ModelSettings {
   if (typeof max_tokens !== "number" || !Number.isInteger(max_tokens) || max_tokens <= 0) {
     throw new Error("llm.max_tokens must be a positive integer.");
   }
+  const context_window = raw.context_window;
+  if (
+    context_window !== undefined &&
+    (typeof context_window !== "number" ||
+      !Number.isSafeInteger(context_window) ||
+      context_window <= 0)
+  ) {
+    throw new Error("llm.context_window must be a positive integer.");
+  }
   return {
+    ...(context_window !== undefined ? { context_window } : {}),
     provider,
     model: text(raw.model ?? "deepseek-flash", "llm.model"),
     api_key: text(raw.api_key, "llm.api_key"),

@@ -1,7 +1,7 @@
 # Agent runtime and data contracts
 
 Status: accepted
-Implementation: partial (conversation history and CLI inspection commands delivered; compaction and web tools planned)
+Implementation: partial (conversation history, CLI inspection, and manual compaction delivered; automatic compaction and web tools planned)
 
 The application uses TypeScript and Node.js in one npm package, with a shared
 Agent core called by the CLI. Terminal interaction and provider APIs remain at

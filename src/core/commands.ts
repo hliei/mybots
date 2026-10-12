@@ -1,7 +1,7 @@
 import type { SkillLoader } from "./skills.ts";
 import { UnknownSkillError } from "./skills.ts";
 
-/** Values an inspection command may read without changing session or context state. */
+/** Session inspection values and the explicit compaction action. */
 export interface CommandContext {
   sessionId: string;
   agentName: string;
@@ -9,6 +9,8 @@ export interface CommandContext {
   createdAt: string;
   messageCount: number;
   skills: SkillLoader;
+  contextReport(): string;
+  compact(): Promise<string>;
 }
 
 export interface Command {
@@ -131,11 +133,29 @@ const skillsCommand: Command = {
   },
 };
 
-/** The inspection commands available to an interactive CLI session. */
-export function inspectionCommands(): CommandRegistry {
+const compactCommand: Command = {
+  name: "compact",
+  description: "Summarize older active context",
+  async execute(_args, context) {
+    return context.compact();
+  },
+};
+
+const contextCommand: Command = {
+  name: "context",
+  description: "Show active context and token budget",
+  async execute(_args, context) {
+    return context.contextReport();
+  },
+};
+
+/** The slash commands available to an interactive CLI session. */
+export function sessionCommands(): CommandRegistry {
   const registry = new CommandRegistry();
   registry.register(helpCommand);
   registry.register(skillsCommand);
   registry.register(sessionCommand);
+  registry.register(contextCommand);
+  registry.register(compactCommand);
   return registry;
 }

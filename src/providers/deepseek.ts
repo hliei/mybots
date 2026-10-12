@@ -6,6 +6,12 @@ import type {
 import type { ModelSettings } from "../config/workspace.ts";
 import type { AssistantMessage, Message, ToolCall, ToolSchema } from "../core/messages.ts";
 
+export interface ModelReply {
+  message: AssistantMessage;
+  finishReason: string | undefined;
+  usageTokens?: number;
+}
+
 export class DeepSeek {
   private readonly client: OpenAI;
   private readonly settings: ModelSettings;
@@ -20,11 +26,20 @@ export class DeepSeek {
     });
   }
 
-  async reply(
-    messages: Message[],
-    tools: ToolSchema[],
-    signal?: AbortSignal,
-  ): Promise<AssistantMessage> {
+  // DeepSeek model limits verified against the provider docs on 2026-10-12.
+  get contextWindow(): number {
+    if (this.settings.context_window !== undefined) return this.settings.context_window;
+    return [
+      "deepseek-flash",
+      "deepseek-v4-pro",
+      "deepseek-v4-flash",
+      "deepseek-v4-flash-vision-exp",
+    ].includes(this.settings.model)
+      ? 1_000_000
+      : 128_000;
+  }
+
+  async reply(messages: Message[], tools: ToolSchema[], signal?: AbortSignal): Promise<ModelReply> {
     const request: ChatCompletionCreateParamsNonStreaming & {
       thinking: { type: "enabled" | "disabled" };
     } = {
@@ -34,7 +49,7 @@ export class DeepSeek {
       temperature: this.settings.temperature,
       max_tokens: this.settings.max_tokens,
       thinking: { type: this.settings.thinking ? "enabled" : "disabled" },
-      tools,
+      ...(tools.length ? { tools } : {}),
     };
     let response: ChatCompletion;
     try {
@@ -69,11 +84,23 @@ export class DeepSeek {
     }
     const reasoning: unknown =
       "reasoning_content" in message ? message.reasoning_content : undefined;
+    const usage = response.usage;
+    const validUsage =
+      usage &&
+      [usage.prompt_tokens, usage.completion_tokens, usage.total_tokens].every(
+        (value) => Number.isSafeInteger(value) && value >= 0,
+      ) &&
+      usage.prompt_tokens > 0 &&
+      usage.total_tokens === usage.prompt_tokens + usage.completion_tokens;
     return {
-      role: "assistant",
-      content: message.content ?? "",
-      ...(calls.length ? { tool_calls: calls } : {}),
-      ...(typeof reasoning === "string" ? { reasoning_content: reasoning } : {}),
+      ...(validUsage ? { usageTokens: usage.total_tokens } : {}),
+      finishReason: response.choices[0]?.finish_reason,
+      message: {
+        role: "assistant",
+        content: message.content ?? "",
+        ...(calls.length ? { tool_calls: calls } : {}),
+        ...(typeof reasoning === "string" ? { reasoning_content: reasoning } : {}),
+      },
     };
   }
 }

@@ -256,3 +256,142 @@ it("falls back to ordinary chat for unknown and lone slash input", async () => {
   });
   expect(fixture.requests[1].messages.at(-1)).toEqual({ role: "user", content: "/" });
 });
+
+it("reports and manually compacts context from the CLI, then continues with the summary", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace();
+  fixture.responses.push(
+    {
+      status: 200,
+      body: { choices: [{ message: { role: "assistant", content: "Older answer" } }] },
+    },
+    {
+      status: 200,
+      body: {
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: "Recent answer",
+              reasoning_content: "Recent thinking",
+            },
+          },
+        ],
+      },
+    },
+    {
+      status: 200,
+      body: {
+        choices: [
+          { finish_reason: "stop", message: { role: "assistant", content: "Remember Alice." } },
+        ],
+      },
+    },
+  );
+  const result = await run(
+    ["-w", workspace],
+    `/help\n/context\nOlder ${"o".repeat(90000)}\nRecent ${"r".repeat(90000)}\n/compact\n/context\nContinue\nquit\n`,
+  );
+  expect(result).toMatchObject({ status: 0, stderr: "" });
+  expect(result.stdout).toContain("/context - Show active context and token budget");
+  expect(result.stdout).toContain("/compact - Summarize older active context");
+  expect(result.stdout).toContain("**Active messages:** 0");
+  expect(result.stdout).toContain("**Compaction threshold:** 983616");
+  expect(result.stdout).toContain("Compacted 2 older messages; 3 active messages remain.");
+  expect(result.stdout).toContain("**Active messages:** 3");
+  expect(fixture.requests[2].tools).toBeUndefined();
+  expect(fixture.requests[3].messages).toEqual([
+    { role: "system", content: "Give concise answers." },
+    { role: "user", content: expect.stringContaining("Remember Alice.") },
+    { role: "user", content: `Recent ${"r".repeat(90000)}` },
+    { role: "assistant", content: "Recent answer", reasoning_content: "Recent thinking" },
+    { role: "user", content: "Continue" },
+  ]);
+  const history = await ConversationHistory.open(join(workspace, ".history"));
+  const [session] = await history.listSessions();
+  expect(await history.getMessages(session.id)).toHaveLength(6);
+});
+
+it("reports insufficient context and a summary failure in the CLI while allowing continued chat", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace();
+  fixture.responses.push(
+    {
+      status: 200,
+      body: { choices: [{ message: { role: "assistant", content: "Older answer" } }] },
+    },
+    {
+      status: 200,
+      body: { choices: [{ message: { role: "assistant", content: "Recent answer" } }] },
+    },
+    { status: 503, body: { error: { message: "Unavailable" } } },
+  );
+  const result = await run(
+    ["-w", workspace],
+    `/compact\nOlder ${"o".repeat(90000)}\nRecent ${"r".repeat(90000)}\n/compact\nContinue\nquit\n`,
+  );
+  expect(result).toMatchObject({ status: 0, stderr: "" });
+  expect(result.stdout).toContain("Not enough compactable context");
+  expect(result.stdout).toContain("Compaction failed; active context unchanged");
+  expect(result.stdout).toContain("helper: Hello!");
+  expect(fixture.requests[3].messages).toHaveLength(6);
+});
+
+it("cancels an in-flight CLI compaction with Ctrl+C and leaves the original history intact", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace();
+  let release = (_value: unknown) => {};
+  fixture.responses.push(
+    {
+      status: 200,
+      body: { choices: [{ message: { role: "assistant", content: "Older answer" } }] },
+    },
+    {
+      status: 200,
+      body: { choices: [{ message: { role: "assistant", content: "Recent answer" } }] },
+    },
+    {
+      status: 200,
+      body: new Promise((resolve) => {
+        release = resolve;
+      }),
+    },
+  );
+  const child = spawn(process.execPath, [entry, "-w", workspace], { stdio: "pipe" });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8").on("data", (text) => {
+    stdout += text;
+  });
+  child.stderr.setEncoding("utf8").on("data", (text) => {
+    stderr += text;
+  });
+  let requests = 0;
+  const interruptSummary = () => {
+    requests++;
+    if (requests === 3) child.kill("SIGINT");
+  };
+  fixture.server.on("request", interruptSummary);
+  const timeout = setTimeout(() => child.kill("SIGKILL"), 5000);
+  try {
+    const closed = new Promise<number | null>((resolve, reject) => {
+      child.once("close", resolve);
+      child.once("error", reject);
+    });
+    child.stdin.end(`Older ${"o".repeat(90000)}\nRecent ${"r".repeat(90000)}\n/compact\n`);
+    expect(await closed).toBe(130);
+    expect(stdout).toContain("Goodbye!");
+    expect(stderr).toBe("");
+    const history = await ConversationHistory.open(join(workspace, ".history"));
+    const [session] = await history.listSessions();
+    expect(await history.getMessages(session.id)).toHaveLength(4);
+    expect(fixture.requests).toHaveLength(3);
+  } finally {
+    clearTimeout(timeout);
+    fixture.server.removeListener("request", interruptSummary);
+    release({
+      choices: [{ finish_reason: "stop", message: { role: "assistant", content: "Late summary" } }],
+    });
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  }
+});

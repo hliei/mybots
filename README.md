@@ -61,7 +61,7 @@ relative to the process working directory. Without `--agent` / `-a`, the CLI
 uses `default_agent` from `config.user.yaml`. Enter one message per line. Replies
 print after the complete response arrives. Blank lines are ignored; `quit`,
 `exit`, `q`, EOF, and Ctrl+C end the session. Ctrl+C cancels an in-flight request.
-Type `/help` to list the inspection commands.
+Type `/help` to list the available commands.
 
 Workspace settings preserve `llm`, `default_agent`, `agents_path`, `skills_path`,
 and `history_path`. Relative paths resolve against the Workspace. Optional
@@ -85,12 +85,12 @@ model response do not enter session context. Completed tool-call/result groups
 are retained if a later model request fails or is cancelled; local changes
 already made by tools remain in place. The shared Agent interface rejects
 overlapping `chat()` calls in the same session; the CLI submits turns sequentially.
-Compaction and web tools are later deliveries.
+Manual compaction is available through `/compact`; web tools are later deliveries.
 
 ### Slash commands
 
-The CLI recognizes `/help` (alias `/?`), `/session`, and `/skills` as inspection
-commands. Command names are case-insensitive. Successful inspection commands
+The CLI recognizes `/help` (alias `/?`), `/session`, `/skills`, and `/context` as
+inspection commands; `/compact` requests manual compaction. Command names are case-insensitive. Successful inspection commands
 neither call the model nor append conversation-history messages. Any other slash
 input, including a lone `/`, is sent to the model as ordinary chat.
 
@@ -100,10 +100,49 @@ input, including a lone `/`, is sent to the model as ordinary chat.
 | `/session` | Show the current session ID, Agent name and ID, creation time, and in-memory active-message count without creating or switching sessions. |
 | `/skills` | List each discovered Skill ID and description, or `No skills configured.` when none are valid. |
 | `/skills <id>` | Show one Skill's name, description, and instruction body, or ``✗ Skill `<id>` not found.`` for an unknown ID. |
+| `/context` | Show active-message count (excluding the system prompt), estimated tokens, model context window, output reserve, and effective compaction threshold. |
+| `/compact` | Summarize older active context and retain recent complete turns. Report success, insufficient content or budget, failure, cancellation, or an unusable summary. |
 
 Inspecting a Skill only reads it to render text. It does not register the `skill`
 tool, load the instructions into active context, or change `allow_skills`, and it
 works whether or not the Agent enables Skills.
+
+### Manual compaction
+
+`/compact` replaces older active context with a user summary followed by the
+original recent messages. It uses a separate model request without tools and
+adds no artificial assistant acknowledgement. The summary request includes
+visible text, tool names and arguments, and at most 2,000 characters per tool
+result, with a truncation marker. It excludes original reasoning; retained
+assistant messages keep their complete `reasoning_content`.
+
+Budget reporting prefers valid provider input-plus-output usage and estimates
+messages appended since that response. Without valid usage, it estimates UTF-8
+JSON bytes divided by three plus framing overhead, including system instructions,
+reasoning, tool arguments, and tool definitions. These are estimates, not exact
+tokenizer counts. The output reserve is the larger of 16,384 and `max_tokens`;
+the effective threshold is the context window minus that reserve, floored at zero.
+
+The provider's published 1M context window is used for `deepseek-flash`,
+`deepseek-v4-pro`, and the Flash aliases `deepseek-v4-flash` and
+`deepseek-v4-flash-vision-exp` (verified October 12, 2026). Other model names use a
+128,000-token fallback. Set the optional positive integer `llm.context_window`
+in Workspace or Agent settings for another model or endpoint's actual limit.
+This setting controls budgeting and is not sent to the API.
+
+The retained tail targets at least 20,000 estimated tokens and extends backward
+to a user-turn boundary so tool calls and all their results stay together.
+Compaction retains whole turns, even when one turn exceeds the tail target.
+Too little older content causes no summary request. The separate summary request
+must fit the model window with the output reserve. Blank, truncated, tool-calling,
+or non-reducing summaries are rejected. Failure and cancellation keep active
+context intact. Chat and compaction cannot mutate the same Agent concurrently.
+
+A successful compaction clears usage from the old context; the next chat request
+uses the rebuilt context. Original JSONL history is unchanged, and neither the
+command nor generated summary is recorded as conversation history. Compaction
+state remains in memory for this launch. Automatic triggering, long-turn prefix
+summaries, and repeated-compaction integration are planned follow-up work.
 
 ### Local tools
 
@@ -210,6 +249,14 @@ There is no history-listing or resume command.
 
 - [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)
 - [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/)
+- [DeepSeek model limits](https://api-docs.deepseek.com/quick_start/pricing/)
+- [Compaction design and pi sources](docs/adr/0002-token-budgeted-context-compaction.md)
+
+Compaction deviations from the fixed pi sources: retain whole user turns rather
+than using finer cut points with a turn-prefix summary; estimate UTF-8 bytes
+with a framing margin rather than characters; and keep summary state in memory
+instead of persisted checkpoints. The initial delivery exposes manual commands;
+automatic triggering and repeated-compaction integration remain planned.
 
 ## Checks and tests
 
@@ -261,7 +308,8 @@ src/
 ├── cli/chat.ts            # Arguments and terminal interaction
 ├── core/
 │   ├── agent.ts           # Session and tool-loop orchestration
-│   ├── commands.ts        # Slash-command registry and inspection handlers
+│   ├── commands.ts        # Slash-command registry and handlers
+│   ├── compaction.ts      # Token estimates, retention boundary, and summary input
 │   ├── history.ts         # JSONL conversation history and session index
 │   ├── messages.ts        # Shared messages and tool protocol types
 │   └── skills.ts          # Skill discovery and loading
