@@ -1,7 +1,7 @@
 # Agent runtime and data contracts
 
 Status: accepted
-Implementation: partial (conversation history delivered; web tools planned)
+Implementation: partial (conversation history and CLI inspection commands delivered; compaction and web tools planned)
 
 The application uses TypeScript and Node.js in one npm package, with a shared
 Agent core called by the CLI. Terminal interaction and provider APIs remain at
@@ -53,7 +53,10 @@ descriptions, and the `skill_name` argument accepts a discovered ID. Loading a
 Skill returns its instruction body without frontmatter as the tool result.
 Definitions without both string fields are skipped; requesting an ID that is not
 among the discovered Skills returns an error result instead of reading the file
-system.
+system. The CLI lists and inspects discovered Skills through its inspection
+commands without registering the tool or loading instructions into context;
+this reads the Agent's `SkillLoader` directly, correcting the reference command's
+attempt to read a non-existent session attribute.
 
 ## Conversation history
 

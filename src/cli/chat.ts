@@ -20,7 +20,9 @@ export async function runCli(args: string[]): Promise<number> {
       console.log(
         "Workspace defaults to ../default_workspace; Agent defaults to default_agent in config.user.yaml.",
       );
-      console.log("Type quit, exit, or q to end; Ctrl+C and EOF also exit.");
+      console.log(
+        "Type /help for commands. Type quit, exit, or q to end; Ctrl+C and EOF also exit.",
+      );
       return 0;
     }
     if (positionals.length > 1 || (positionals.length === 1 && positionals[0] !== "chat")) {
@@ -43,7 +45,7 @@ export async function runCli(args: string[]): Promise<number> {
     };
     process.once("SIGINT", interrupt);
     lines.once("SIGINT", interrupt);
-    console.log(`Chat with ${agent.definition.name}. Type quit, exit, or q to end.`);
+    console.log(`Chat with ${agent.definition.name}. Type /help for commands, or quit to end.`);
     lines.prompt();
     try {
       for await (const line of lines) {
@@ -52,7 +54,12 @@ export async function runCli(args: string[]): Promise<number> {
         if (["quit", "exit", "q"].includes(input.toLowerCase())) break;
         if (input) {
           try {
-            console.log(`${agent.definition.id}: ${await agent.chat(input, controller.signal)}`);
+            const command = await agent.runCommand(input);
+            if (command !== undefined) {
+              console.log(command);
+            } else {
+              console.log(`${agent.definition.id}: ${await agent.chat(input, controller.signal)}`);
+            }
           } catch (error) {
             if (controller.signal.aborted) break;
             console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
