@@ -3,6 +3,11 @@
 Status: accepted
 Implementation: conversation history, CLI inspection, compaction, Brave web search, and rendered web reading delivered
 
+Web-tool redesign: [ADR 0003](0003-web-search-and-content-fetching.md) records
+the planned replacement of the web-tool contract and provider layout. The web
+sections below describe the original delivered behavior; the replacement has
+not yet been implemented. Other runtime and data contracts remain applicable.
+
 The application uses TypeScript and Node.js in one npm package, with a shared
 Agent core called by the CLI. Terminal interaction and provider APIs remain at
 the core's boundaries so execution can be tested with controlled services.

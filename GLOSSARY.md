@@ -26,3 +26,10 @@ to the user's task.
 
 **Skill ID**:
 The Skill directory name that identifies a Skill when it is loaded.
+
+**Web search**:
+The discovery of web sources relevant to a query supplied by the Agent.
+
+**Content fetching**:
+The retrieval of readable text from a specified web source for the Agent.
+_Avoid_: Web search when referring to retrieving a known source
