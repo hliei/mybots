@@ -7,7 +7,7 @@ export async function pageFixture() {
   const requests: string[] = [];
   const pages = new Map<
     string,
-    { body: string; status?: number; headers?: Record<string, string> }
+    { body: string | Buffer; status?: number; headers?: Record<string, string> }
   >();
   const server = createServer((request, response) => {
     requests.push(request.url ?? "");

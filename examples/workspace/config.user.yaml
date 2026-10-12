@@ -1,7 +1,7 @@
 default_agent: helper
 agents_path: .agents/bots
 skills_path: .agents/skills
-history_path: .history
+history_path: .agent/history
 llm:
   provider: deepseek
   model: deepseek-flash
@@ -10,3 +10,9 @@ llm:
   temperature: 0.7
   max_tokens: 2048
   thinking: true
+
+# Optional web tools.
+# web_search:
+#   provider: brave # or serpapi
+#   api_key: YOUR_SEARCH_API_KEY
+# fetch_content: {} # Direct HTTP HTML/Markdown/plain text; no JavaScript rendering.

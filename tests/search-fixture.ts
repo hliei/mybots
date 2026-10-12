@@ -2,7 +2,7 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
-export async function searchFixture() {
+export async function searchFixture(provider: "brave" | "serpapi" = "brave") {
   const requests: { method?: string; url: string; token?: string; accept?: string }[] = [];
   const responses: { status: number; body: unknown }[] = [];
   const server = createServer((request, response) => {
@@ -38,7 +38,7 @@ export async function searchFixture() {
     requests,
     responses,
     endpoint,
-    settings: `websearch:\n  api_key: offline-search-key\n  api_base: ${endpoint}\n`,
+    settings: `web_search:\n  provider: ${provider}\n  api_key: offline-search-key\n  api_base: ${endpoint}\n`,
     async close() {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) =>

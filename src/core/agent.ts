@@ -4,9 +4,10 @@ import { loadSettings } from "../config/workspace.ts";
 import { DeepSeek } from "../providers/deepseek.ts";
 import { builtinTools } from "../tools/builtin.ts";
 import { createSkillTool } from "../tools/skill.ts";
+import type { Tool } from "../tools/toolbox.ts";
 import { Toolbox } from "../tools/toolbox.ts";
-import { createWebReadTool } from "../tools/webread.ts";
-import { createWebSearchTool } from "../tools/websearch.ts";
+import { createFetchContentTool } from "../tools/web-access/fetch-content.ts";
+import { createWebSearchTool } from "../tools/web-access/web-search.ts";
 import type { CommandContext, CommandRegistry } from "./commands.ts";
 import { sessionCommands } from "./commands.ts";
 import {
@@ -261,12 +262,12 @@ async function buildToolbox(
   definition: AgentDefinition,
   config: WorkspaceSettings,
 ): Promise<Toolbox> {
-  const tools = [...builtinTools];
+  const tools: Tool<object>[] = [...builtinTools];
   if (definition.allow_skills) {
     const discovered = await skills.discover();
     if (discovered.length) tools.push(createSkillTool(skills, discovered));
   }
-  if (config.websearch) tools.push(createWebSearchTool(config.websearch));
-  if (config.webread) tools.push(createWebReadTool());
+  if (config.web_search) tools.push(createWebSearchTool(config.web_search));
+  if (config.fetch_content) tools.push(createFetchContentTool());
   return new Toolbox(tools);
 }
