@@ -3,9 +3,9 @@
 A TypeScript and Node.js project for an interactive CLI and a message-platform
 bot, with a shared agent core.
 
-The development toolchain is configured. Application entry points currently
-print a setup message or help and exit; chat, model calls, and platform
-connections are not implemented yet.
+The CLI supports non-streaming, multi-turn conversations with DeepSeek through
+a shared Agent core. Each launch creates a fresh session in memory. The bot
+server currently prints a setup message or help and exits.
 
 ## Setup
 
@@ -24,20 +24,70 @@ npm exec --yes --package=node@24.21.0 -- npm ci --ignore-scripts
 npm exec --yes --package=node@24.21.0 -- npm run verify
 ```
 
-Direct development dependencies use exact versions. Commit `package-lock.json`
+Direct dependencies use exact versions. Commit `package-lock.json`
 with dependency changes. To install or update dependencies locally, use
 `npm install --ignore-scripts` and review the resulting changes.
 
 ## Development
 
 ```sh
-npm run dev:cli
+npm run dev:cli -- --workspace ./workspace
 npm run dev:bot
 ```
 
 These commands run TypeScript source directly using Node.js native type
-stripping. Restart the command manually after changing code. The current entry
-points exit after printing their setup message. Pass `-- --help` to print help.
+stripping. Restart the command manually after changing code. Pass `-- --help`
+to print help without loading configuration or contacting a service.
+
+## CLI conversation
+
+Copy the credential-free example into the ignored local Workspace:
+
+```sh
+cp -R examples/workspace ./workspace
+```
+
+Set `llm.api_key` in `workspace/config.user.yaml` to your DeepSeek API key, then:
+
+```sh
+npm run dev:cli -- --workspace ./workspace chat --agent helper
+# Short options; chat is optional:
+npm run dev:cli -- -w ./workspace -a helper
+```
+
+Without `--workspace` / `-w`, the reference default is `../default_workspace`,
+relative to the process working directory. Without `--agent` / `-a`, the CLI
+uses `default_agent` from `config.user.yaml`. Enter one message per line. Replies
+print after the complete response arrives. Blank lines are ignored; `quit`,
+`exit`, `q`, EOF, and Ctrl+C end the session. Ctrl+C cancels an in-flight request.
+
+Workspace settings preserve `llm`, `default_agent`, `agents_path`, `skills_path`,
+and `history_path`. Relative paths resolve against the Workspace. Optional
+`websearch` and `webread` settings are preserved for later capabilities.
+Agent definitions default to `bots/<id>/AGENT.md` (configured by `agents_path`); frontmatter preserves
+`name`, `description`, `llm`, and `allow_skills`. The Markdown body supplies the
+system instructions. Agent `llm` fields override matching Workspace fields.
+
+The supported provider is `deepseek`. Model settings use `provider`, `model`,
+`api_key`, `api_base`, `temperature`, `max_tokens`, and the boolean `thinking`.
+The model defaults to `deepseek-flash`, the endpoint to `https://api.deepseek.com`,
+temperature to `0.7`, max tokens to `2048`, and thinking to `true`. The API key is
+required. Set `llm.thinking: false` in Workspace or Agent settings to explicitly
+disable thinking. DeepSeek ignores temperature while thinking is enabled.
+Assistant messages retain full `reasoning_content` in session context; the CLI
+prints the final text only.
+
+Requests time out after 60 seconds and are not automatically retried. Provider
+failures print an error and allow another message; failed turns do not enter
+session context. Only successful turns carry forward. The shared Agent interface
+rejects overlapping `chat()` calls in the same session; the CLI submits turns
+sequentially. Tool execution, Skills,
+saved history, slash commands, compaction, and web tools are later deliveries.
+
+### API sources
+
+- [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)
+- [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/)
 
 ## Checks and tests
 
@@ -65,7 +115,7 @@ contact a model or messaging platform.
 
 ```sh
 npm run build
-npm run start:cli
+npm run start:cli -- --workspace ./workspace
 npm run start:bot
 ```
 
