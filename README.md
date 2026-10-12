@@ -3,9 +3,10 @@
 A TypeScript and Node.js project for an interactive CLI and a message-platform
 bot, with a shared agent core.
 
-The CLI supports non-streaming, multi-turn conversations and local tool
-execution with DeepSeek through a shared Agent core. Each launch creates a fresh session in memory. The bot
-server currently prints a setup message or help and exits.
+The CLI supports non-streaming, multi-turn conversations, local tool execution,
+and Skill loading with DeepSeek through a shared Agent core. Each launch creates
+a fresh session in memory. The bot server currently prints a setup message or
+help and exits.
 
 ## Setup
 
@@ -64,7 +65,7 @@ print after the complete response arrives. Blank lines are ignored; `quit`,
 Workspace settings preserve `llm`, `default_agent`, `agents_path`, `skills_path`,
 and `history_path`. Relative paths resolve against the Workspace. Optional
 `websearch` and `webread` settings are preserved for later capabilities.
-Agent definitions default to `bots/<id>/AGENT.md` (configured by `agents_path`); frontmatter preserves
+Agent definitions default to `.agents/bots/<id>/AGENT.md` (configured by `agents_path`); frontmatter preserves
 `name`, `description`, `llm`, and `allow_skills`. The Markdown body supplies the
 system instructions. Agent `llm` fields override matching Workspace fields.
 
@@ -83,7 +84,7 @@ model response do not enter session context. Completed tool-call/result groups
 are retained if a later model request fails or is cancelled; local changes
 already made by tools remain in place. The shared Agent interface rejects
 overlapping `chat()` calls in the same session; the CLI submits turns sequentially.
-Skills, slash commands, compaction, and web tools are later deliveries.
+Slash commands, compaction, and web tools are later deliveries.
 
 ### Local tools
 
@@ -114,6 +115,55 @@ and descendants in its process group receive SIGTERM, then SIGKILL after a
 one-second grace period if needed. POSIX process cleanup is tested; Windows
 process-tree termination has not been verified.
 
+### Skills
+
+A Skill is a named set of instructions in a directory under `skills_path`
+(`.agents/skills` by default) that contains a `SKILL.md` file.
+
+Both Agent definitions and Skills live under the Workspace's `.agents/` directory.
+Set `agents_path: bots` and `skills_path: skills` explicitly to use the old layout.
+
+```text
+.agents/
+├── bots/
+│   └── helper/
+│       └── AGENT.md
+└── skills/
+    └── concise-summary/
+        └── SKILL.md
+```
+
+`SKILL.md` starts with YAML frontmatter containing `name` and `description`,
+followed by the instructions:
+
+```markdown
+---
+name: Concise summary
+description: Summarize long text as a short bullet list
+---
+
+When the user asks for a summary, read the requested text in full and return at
+most five bullets, most important first.
+```
+
+Set `allow_skills: true` in the Agent frontmatter to let that Agent use Skills.
+When it is enabled and at least one directory has a valid `SKILL.md`, the Agent
+adds a `skill` tool. The tool description lists each Skill's frontmatter name and
+description, and its `skill_name` argument accepts a Skill directory name (the
+Skill ID). Loading a Skill returns its instruction body without the frontmatter
+and supplies it to the model as the tool result, so the model can follow the
+instructions for the current task.
+
+Directories without `SKILL.md`, and files missing a string `name` or
+`description`, are skipped without an error. Extra frontmatter fields are
+ignored and the instruction body may be empty. When the Agent sets
+`allow_skills: false`, the skills location is missing, or no valid Skill exists,
+the Agent registers no `skill` tool. Requesting an ID that is not among the
+discovered Skills returns
+`Error: Skill '<id>' not found. It may have been removed or is unavailable.`
+Skills load only when the model requests them; interactive listing and
+inspection from the CLI are a later delivery.
+
 ### Conversation history
 
 Each CLI launch creates a new Agent session and records it under `history_path`
@@ -121,14 +171,16 @@ Each CLI launch creates a new Agent session and records it under `history_path`
 
 - `index.jsonl` holds one record per session with `id`, `agent_id`, `title`,
   `message_count`, `created_at`, and `updated_at`. The first user message supplies
-  the title, truncated to 50 characters plus `...`. Sessions list most recently
+  the title, truncated to 50 Unicode code points plus `...`. Sessions list most recently
   updated first.
 - `sessions/<session_id>.jsonl` appends one record per message with `timestamp`,
   `role`, `content`, `tool_calls`, and `tool_call_id`, plus `reasoning_content` on
   assistant messages that have it.
 
-Saved history matches the session context: a turn that fails before a model
-response is not recorded, and committed tool-call/result groups remain recorded.
+User input is saved before requesting a model response, including failed or
+cancelled turns. Assistant responses are saved before tool execution, and tool
+results are saved as they arrive. Active context retains completed tool groups;
+failed inputs remain in saved history even when excluded from active context.
 The reference Python implementation ignores reasoning content and drops it when
 rewriting records; Mybots preserves the original value and never fabricates
 reasoning a record lacks. Records written by the reference remain readable.
@@ -190,12 +242,15 @@ src/
 ├── core/
 │   ├── agent.ts           # Session and tool-loop orchestration
 │   ├── history.ts         # JSONL conversation history and session index
-│   └── messages.ts        # Shared messages and tool protocol types
+│   ├── messages.ts        # Shared messages and tool protocol types
+│   └── skills.ts          # Skill discovery and loading
 ├── config/workspace.ts    # Workspace and Agent settings
 ├── providers/deepseek.ts  # DeepSeek request/response conversion
 ├── tools/
-│   ├── builtin.ts         # Local tool schemas and execution
-│   └── shell.ts           # Shell execution and cleanup
+│   ├── builtin.ts         # Local tool definitions and execution
+│   ├── shell.ts           # Shell execution and cleanup
+│   ├── skill.ts           # Dynamic skill tool
+│   └── toolbox.ts         # Tool schemas, argument validation, and dispatch
 └── bot/startup.ts          # Bot startup placeholder
 ```
 

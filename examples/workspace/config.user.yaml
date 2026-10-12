@@ -1,6 +1,6 @@
 default_agent: helper
-agents_path: bots
-skills_path: skills
+agents_path: .agents/bots
+skills_path: .agents/skills
 history_path: .history
 llm:
   provider: deepseek

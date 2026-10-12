@@ -384,3 +384,29 @@ it("counts Unicode code points when deriving the reference session title", async
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it("persists Skill loading and continuation from the .agents workspace layout", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace(fixture.root, "", "allow_skills: true\n");
+  await fixture.writeSkill(
+    "summary",
+    "---\nname: Summary\ndescription: Summarize text\n---\nKeep it brief.",
+  );
+  fixture.responses.push({
+    status: 200,
+    body: toolReply([{ name: "skill", id: "history-skill", args: { skill_name: "summary" } }]),
+  });
+  const agent = await Agent.open({ workspace });
+  expect(await agent.chat("Summarize this")).toBe("Hello!");
+  const reader = await ConversationHistory.open(join(workspace, ".history"));
+  const messages = await reader.getMessages(agent.sessionId);
+  expect(messages.map((message) => message.role)).toEqual([
+    "user",
+    "assistant",
+    "tool",
+    "assistant",
+  ]);
+  expect(messages[2]).toMatchObject({ tool_call_id: "history-skill", content: "Keep it brief." });
+  expect(messages[1].reasoning_content).toBe("Tool reasoning.");
+  expect((await reader.getSession(agent.sessionId))?.message_count).toBe(4);
+});

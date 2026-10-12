@@ -189,3 +189,29 @@ it("executes multiple tool rounds from the CLI using relative paths from process
       .map((message) => message.reasoning_content),
   ).toEqual(["Save the note.", "Inspect the note."]);
 });
+
+it("discovers and loads a Skill through the CLI and prints the final reply", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace(fixture.root, "", "allow_skills: true\n");
+  await fixture.writeSkill(
+    "weather",
+    "---\nname: Weather\ndescription: Look up the weather\n---\n\nAlways mention the temperature unit.\n",
+    workspace,
+  );
+  fixture.responses.push({
+    status: 200,
+    body: toolReply(
+      [{ name: "skill", id: "cli-skill", args: { skill_name: "weather" } }],
+      "Load the CLI skill.",
+    ),
+  });
+  const result = await run(["-w", workspace], "Check the weather\nquit\n");
+  expect(result).toMatchObject({ status: 0, stderr: "" });
+  expect(result.stdout.match(/helper: Hello!/g)).toHaveLength(1);
+  expect(fixture.requests[0].tools.map((tool) => tool.function.name)).toContain("skill");
+  expect(fixture.requests[1].messages.at(-1)).toEqual({
+    role: "tool",
+    tool_call_id: "cli-skill",
+    content: "Always mention the temperature unit.",
+  });
+});

@@ -23,3 +23,6 @@ information forward into the continuing conversation.
 **Skill**:
 A named set of instructions that the Agent can discover and load when relevant
 to the user's task.
+
+**Skill ID**:
+The Skill directory name that identifies a Skill when it is loaded.
