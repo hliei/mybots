@@ -1,0 +1,61 @@
+# Agent runtime and data contracts
+
+Status: accepted
+Implementation: planned
+
+The application uses TypeScript and Node.js in one npm package, with a shared
+Agent core called by the CLI. Terminal interaction and provider APIs remain at
+the core's boundaries so execution can be tested with controlled services.
+Explicit configuration and message formats support exchanging workspace data
+and preserving the information needed to continue model requests.
+
+## Configuration and providers
+
+Workspace YAML contains `llm`, `default_agent`, `agents_path`, `skills_path`, and
+`history_path`, with optional web-tool settings. The model settings are
+`provider`, `model`, `api_key`, `api_base`, `temperature`, and `max_tokens`.
+Agent definitions contain `name`, `description`, `llm` overrides, and
+`allow_skills` in frontmatter, followed by their system instructions.
+
+The initial model provider is DeepSeek through Chat Completions. The boolean
+`llm.thinking` defaults to `true` and supports Agent-level overrides. Assistant
+messages retain their original `reasoning_content`, which is sent back with
+retained conversation messages during thinking-mode tool calls.
+
+Web search uses Brave Search. Web reading uses Chromium controlled by Node.js
+to obtain rendered content and convert it to Markdown. The web-tool data shapes
+are:
+
+| Result | Fields |
+| --- | --- |
+| Search result | `title`, `url`, `snippet` |
+| Page read result | `url`, `title`, `content`, `error` |
+
+Page-read results retain the requested URL. Successful reads contain Markdown
+and a null error; failed reads contain empty title/content and an error message.
+
+## Conversation history
+
+Each CLI launch creates a new Agent session. The configured history directory
+contains a JSONL session index and a separate append-only message log for each
+session. Index metadata is updated as messages are recorded.
+
+- Index records contain `id`, `agent_id`, `title`, `message_count`, `created_at`,
+  and `updated_at`.
+- Message records contain `timestamp`, `role`, `content`, `tool_calls`, and
+  `tool_call_id`, with optional `reasoning_content`.
+- Tool calls contain `id`, `type`, and `function`; function data contains `name`
+  and JSON-string `arguments`. Results retain the corresponding call ID.
+
+Records without reasoning content remain readable. Readers that discard unknown
+fields lose this information when rewriting a record; histories lacking the
+original reasoning cannot guarantee thinking-mode tool continuation.
+
+Full conversation history remains saved while [context compaction](0002-token-budgeted-context-compaction.md)
+rebuilds the active context used for subsequent model requests.
+
+## Sources
+
+- [Workspace and Agent configuration](https://github.com/czl9707/build-your-own-openclaw/blob/37ae5dd255a0451609e67ad6d6a51fa5de80523c/06-web-tools/src/mybot/utils/config.py).
+- [Session and message schemas](https://github.com/czl9707/build-your-own-openclaw/blob/37ae5dd255a0451609e67ad6d6a51fa5de80523c/06-web-tools/src/mybot/core/history.py).
+- [DeepSeek thinking-mode request requirements](https://api-docs.deepseek.com/guides/thinking_mode/).

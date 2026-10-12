@@ -12,6 +12,14 @@ or suggest creating them upfront. The `/domain-modeling` skill,
 reached via `/grill-with-docs` and `/improve-codebase-architecture`,
 creates them lazily when terms or decisions get resolved.
 
+## Write technical decisions
+
+Repository documentation describes the chosen architecture, data contracts,
+algorithms, and reasons directly. When adopting an external design, spell out
+its relevant behavior so the document stands on its own. Keep source attribution
+in a separate Sources section, and distinguish planned decisions from implemented
+behavior. Comparison goals and interview history belong in local planning.
+
 ## File structure
 
 Use a single-context layout:
