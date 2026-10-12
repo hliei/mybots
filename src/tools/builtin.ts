@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
-import type { ToolCall } from "./model.ts";
+import type { ToolCall } from "../core/messages.ts";
 import { runShell } from "./shell.ts";
 
 const definitions: { name: string; description: string; fields: Record<string, string> }[] = [

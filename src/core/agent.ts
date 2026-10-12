@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { AgentDefinition, WorkspaceSettings } from "./config.ts";
-import { loadSettings } from "./config.ts";
-import type { Message } from "./model.ts";
-import { DeepSeek } from "./model.ts";
-import { executeTool } from "./tools.ts";
+import type { AgentDefinition, WorkspaceSettings } from "../config/workspace.ts";
+import { loadSettings } from "../config/workspace.ts";
+import { DeepSeek } from "../providers/deepseek.ts";
+import { executeTool, toolSchemas } from "../tools/builtin.ts";
+import type { Message } from "./messages.ts";
 
 export class Agent {
   readonly config: WorkspaceSettings;
@@ -35,7 +35,7 @@ export class Agent {
       const user: Message = { role: "user", content: input };
       const pending: Message[] = [user];
       while (true) {
-        const reply = await this.model.reply([...this.messages, ...pending], signal);
+        const reply = await this.model.reply([...this.messages, ...pending], toolSchemas, signal);
         pending.push(reply);
         if (!reply.tool_calls?.length) {
           this.messages.push(...pending);

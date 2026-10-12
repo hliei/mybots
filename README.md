@@ -157,6 +157,30 @@ npm run start:cli -- --help
 npm run start:bot -- --help
 ```
 
+## Source layout
+
+Only executable entry points live directly under `src/`. Implementation files
+are grouped by their current responsibilities:
+
+```text
+src/
+├── cli.ts                 # CLI entry point
+├── server.ts              # Bot entry point
+├── cli/chat.ts            # Arguments and terminal interaction
+├── core/
+│   ├── agent.ts           # Session and tool-loop orchestration
+│   └── messages.ts        # Shared messages and tool protocol types
+├── config/workspace.ts    # Workspace and Agent settings
+├── providers/deepseek.ts  # DeepSeek request/response conversion
+├── tools/
+│   ├── builtin.ts         # Local tool schemas and execution
+│   └── shell.ts           # Shell execution and cleanup
+└── bot/startup.ts          # Bot startup placeholder
+```
+
+The Agent supplies the available tool schemas to the provider. The provider
+handles model requests without selecting which application tools are enabled.
+
 ## Project rules
 
 - [Development](docs/agents/development.md)

@@ -3,27 +3,8 @@ import type {
   ChatCompletion,
   ChatCompletionCreateParamsNonStreaming,
 } from "openai/resources/chat/completions";
-import type { ModelSettings } from "./config.ts";
-import { toolSchemas } from "./tools.ts";
-
-export interface ToolCall {
-  id: string;
-  type: "function";
-  function: { name: string; arguments: string };
-}
-
-export interface AssistantMessage {
-  role: "assistant";
-  content: string;
-  reasoning_content?: string;
-  tool_calls?: ToolCall[];
-}
-
-export type Message =
-  | { role: "system"; content: string }
-  | { role: "user"; content: string }
-  | AssistantMessage
-  | { role: "tool"; content: string; tool_call_id: string };
+import type { ModelSettings } from "../config/workspace.ts";
+import type { AssistantMessage, Message, ToolCall, ToolSchema } from "../core/messages.ts";
 
 export class DeepSeek {
   private readonly client: OpenAI;
@@ -39,7 +20,11 @@ export class DeepSeek {
     });
   }
 
-  async reply(messages: Message[], signal?: AbortSignal): Promise<AssistantMessage> {
+  async reply(
+    messages: Message[],
+    tools: ToolSchema[],
+    signal?: AbortSignal,
+  ): Promise<AssistantMessage> {
     const request: ChatCompletionCreateParamsNonStreaming & {
       thinking: { type: "enabled" | "disabled" };
     } = {
@@ -49,7 +34,7 @@ export class DeepSeek {
       temperature: this.settings.temperature,
       max_tokens: this.settings.max_tokens,
       thinking: { type: this.settings.thinking ? "enabled" : "disabled" },
-      tools: toolSchemas,
+      tools,
     };
     let response: ChatCompletion;
     try {

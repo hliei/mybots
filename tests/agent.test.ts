@@ -2,7 +2,7 @@ import { once } from "node:events";
 import { appendFile, mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { Agent } from "../src/agent.ts";
+import { Agent } from "../src/core/agent.ts";
 import { chatFixture } from "./chat-fixture.ts";
 
 let fixture: Awaited<ReturnType<typeof chatFixture>> | undefined;
