@@ -1,0 +1,12 @@
+default_agent: helper
+agents_path: bots
+skills_path: skills
+history_path: .history
+llm:
+  provider: deepseek
+  model: deepseek-flash
+  api_key: ""
+  api_base: https://api.deepseek.com
+  temperature: 0.7
+  max_tokens: 2048
+  thinking: true

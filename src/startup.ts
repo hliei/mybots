@@ -1,4 +1,4 @@
-export function runStartup(mode: "cli" | "bot", args: string[]): number {
+export function runStartup(mode: "bot", args: string[]): number {
   if (args.length === 1 && args[0] === "--help") {
     console.log(`Usage: npm run start:${mode} -- [--help]`);
     return 0;
@@ -9,10 +9,6 @@ export function runStartup(mode: "cli" | "bot", args: string[]): number {
     return 1;
   }
 
-  console.log(
-    mode === "cli"
-      ? "Interactive chat is not implemented yet."
-      : "Bot server is not implemented yet.",
-  );
+  console.log("Bot server is not implemented yet.");
   return 0;
 }
