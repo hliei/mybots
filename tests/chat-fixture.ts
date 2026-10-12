@@ -14,7 +14,17 @@ export interface ModelRequest {
     tool_calls?: { id: string; type: string; function: { name: string; arguments: string } }[];
     tool_call_id?: string;
   }[];
-  tools: { type: string; function: { name: string; parameters: { required: string[] } } }[];
+  tools: {
+    type: string;
+    function: {
+      name: string;
+      description: string;
+      parameters: {
+        required: string[];
+        properties: Record<string, { type: string; description: string; enum?: string[] }>;
+      };
+    };
+  }[];
   thinking: { type: string };
   temperature: number;
   max_tokens: number;
@@ -61,6 +71,11 @@ export async function chatFixture() {
     return path;
   }
 
+  async function writeSkill(id: string, source: string, path = root) {
+    await mkdir(join(path, "skills", id), { recursive: true });
+    await writeFile(join(path, "skills", id, "SKILL.md"), source);
+  }
+
   return {
     root,
     server,
@@ -69,6 +84,7 @@ export async function chatFixture() {
     transports,
     responses,
     workspace,
+    writeSkill,
     async close() {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) =>

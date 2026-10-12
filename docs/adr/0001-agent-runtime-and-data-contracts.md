@@ -34,6 +34,21 @@ are:
 Page-read results retain the requested URL. Successful reads contain Markdown
 and a null error; failed reads contain empty title/content and an error message.
 
+## Skills
+
+Skills are lazy-loaded instruction sets. The configured `skills_path` contains
+one directory per Skill, each with a `SKILL.md` whose `name` and `description`
+frontmatter identify the Skill and whose body supplies its instructions. The
+directory name is the Skill ID.
+
+When an Agent allows Skills and at least one valid definition exists, its toolset
+includes a `skill` tool. The tool description lists the discovered names and
+descriptions, and the `skill_name` argument accepts a discovered ID. Loading a
+Skill returns its instruction body without frontmatter as the tool result.
+Definitions without both string fields are skipped; requesting an ID that is not
+among the discovered Skills returns an error result instead of reading the file
+system.
+
 ## Conversation history
 
 Each CLI launch creates a new Agent session. The configured history directory

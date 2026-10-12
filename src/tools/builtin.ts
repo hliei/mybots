@@ -1,96 +1,92 @@
 import { readFile, writeFile } from "node:fs/promises";
-import type { ToolCall } from "../core/messages.ts";
 import { runShell } from "./shell.ts";
+import type { Tool } from "./toolbox.ts";
 
-const definitions: { name: string; description: string; fields: Record<string, string> }[] = [
+function errorCode(error: unknown): string | undefined {
+  return error instanceof Error && "code" in error ? String(error.code) : undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Shared filesystem failures whose reference wording depends only on the action. */
+function pathError(code: string | undefined, path: string, action: string): string | undefined {
+  if (code === "EISDIR") return `Error: Path is a directory, not a file: ${path}`;
+  if (code === "EACCES" || code === "EPERM") return `Error: Permission denied ${action}: ${path}`;
+  return undefined;
+}
+
+export const builtinTools: Tool[] = [
   {
     name: "read",
     description: "Read the contents of a text file",
-    fields: { path: "Path to the file to read" },
+    arguments: [{ name: "path", description: "Path to the file to read" }],
+    async execute({ path }, { signal }) {
+      try {
+        return await readFile(path, { encoding: "utf8", signal });
+      } catch (error) {
+        const code = errorCode(error);
+        const denied = pathError(code, path, "reading");
+        if (denied) return denied;
+        if (code === "ENOENT") return `Error: File not found: ${path}`;
+        return `Error reading file: ${errorMessage(error)}`;
+      }
+    },
   },
   {
     name: "write",
     description: "Write content to a file",
-    fields: { path: "Path to the file to write", content: "Content to write to the file" },
+    arguments: [
+      { name: "path", description: "Path to the file to write" },
+      { name: "content", description: "Content to write to the file" },
+    ],
+    async execute({ path, content }, { signal }) {
+      try {
+        await writeFile(path, content, { encoding: "utf8", signal });
+        return `Successfully wrote to: ${path}`;
+      } catch (error) {
+        const denied = pathError(errorCode(error), path, "writing to");
+        if (denied) return denied;
+        return `Error writing file: ${errorMessage(error)}`;
+      }
+    },
   },
   {
     name: "edit",
     description: "Edit a file by replacing a string with new content",
-    fields: {
-      path: "Path to the file to edit",
-      old_text: "The text to replace",
-      new_text: "The new text to replace with",
+    arguments: [
+      { name: "path", description: "Path to the file to edit" },
+      { name: "old_text", description: "The text to replace" },
+      { name: "new_text", description: "The new text to replace with" },
+    ],
+    async execute({ path, old_text, new_text }, { signal }) {
+      try {
+        const content = await readFile(path, { encoding: "utf8", signal });
+        if (!content.includes(old_text)) return `Error: '${old_text}' not found in ${path}`;
+        await writeFile(
+          path,
+          old_text === ""
+            ? ["", ...content, ""].join(new_text)
+            : content.replaceAll(old_text, () => new_text),
+          { encoding: "utf8", signal },
+        );
+        return `Successfully edited ${path}`;
+      } catch (error) {
+        const code = errorCode(error);
+        const denied = pathError(code, path, "editing");
+        if (denied) return denied;
+        if (code === "ENOENT") return `Error: File not found: ${path}`;
+        return `Error editing file: ${errorMessage(error)}`;
+      }
     },
   },
   {
     name: "bash",
     description: "Execute a bash shell command",
-    fields: { command: "The bash command to execute" },
-  },
-];
-
-export const toolSchemas = definitions.map(({ name, description, fields }) => ({
-  type: "function" as const,
-  function: {
-    name,
-    description,
-    parameters: {
-      type: "object",
-      properties: Object.fromEntries(
-        Object.entries(fields).map(([key, description]) => [key, { type: "string", description }]),
-      ),
-      required: Object.keys(fields),
+    arguments: [{ name: "command", description: "The bash command to execute" }],
+    async execute({ command }, { signal }) {
+      return await runShell(command, signal);
     },
   },
-}));
-
-export async function executeTool(call: ToolCall, signal?: AbortSignal): Promise<string> {
-  const name = call.function.name;
-  try {
-    signal?.throwIfAborted();
-    const args: unknown = JSON.parse(call.function.arguments);
-    if (!args || typeof args !== "object" || Array.isArray(args))
-      throw new Error("Arguments must be an object.");
-    const definition = definitions.find((definition) => definition.name === name);
-    if (!definition) throw new Error(`Tool not found: ${name}`);
-    const values: Record<string, string> = {};
-    for (const field of Object.keys(definition.fields)) {
-      const value: unknown = (args as Record<string, unknown>)[field];
-      if (typeof value !== "string") throw new Error(`${field} must be a string.`);
-      values[field] = value;
-    }
-    if (name === "bash") return await runShell(values.command, signal);
-    try {
-      if (name === "read") return await readFile(values.path, { encoding: "utf8", signal });
-      if (name === "edit") {
-        const content = await readFile(values.path, { encoding: "utf8", signal });
-        if (!content.includes(values.old_text))
-          return `Error: '${values.old_text}' not found in ${values.path}`;
-        await writeFile(
-          values.path,
-          values.old_text === ""
-            ? ["", ...content, ""].join(values.new_text)
-            : content.replaceAll(values.old_text, () => values.new_text),
-          { encoding: "utf8", signal },
-        );
-        return `Successfully edited ${values.path}`;
-      }
-      await writeFile(values.path, values.content, { encoding: "utf8", signal });
-      return `Successfully wrote to: ${values.path}`;
-    } catch (error) {
-      const code = error instanceof Error && "code" in error ? error.code : undefined;
-      if ((name === "read" || name === "edit") && code === "ENOENT")
-        return `Error: File not found: ${values.path}`;
-      if (code === "EISDIR") return `Error: Path is a directory, not a file: ${values.path}`;
-      if (code === "EACCES" || code === "EPERM")
-        return name === "read"
-          ? `Error: Permission denied reading: ${values.path}`
-          : name === "edit"
-            ? `Error: Permission denied editing: ${values.path}`
-            : `Error: Permission denied writing to: ${values.path}`;
-      return `Error ${name === "read" ? "reading" : name === "edit" ? "editing" : "writing"} file: ${error instanceof Error ? error.message : String(error)}`;
-    }
-  } catch (error) {
-    return `Error executing tool: ${error instanceof Error ? error.message : String(error)}`;
-  }
-}
+];
