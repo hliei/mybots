@@ -510,93 +510,126 @@ it("answers through the CLI after a real local Brave search exchange", async () 
   }
 });
 
-it("searches and reads a static local page before answering through the CLI", async () => {
-  fixture = await chatFixture();
-  const search = await searchFixture();
-  const pages = await pageFixture();
-  try {
-    const url = `${pages.endpoint}/rendered`;
-    search.responses.push({
-      status: 200,
-      body: {
-        web: {
-          results: [{ title: "Local source", url, description: "Read the source." }],
-        },
-      },
-    });
-    pages.pages.set("/rendered", {
-      body: '<title>Local source</title><p>Readable source content.</p><script>fetch("/data")</script>',
-    });
-    pages.pages.set("/data", {
-      body: "Readable source content.",
-      headers: { "Content-Type": "text/plain" },
-    });
-    fixture.responses.push(
-      {
+it.each(["brave", "serpapi"] as const)(
+  "searches and fetches HTTP content before answering through the CLI with %s",
+  async (provider) => {
+    fixture = await chatFixture();
+    const search = await searchFixture(provider);
+    const pages = await pageFixture();
+    try {
+      const url = `${pages.endpoint}/source`;
+      search.responses.push({
         status: 200,
-        body: toolReply([
-          { name: "web_search", id: "find-source", args: { query: "local source" } },
-        ]),
-      },
-      {
-        status: 200,
-        body: toolReply([{ name: "fetch_content", id: "read-source", args: { url } }]),
-      },
-      {
-        status: 200,
-        body: {
-          choices: [
-            {
-              message: {
-                role: "assistant",
-                content: "The source says: Readable source content.",
-                reasoning_content: "Read the source.",
+        body:
+          provider === "brave"
+            ? {
+                web: { results: [{ title: "Local source", url, description: "Read the source." }] },
+              }
+            : {
+                organic_results: [
+                  { title: "Local source", link: url, snippet: "Read the source." },
+                ],
               },
+      });
+      pages.pages.set("/source", {
+        body: '<title>Local source</title><p>Readable source content.</p><script>fetch("/data")</script>',
+      });
+      pages.pages.set("/data", {
+        body: "Readable source content.",
+        headers: { "Content-Type": "text/plain" },
+      });
+      fixture.responses.push(
+        {
+          status: 200,
+          body: toolReply([
+            { name: "web_search", id: "find-source", args: { query: "local source" } },
+          ]),
+        },
+        {
+          status: 200,
+          body: toolReply([{ name: "fetch_content", id: "read-source", args: { url } }]),
+        },
+        {
+          status: 200,
+          body: {
+            choices: [
+              {
+                message: {
+                  role: "assistant",
+                  content: "The source says: Readable source content.",
+                  reasoning_content: "Read the source.",
+                },
+              },
+            ],
+          },
+        },
+      );
+      const result = await run(
+        ["-w", await fixture.workspace(undefined, `${search.settings}fetch_content: {}\n`)],
+        "Find and read the source\nquit\n",
+      );
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      expect(result.stdout).toContain("helper: The source says: Readable source content.");
+      expect(fixture.requests[1].messages.at(-1)).toMatchObject({
+        role: "tool",
+        tool_call_id: "find-source",
+        content: JSON.stringify({
+          queries: [
+            {
+              query: "local source",
+              provider,
+              results: [{ title: "Local source", url, snippet: "Read the source." }],
+              error: null,
             },
           ],
-        },
-      },
-    );
-    const result = await run(
-      ["-w", await fixture.workspace(undefined, `${search.settings}fetch_content: {}\n`)],
-      "Find and read the source\nquit\n",
-    );
-    expect(result).toMatchObject({ status: 0, stderr: "" });
-    expect(result.stdout).toContain("helper: The source says: Readable source content.");
-    expect(fixture.requests[1].messages.at(-1)).toMatchObject({
-      role: "tool",
-      tool_call_id: "find-source",
-      content: JSON.stringify({
-        queries: [
-          {
-            query: "local source",
-            provider: "brave",
-            results: [{ title: "Local source", url, snippet: "Read the source." }],
-            error: null,
-          },
-        ],
-      }),
-    });
-    expect(fixture.requests[2].messages.at(-1)).toMatchObject({
-      role: "tool",
-      tool_call_id: "read-source",
-      content: JSON.stringify({
-        urls: [
-          {
-            url,
-            finalUrl: url,
-            title: "Local source",
-            content: "Readable source content.",
-            error: null,
-            totalChars: 24,
-            nextOffset: null,
-          },
-        ],
-      }),
-    });
-    expect(pages.requests).toEqual(["/rendered"]);
-  } finally {
-    await pages.close();
-    await search.close();
-  }
-});
+        }),
+      });
+      expect(fixture.requests[2].messages.at(-1)).toMatchObject({
+        role: "tool",
+        tool_call_id: "read-source",
+        content: JSON.stringify({
+          urls: [
+            {
+              url,
+              finalUrl: url,
+              title: "Local source",
+              content: "Readable source content.",
+              error: null,
+              totalChars: 24,
+              nextOffset: null,
+            },
+          ],
+        }),
+      });
+      expect(pages.requests).toEqual(["/source"]);
+      expect(search.requests).toHaveLength(1);
+      expect(fixture.requests).toHaveLength(3);
+      expect(
+        fixture.requests[2].messages
+          .filter((message) => message.tool_calls)
+          .map((message) => message.reasoning_content),
+      ).toEqual(["Tool reasoning.", "Tool reasoning."]);
+      const history = await ConversationHistory.open(join(fixture.root, ".history"));
+      const [session] = await history.listSessions();
+      const recorded = await history.getMessages(session.id);
+      expect(recorded.map((message) => message.role)).toEqual([
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+        "tool",
+        "assistant",
+      ]);
+      expect(recorded.filter((message) => message.role === "tool")).toMatchObject(
+        fixture.requests[2].messages.filter((message) => message.role === "tool"),
+      );
+      expect(recorded.at(-1)).toMatchObject({
+        content: "The source says: Readable source content.",
+        reasoning_content: "Read the source.",
+      });
+    } finally {
+      await pages.close();
+      await search.close();
+    }
+  },
+);

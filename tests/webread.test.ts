@@ -97,6 +97,16 @@ it("extracts article Markdown, removes explicit hidden markup, and resolves refe
   expect(pages.requests).toEqual(["/article"]);
 });
 
+it("removes explicit hidden markup regardless of CSS and ARIA casing", async () => {
+  const agent = await setup();
+  pages.pages.set("/hidden", {
+    body: '<p>Visible text.</p><p style="DISPLAY: none">Hidden display.</p><p style="visibility: HIDDEN">Hidden visibility.</p><p style="VISIBILITY: collapse">Hidden collapse.</p><p aria-hidden="TRUE">Hidden ARIA.</p>',
+  });
+  const [item] = await read(agent, { url: `${pages.endpoint}/hidden` });
+  expect(item).toMatchObject({ content: "Visible text.", error: null, totalChars: 13 });
+  expect(pages.requests).toEqual(["/hidden"]);
+});
+
 it("falls back to the cleaned body when a small link directory has no readable article", async () => {
   const agent = await setup();
   pages.pages.set("/directory", {
@@ -189,6 +199,24 @@ it("preserves ordered successes and item failures in a mixed batch, including re
     nextOffset: null,
   });
   expect(pages.requests).toHaveLength(5);
+});
+
+it("rejects HTTP URLs without an authority before sending content requests", async () => {
+  const agent = await setup();
+  pages.pages.set("/text", { body: "Readable", headers: { "Content-Type": "text/plain" } });
+  const url = `${pages.endpoint.replace("://", ":")}/text`;
+  expect(await read(agent, { url })).toEqual([
+    {
+      url,
+      finalUrl: null,
+      title: "",
+      content: "",
+      error: "Content URL must be an absolute HTTP(S) URL.",
+      totalChars: 0,
+      nextOffset: null,
+    },
+  ]);
+  expect(pages.requests).toEqual([]);
 });
 
 it("paginates Unicode code points, refetches continuations, and retains total length beyond the end", async () => {

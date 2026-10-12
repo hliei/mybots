@@ -20,13 +20,13 @@ function extractHtml(
     const document = dom.window.document;
     const title = document.title;
     document
-      .querySelectorAll("script, style, template, noscript, [hidden], [aria-hidden='true']")
+      .querySelectorAll("script, style, template, noscript, [hidden], [aria-hidden='true' i]")
       .forEach((element) => {
         element.remove();
       });
     const style = document.createElement("div").style;
     for (const element of document.querySelectorAll("[style]")) {
-      style.cssText = element.getAttribute("style") ?? "";
+      style.cssText = (element.getAttribute("style") ?? "").toLowerCase();
       if (
         style.display === "none" ||
         style.visibility === "hidden" ||
@@ -104,7 +104,8 @@ async function readContent(
     let parsed: URL;
     try {
       parsed = new URL(url);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error();
+      if (!/^https?:\/\/[^/]/i.test(url) || !["http:", "https:"].includes(parsed.protocol))
+        throw new Error();
     } catch {
       throw new Error("Content URL must be an absolute HTTP(S) URL.");
     }

@@ -66,7 +66,7 @@ Type `/help` to list the available commands.
 
 Workspace settings preserve `llm`, `default_agent`, `agents_path`, `skills_path`,
 and `history_path`. Relative paths resolve against the Workspace. Optional
-`web_search` enables search; `fetch_content: {}` enables page reading. The legacy
+`web_search` enables search; `fetch_content: {}` enables content fetching. The legacy
 `websearch` and `webread` settings fail startup with migration instructions,
 including when new settings are also present.
 Agent definitions default to `.agents/bots/<id>/AGENT.md` (configured by `agents_path`); frontmatter preserves
@@ -202,10 +202,17 @@ web_search:
   api_key: YOUR_BRAVE_SEARCH_API_KEY
 ```
 
+For SerpApi Google search, use:
+
+```yaml
+web_search:
+  provider: serpapi
+  api_key: YOUR_SERPAPI_API_KEY
+```
+
 `provider` must explicitly select `brave` or `serpapi`, and `api_key` must be a
-nonempty string. Omit `web_search`
-or set it to `null` to leave the tool disabled. Credentials come only from the
-Workspace configuration, with no environment-variable fallback. Keep keys in
+nonempty string. Omit `web_search` or set it to `null` to leave the tool disabled.
+Credentials come only from the Workspace configuration, with no environment-variable fallback. Keep keys in
 your ignored local Workspace.
 
 Search accepts exactly one of a nonempty `query` or one through five `queries`,
@@ -243,10 +250,10 @@ There are no retries, provider fallback, pagination, source-body fetching,
 additional summaries, background jobs, or storage IDs.
 
 Ordinary Agent and CLI tests use local endpoints and fixture credentials. They
-do not establish live provider acceptance. Final replacement cleanup remains
-tracked under [ADR 0003](docs/adr/0003-web-search-and-content-fetching.md).
+do not establish live provider acceptance. The delivered contract is recorded in
+[ADR 0003](docs/adr/0003-web-search-and-content-fetching.md).
 
-### Web page reading
+### Content fetching
 
 Enable direct HTTP content fetching in `config.user.yaml`:
 
@@ -297,6 +304,12 @@ characters. `nextOffset` points after the returned chunk when more text remains.
 At or beyond the end, content is empty and nextOffset is null, retaining the
 full totalChars. Every continuation fetches and extracts again, so changing
 pages can produce inconsistent chunks. There is no cache, snapshot, or storage ID.
+For example, `{"url":"https://example.com/article","limit":2000}` reads the
+first chunk; if its `nextOffset` is 2000, continue with
+`{"url":"https://example.com/article","offset":2000,"limit":2000}`.
+Stop when `nextOffset` is null. The maximum content output per five-URL call is
+100,000 Unicode characters, or 50,000 at the default limit, plus metadata; JSON
+escaping can increase the serialized size.
 
 At most three items execute concurrently. Each request has a 30-second deadline
 including body consumption and a streamed 5 MiB decoded response-body limit.
@@ -459,7 +472,8 @@ src/
 │   │   ├── web-search.ts  # Search arguments and tool entry point
 │   │   ├── fetch-content.ts # Bounded HTTP fetching, extraction, and pagination
 │   │   ├── brave.ts       # Internal Brave adapter
-│   │   └── rendered-page.ts # Obsolete Chromium implementation pending ticket 04 cleanup
+│   │   ├── serpapi.ts     # Internal SerpApi Google adapter
+│   │   └── search-request.ts # Bounded search HTTP requests
 │   └── toolbox.ts         # Tool schemas, argument validation, and dispatch
 └── bot/startup.ts          # Bot startup placeholder
 ```

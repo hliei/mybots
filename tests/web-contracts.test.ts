@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import { Agent } from "../src/core/agent.ts";
+import { ConversationHistory } from "../src/core/history.ts";
 import { chatFixture, toolReply } from "./chat-fixture.ts";
 import { pageFixture } from "./page-fixture.ts";
 import { searchFixture } from "./search-fixture.ts";
@@ -218,3 +219,168 @@ it.each([
   });
   expect(search.requests).toHaveLength(0);
 });
+
+it.each(["brave", "serpapi"] as const)(
+  "searches, fetches selected content, and continues Unicode text through the Agent with %s",
+  async (provider) => {
+    model = await chatFixture();
+    search = await searchFixture(provider);
+    pages = await pageFixture();
+    const url = `${pages.endpoint}/source`;
+    pages.pages.set("/source", { status: 302, headers: { Location: "/text" }, body: "" });
+    pages.pages.set("/text", { body: "A😀中🚀B", headers: { "Content-Type": "text/plain" } });
+    search.responses.push({
+      status: 200,
+      body:
+        provider === "brave"
+          ? { web: { results: [{ title: "Source", url, description: "Read this source." }] } }
+          : { organic_results: [{ title: "Source", link: url, snippet: "Read this source." }] },
+    });
+    const agent = await Agent.open({
+      workspace: await model.workspace(undefined, `${search.settings}fetch_content: {}\n`),
+    });
+    model.responses.push(
+      {
+        status: 200,
+        body: toolReply(
+          [{ name: "web_search", id: "find-source", args: { query: "Unicode source" } }],
+          "Find a source.",
+        ),
+      },
+      {
+        status: 200,
+        body: toolReply(
+          [{ name: "fetch_content", id: "read-source", args: { url, limit: 2 } }],
+          "Read the selected source.",
+        ),
+      },
+      {
+        status: 200,
+        body: toolReply(
+          [{ name: "fetch_content", id: "continue-source", args: { url, offset: 2, limit: 3 } }],
+          "Read the remaining text.",
+        ),
+      },
+      {
+        status: 200,
+        body: {
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "The source says A😀中🚀B.",
+                reasoning_content: "Combine both chunks.",
+              },
+            },
+          ],
+        },
+      },
+    );
+    expect(await agent.chat("Find and read the complete source")).toBe("The source says A😀中🚀B.");
+    expect(model.requests).toHaveLength(4);
+    expect(model.requests[1].messages.at(-1)).toMatchObject({
+      role: "tool",
+      tool_call_id: "find-source",
+      content: JSON.stringify({
+        queries: [
+          {
+            query: "Unicode source",
+            provider,
+            results: [{ title: "Source", url, snippet: "Read this source." }],
+            error: null,
+          },
+        ],
+      }),
+    });
+    const expected = {
+      url,
+      finalUrl: `${pages.endpoint}/text`,
+      title: "",
+      error: null,
+      totalChars: 5,
+    };
+    expect(model.requests[2].messages.at(-1)).toMatchObject({
+      role: "tool",
+      tool_call_id: "read-source",
+    });
+    expect(JSON.parse(model.requests[2].messages.at(-1)?.content ?? "")).toEqual({
+      urls: [
+        {
+          ...expected,
+          content: "A😀",
+          nextOffset: 2,
+        },
+      ],
+    });
+    expect(model.requests[3].messages.at(-1)).toMatchObject({
+      role: "tool",
+      tool_call_id: "continue-source",
+    });
+    expect(JSON.parse(model.requests[3].messages.at(-1)?.content ?? "")).toEqual({
+      urls: [
+        {
+          ...expected,
+          content: "中🚀B",
+          nextOffset: null,
+        },
+      ],
+    });
+    expect(
+      model.requests[3].messages
+        .filter((message) => message.tool_calls)
+        .map((message) => message.reasoning_content),
+    ).toEqual(["Find a source.", "Read the selected source.", "Read the remaining text."]);
+    const history = await ConversationHistory.open(agent.config.history_path);
+    const recorded = await history.getMessages(agent.sessionId);
+    expect(recorded.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "tool",
+      "assistant",
+      "tool",
+      "assistant",
+      "tool",
+      "assistant",
+    ]);
+    expect(recorded.filter((message) => message.role === "tool")).toMatchObject(
+      model.requests[3].messages.filter((message) => message.role === "tool"),
+    );
+    expect(recorded.at(-1)).toMatchObject({
+      content: "The source says A😀中🚀B.",
+      reasoning_content: "Combine both chunks.",
+    });
+    expect(search.requests).toHaveLength(1);
+    expect(pages.requests).toEqual(["/source", "/text", "/source", "/text"]);
+  },
+);
+
+it.each([
+  ["", []],
+  ["web_search:\n  provider: serpapi\n  api_key: offline\n", ["web_search"]],
+  ["fetch_content: {}\n", ["fetch_content"]],
+  [
+    "web_search:\n  provider: brave\n  api_key: offline\nfetch_content: {}\n",
+    ["web_search", "fetch_content"],
+  ],
+])(
+  "gates web tools independently while preserving local tools and Skill: %s",
+  async (settings, names) => {
+    model = await chatFixture();
+    await model.writeSkill(
+      "guide",
+      "---\nname: Guide\ndescription: A reading guide\n---\nRead carefully.",
+    );
+    const agent = await Agent.open({
+      workspace: await model.workspace(undefined, settings, "allow_skills: true\n"),
+    });
+    await agent.chat("Hello");
+    expect(model.requests[0].tools.map((tool) => tool.function.name)).toEqual([
+      "read",
+      "write",
+      "edit",
+      "bash",
+      "skill",
+      ...names,
+    ]);
+  },
+);
