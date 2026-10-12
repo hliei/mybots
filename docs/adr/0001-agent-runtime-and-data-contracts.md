@@ -17,6 +17,12 @@ Workspace YAML contains `llm`, `default_agent`, `agents_path`, `skills_path`, an
 Agent definitions contain `name`, `description`, `llm` overrides, and
 `allow_skills` in frontmatter, followed by their system instructions.
 
+Agent definitions default to `.agents/bots/<id>/AGENT.md` and Skills default to
+`.agents/skills/<id>/SKILL.md`, relative to the Workspace. Explicit `agents_path`
+and `skills_path` override these defaults. This layout intentionally differs from
+the reference's default `bots/` and `skills/` directories; the configuration fields
+and definition formats remain compatible.
+
 The initial model provider is DeepSeek through Chat Completions. The boolean
 `llm.thinking` defaults to `true` and supports Agent-level overrides. Assistant
 messages retain their original `reasoning_content`, which is sent back with

@@ -96,8 +96,8 @@ it("registers only valid Skills and excludes invalid definitions", async () => {
     "---\nname: 42\ndescription: Not a string name\n---\nBody\n",
     workspace,
   );
-  await mkdir(join(workspace, "skills", "empty"), { recursive: true });
-  await writeFile(join(workspace, "skills", "stray.txt"), "Not a Skill directory");
+  await mkdir(join(workspace, ".agents", "skills", "empty"), { recursive: true });
+  await writeFile(join(workspace, ".agents", "skills", "stray.txt"), "Not a Skill directory");
   const agent = await Agent.open({ workspace });
   await agent.chat("Hi");
   const tool = fixture.requests[0].tools.at(-1);
@@ -122,7 +122,7 @@ it.each(["empty", "missing"])(
   async (kind) => {
     fixture = await chatFixture();
     const workspace = await fixture.workspace(fixture.root, "", "allow_skills: true\n");
-    if (kind === "empty") await mkdir(join(workspace, "skills"), { recursive: true });
+    if (kind === "empty") await mkdir(join(workspace, ".agents", "skills"), { recursive: true });
     const agent = await Agent.open({ workspace });
     await agent.chat("Hi");
     expect(fixture.requests[0].tools.map((tool) => tool.function.name)).toEqual(builtinToolNames);

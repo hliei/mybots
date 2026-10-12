@@ -45,9 +45,9 @@ it("continues a session with the earlier user reply and complete reasoning", asy
 it("selects another Agent and merges all model overrides with workspace settings", async () => {
   fixture = await chatFixture();
   const path = await fixture.workspace();
-  await mkdir(join(path, "bots", "other"));
+  await mkdir(join(path, ".agents", "bots", "other"));
   await writeFile(
-    join(path, "bots", "other", "AGENT.md"),
+    join(path, ".agents", "bots", "other", "AGENT.md"),
     `---\nname: Other\ndescription: Another assistant\nallow_skills: true\nllm:\n  model: custom-model\n  thinking: false\n  temperature: 1.2\n  max_tokens: 4096\n---\nOther instructions.`,
   );
   const agent = await Agent.open({ workspace: path, agent: "other" });
@@ -59,8 +59,8 @@ it("selects another Agent and merges all model overrides with workspace settings
     allow_skills: true,
   });
   expect(agent.config).toMatchObject({
-    agents_path: join(path, "bots"),
-    skills_path: join(path, "skills"),
+    agents_path: join(path, ".agents", "bots"),
+    skills_path: join(path, ".agents", "skills"),
     history_path: join(path, ".history"),
   });
   expect(fixture.requests[0]).toMatchObject({
@@ -142,7 +142,7 @@ it.each([
 it("loads custom Workspace paths and preserves optional web settings", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  await rename(join(workspace, "bots"), join(workspace, "definitions"));
+  await rename(join(workspace, ".agents", "bots"), join(workspace, "definitions"));
   await appendFile(
     join(workspace, "config.user.yaml"),
     "agents_path: definitions\nskills_path: abilities\nhistory_path: logs\nwebsearch:\n  provider: brave\n  api_key: offline-web-key\nwebread:\n  provider: crawl4ai\n",

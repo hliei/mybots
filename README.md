@@ -65,7 +65,7 @@ print after the complete response arrives. Blank lines are ignored; `quit`,
 Workspace settings preserve `llm`, `default_agent`, `agents_path`, `skills_path`,
 and `history_path`. Relative paths resolve against the Workspace. Optional
 `websearch` and `webread` settings are preserved for later capabilities.
-Agent definitions default to `bots/<id>/AGENT.md` (configured by `agents_path`); frontmatter preserves
+Agent definitions default to `.agents/bots/<id>/AGENT.md` (configured by `agents_path`); frontmatter preserves
 `name`, `description`, `llm`, and `allow_skills`. The Markdown body supplies the
 system instructions. Agent `llm` fields override matching Workspace fields.
 
@@ -118,12 +118,19 @@ process-tree termination has not been verified.
 ### Skills
 
 A Skill is a named set of instructions in a directory under `skills_path`
-(`skills` by default) that contains a `SKILL.md` file:
+(`.agents/skills` by default) that contains a `SKILL.md` file.
+
+Both Agent definitions and Skills live under the Workspace's `.agents/` directory.
+Set `agents_path: bots` and `skills_path: skills` explicitly to use the old layout.
 
 ```text
-skills/
-└── concise-summary/
-    └── SKILL.md
+.agents/
+├── bots/
+│   └── helper/
+│       └── AGENT.md
+└── skills/
+    └── concise-summary/
+        └── SKILL.md
 ```
 
 `SKILL.md` starts with YAML frontmatter containing `name` and `description`,
