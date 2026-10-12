@@ -3,6 +3,7 @@ import type { AgentDefinition, WorkspaceSettings } from "./config.ts";
 import { loadSettings } from "./config.ts";
 import type { Message } from "./model.ts";
 import { DeepSeek } from "./model.ts";
+import { executeTool } from "./tools.ts";
 
 export class Agent {
   readonly config: WorkspaceSettings;
@@ -32,9 +33,24 @@ export class Agent {
     this.replying = true;
     try {
       const user: Message = { role: "user", content: input };
-      const reply = await this.model.reply([...this.messages, user], signal);
-      this.messages.push(user, reply);
-      return reply.content;
+      const pending: Message[] = [user];
+      while (true) {
+        const reply = await this.model.reply([...this.messages, ...pending], signal);
+        pending.push(reply);
+        if (!reply.tool_calls?.length) {
+          this.messages.push(...pending);
+          return reply.content;
+        }
+        for (const call of reply.tool_calls) {
+          pending.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: await executeTool(call, signal),
+          });
+        }
+        this.messages.push(...pending);
+        pending.length = 0;
+      }
     } finally {
       this.replying = false;
     }

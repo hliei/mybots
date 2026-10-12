@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
-import { chatFixture } from "./chat-fixture.ts";
+import { chatFixture, toolReply } from "./chat-fixture.ts";
 
 const entry = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 let fixture: Awaited<ReturnType<typeof chatFixture>> | undefined;
@@ -115,4 +115,44 @@ it("reports missing Workspace configuration", async () => {
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("config.user.yaml");
   expect(fixture.requests).toHaveLength(0);
+});
+
+it("executes multiple tool rounds from the CLI using relative paths from process cwd", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace();
+  fixture.responses.push(
+    {
+      status: 200,
+      body: toolReply(
+        [{ name: "write", id: "cli-write", args: { path: "note.txt", content: "CLI artifact" } }],
+        "Save the note.",
+      ),
+    },
+    {
+      status: 200,
+      body: toolReply(
+        [{ name: "read", id: "cli-read", args: { path: "note.txt" } }],
+        "Inspect the note.",
+      ),
+    },
+  );
+  const result = await run(["-w", workspace], "Save and inspect\nquit\n", fixture.root);
+  expect(result).toMatchObject({ status: 0, stderr: "" });
+  expect(result.stdout.match(/helper: Hello!/g)).toHaveLength(1);
+  expect(await readFile(join(fixture.root, "note.txt"), "utf8")).toBe("CLI artifact");
+  expect(fixture.requests[1].messages.at(-1)).toEqual({
+    role: "tool",
+    tool_call_id: "cli-write",
+    content: "Successfully wrote to: note.txt",
+  });
+  expect(fixture.requests[2].messages.at(-1)).toEqual({
+    role: "tool",
+    tool_call_id: "cli-read",
+    content: "CLI artifact",
+  });
+  expect(
+    fixture.requests[2].messages
+      .filter((message) => message.role === "assistant")
+      .map((message) => message.reasoning_content),
+  ).toEqual(["Save the note.", "Inspect the note."]);
 });

@@ -7,7 +7,14 @@ import { join } from "node:path";
 
 export interface ModelRequest {
   model: string;
-  messages: { role: string; content: string; reasoning_content?: string }[];
+  messages: {
+    role: string;
+    content: string;
+    reasoning_content?: string;
+    tool_calls?: { id: string; type: string; function: { name: string; arguments: string } }[];
+    tool_call_id?: string;
+  }[];
+  tools: { type: string; function: { name: string; parameters: { required: string[] } } }[];
   thinking: { type: string };
   temperature: number;
   max_tokens: number;
@@ -69,5 +76,27 @@ export async function chatFixture() {
       );
       await rm(root, { recursive: true, force: true });
     },
+  };
+}
+
+export function toolReply(
+  calls: { name: string; args: unknown; id: string }[],
+  reasoning = "Tool reasoning.",
+) {
+  return {
+    choices: [
+      {
+        message: {
+          role: "assistant",
+          content: null,
+          reasoning_content: reasoning,
+          tool_calls: calls.map(({ name, args, id }) => ({
+            id,
+            type: "function",
+            function: { name, arguments: JSON.stringify(args) },
+          })),
+        },
+      },
+    ],
   };
 }

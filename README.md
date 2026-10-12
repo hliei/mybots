@@ -3,8 +3,8 @@
 A TypeScript and Node.js project for an interactive CLI and a message-platform
 bot, with a shared agent core.
 
-The CLI supports non-streaming, multi-turn conversations with DeepSeek through
-a shared Agent core. Each launch creates a fresh session in memory. The bot
+The CLI supports non-streaming, multi-turn conversations and local tool
+execution with DeepSeek through a shared Agent core. Each launch creates a fresh session in memory. The bot
 server currently prints a setup message or help and exits.
 
 ## Setup
@@ -78,11 +78,41 @@ Assistant messages retain full `reasoning_content` in session context; the CLI
 prints the final text only.
 
 Requests time out after 60 seconds and are not automatically retried. Provider
-failures print an error and allow another message; failed turns do not enter
-session context. Only successful turns carry forward. The shared Agent interface
-rejects overlapping `chat()` calls in the same session; the CLI submits turns
-sequentially. Tool execution, Skills,
-saved history, slash commands, compaction, and web tools are later deliveries.
+failures print an error and allow another message. Inputs that fail before a
+model response do not enter session context. Completed tool-call/result groups
+are retained if a later model request fails or is cancelled; local changes
+already made by tools remain in place. The shared Agent interface rejects
+overlapping `chat()` calls in the same session; the CLI submits turns sequentially.
+Skills, saved history, slash commands, compaction, and web tools are later deliveries.
+
+### Local tools
+
+The Agent can use these tools while answering a request:
+
+| Tool | Arguments | Behavior |
+| --- | --- | --- |
+| `read` | `path` | Read the complete text file. |
+| `write` | `path`, `content` | Create or overwrite a file; parent directories must exist. |
+| `edit` | `path`, `old_text`, `new_text` | Replace every literal match; missing text reports an error without writing. |
+| `bash` | `command` | Execute through the operating system's default shell and return stdout/stderr. |
+
+Relative tool paths and shell commands use the process working directory, which
+may differ from the selected Workspace. Multiple calls in one response execute
+in order; each result retains the corresponding call ID. Tool errors return to
+the model so it can continue. Complete reasoning from earlier assistant messages
+is carried forward in tool requests. The CLI displays the final model reply.
+
+For example, start the CLI from the directory containing your files and ask:
+"Read notes.txt, replace every TODO with DONE, and show the updated content."
+File writes and commands run with the CLI process's permissions.
+
+Shell output matches the reference: stdout and stderr are separated by an extra
+newline when both exist; a nonzero exit returns its output, and no output returns
+`Command completed with no output`. Commands have a 60-second timeout. Ctrl+C
+cancels a running command and waits for termination; on POSIX systems the shell
+and descendants in its process group receive SIGTERM, then SIGKILL after a
+one-second grace period if needed. POSIX process cleanup is tested; Windows
+process-tree termination has not been verified.
 
 ### API sources
 
