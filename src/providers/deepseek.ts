@@ -3,13 +3,8 @@ import type {
   ChatCompletion,
   ChatCompletionCreateParamsNonStreaming,
 } from "openai/resources/chat/completions";
-import type { ModelSettings } from "./config.ts";
-
-export interface Message {
-  role: "system" | "user" | "assistant";
-  content: string;
-  reasoning_content?: string;
-}
+import type { ModelSettings } from "../config/workspace.ts";
+import type { AssistantMessage, Message, ToolCall, ToolSchema } from "../core/messages.ts";
 
 export class DeepSeek {
   private readonly client: OpenAI;
@@ -25,7 +20,11 @@ export class DeepSeek {
     });
   }
 
-  async reply(messages: Message[], signal?: AbortSignal): Promise<Message> {
+  async reply(
+    messages: Message[],
+    tools: ToolSchema[],
+    signal?: AbortSignal,
+  ): Promise<AssistantMessage> {
     const request: ChatCompletionCreateParamsNonStreaming & {
       thinking: { type: "enabled" | "disabled" };
     } = {
@@ -35,6 +34,7 @@ export class DeepSeek {
       temperature: this.settings.temperature,
       max_tokens: this.settings.max_tokens,
       thinking: { type: this.settings.thinking ? "enabled" : "disabled" },
+      tools,
     };
     let response: ChatCompletion;
     try {
@@ -47,13 +47,32 @@ export class DeepSeek {
       throw new Error("DeepSeek request failed: connection error or timeout.");
     }
     const message = response.choices[0]?.message;
-    if (!message || typeof message.content !== "string")
+    if (!message) throw new Error("DeepSeek returned no text reply.");
+    const calls: ToolCall[] = [];
+    for (const call of message.tool_calls ?? []) {
+      if (
+        call.type !== "function" ||
+        typeof call.id !== "string" ||
+        typeof call.function.name !== "string" ||
+        typeof call.function.arguments !== "string"
+      ) {
+        throw new Error("DeepSeek returned an invalid tool call.");
+      }
+      calls.push({
+        id: call.id,
+        type: "function",
+        function: { name: call.function.name, arguments: call.function.arguments },
+      });
+    }
+    if (typeof message.content !== "string" && !(message.content === null && calls.length)) {
       throw new Error("DeepSeek returned no text reply.");
+    }
     const reasoning: unknown =
       "reasoning_content" in message ? message.reasoning_content : undefined;
     return {
       role: "assistant",
-      content: message.content,
+      content: message.content ?? "",
+      ...(calls.length ? { tool_calls: calls } : {}),
       ...(typeof reasoning === "string" ? { reasoning_content: reasoning } : {}),
     };
   }
