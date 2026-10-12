@@ -510,7 +510,7 @@ it("answers through the CLI after a real local Brave search exchange", async () 
   }
 });
 
-it("searches and reads a JavaScript-rendered local page before answering through the CLI", async () => {
+it("searches and reads a static local page before answering through the CLI", async () => {
   fixture = await chatFixture();
   const search = await searchFixture();
   const pages = await pageFixture();
@@ -520,15 +520,15 @@ it("searches and reads a JavaScript-rendered local page before answering through
       status: 200,
       body: {
         web: {
-          results: [{ title: "Local source", url, description: "Read the rendered source." }],
+          results: [{ title: "Local source", url, description: "Read the source." }],
         },
       },
     });
     pages.pages.set("/rendered", {
-      body: '<title>Local source</title><div id="content"></div><script>fetch("/data").then(r => r.text()).then(text => document.getElementById("content").textContent = text);</script>',
+      body: '<title>Local source</title><p>Readable source content.</p><script>fetch("/data")</script>',
     });
     pages.pages.set("/data", {
-      body: "Browser rendered content.",
+      body: "Readable source content.",
       headers: { "Content-Type": "text/plain" },
     });
     fixture.responses.push(
@@ -549,7 +549,7 @@ it("searches and reads a JavaScript-rendered local page before answering through
             {
               message: {
                 role: "assistant",
-                content: "The source says: Browser rendered content.",
+                content: "The source says: Readable source content.",
                 reasoning_content: "Read the source.",
               },
             },
@@ -562,7 +562,7 @@ it("searches and reads a JavaScript-rendered local page before answering through
       "Find and read the source\nquit\n",
     );
     expect(result).toMatchObject({ status: 0, stderr: "" });
-    expect(result.stdout).toContain("helper: The source says: Browser rendered content.");
+    expect(result.stdout).toContain("helper: The source says: Readable source content.");
     expect(fixture.requests[1].messages.at(-1)).toMatchObject({
       role: "tool",
       tool_call_id: "find-source",
@@ -571,7 +571,7 @@ it("searches and reads a JavaScript-rendered local page before answering through
           {
             query: "local source",
             provider: "brave",
-            results: [{ title: "Local source", url, snippet: "Read the rendered source." }],
+            results: [{ title: "Local source", url, snippet: "Read the source." }],
             error: null,
           },
         ],
@@ -580,9 +580,21 @@ it("searches and reads a JavaScript-rendered local page before answering through
     expect(fixture.requests[2].messages.at(-1)).toMatchObject({
       role: "tool",
       tool_call_id: "read-source",
-      content: "**Local source**\n\nBrowser rendered content.",
+      content: JSON.stringify({
+        urls: [
+          {
+            url,
+            finalUrl: url,
+            title: "Local source",
+            content: "Readable source content.",
+            error: null,
+            totalChars: 24,
+            nextOffset: null,
+          },
+        ],
+      }),
     });
-    expect(pages.requests).toContain("/data");
+    expect(pages.requests).toEqual(["/rendered"]);
   } finally {
     await pages.close();
     await search.close();

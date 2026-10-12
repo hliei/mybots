@@ -37,9 +37,9 @@ export async function chatFixture() {
   const transports: { path: string | undefined; authorization: string | undefined }[] = [];
   const responses: { status: number; body: unknown }[] = [];
   const server = createServer(async (request, response) => {
-    let body = "";
-    for await (const chunk of request) body += chunk;
-    requests.push(JSON.parse(body));
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(chunk);
+    requests.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
     transports.push({ path: request.url, authorization: request.headers.authorization });
     const next = responses.shift() ?? {
       status: 200,

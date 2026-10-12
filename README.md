@@ -4,7 +4,7 @@ A TypeScript and Node.js project for an interactive CLI and a message-platform
 bot, with a shared agent core.
 
 The CLI supports non-streaming, multi-turn conversations, local tool execution,
-Skill loading, and optional web search and rendered page reading with DeepSeek
+Skill loading, and optional web search and HTTP content fetching with DeepSeek
 through a shared Agent core. Each launch creates
 a fresh session in memory. The bot server currently prints a setup message or
 help and exits.
@@ -243,74 +243,65 @@ There are no retries, provider fallback, pagination, source-body fetching,
 additional summaries, background jobs, or storage IDs.
 
 Ordinary Agent and CLI tests use local endpoints and fixture credentials. They
-do not establish live provider acceptance. Content execution remains the
-intermediate route described below until the remaining replacement tickets finish.
+do not establish live provider acceptance. Final replacement cleanup remains
+tracked under [ADR 0003](docs/adr/0003-web-search-and-content-fetching.md).
 
 ### Web page reading
 
-Install Playwright's matching Chromium browser before using `fetch_content` or running
-the full ordinary test suite and `verify`:
-
-```sh
-npm ci --ignore-scripts
-npx playwright install chromium
-```
-
-On Linux, install Chromium's system dependencies too:
-
-```sh
-npx playwright install --with-deps chromium
-```
-
-Browser installation downloads binaries; subsequent tests use only local pages
-and controlled HTTP services. Repeat installation after updating Playwright.
-No Python runtime is required. The browser lives in Playwright's cache rather
-than the repository. If the browser is missing, the read returns an error with
-Playwright's installation instructions; ordinary browser tests fail rather than
-being skipped. See [Playwright browser installation](https://playwright.dev/docs/browsers).
-
-Enable the tool in `config.user.yaml`:
+Enable direct HTTP content fetching in `config.user.yaml`:
 
 ```yaml
 fetch_content: {}
 ```
 
 The mapping must be empty and has no provider selector. Omit the setting or use
-`null` to disable the tool. The contract declares exactly one of a string `url`
-or one through five `urls`, with optional nonnegative integer `offset` and
-integer `limit` (1–20,000). Continuations will fetch the page again; changing
-pages can produce inconsistent text between calls. The retained execution path
-currently supports only a single `url` without pagination, through Playwright
-and Turndown. Batch fetching, direct HTTP extraction, and pagination remain
-pending. No browser starts until the model requests the tool.
+`null` to disable the tool. Provide exactly one of a string `url` or one through
+five `urls`, with optional nonnegative integer `offset` (default 0) and integer
+`limit` (default 10,000, range 1–20,000). URLs must use HTTP(S).
 
-Each read launches a fresh headless Chromium instance and closes it before
-returning, including after failures or cancellation. It accepts HTTP(S) URLs,
-follows redirects, executes page JavaScript, and waits for 500 milliseconds of
-network inactivity before taking a snapshot. A 30-second deadline bounds the
-browser operation, including launch and navigation. Ctrl+C closes an active
-browser; cancellation during launch is handled as soon as launch settles.
-Pages with continuously active requests can time out. Content added after the
-snapshot, including later timers or interactions, is not guaranteed to appear.
+Fetching follows redirects and supports HTML, Markdown, and plain text based on
+the response Content-Type. HTML uses Readability to extract main content and
+Turndown to convert it to Markdown; a cleaned body is the sole fallback when
+main-content extraction yields no text. Empty HTML extraction is an error.
+Scripts, styles, templates, noscript, hidden attributes, ARIA-hidden elements,
+and inline hidden styles are removed. Relative links and image sources resolve
+against the document base at the final URL. External resources and JavaScript
+are not executed. JavaScript-only pages may yield shell text or an extraction
+error. Markdown and plain-text responses retain their decoded text directly.
+No browser installation is needed for this tool or its ordinary tests.
 
-The normalized result retains the original requested `url`, page `title`,
-Markdown `content`, and a null `error` on success. Failure returns the original
-URL, empty title/content, and an error string. The tool supplies success as
-`**<title>**` followed by a blank line and Markdown, or failure as
-`Error reading <original URL>: <error>`; both return to the model for continuation.
-HTTP status codes of 400 or greater are errors, and transport errors use
-Playwright's wording. A redirect does not replace the original URL in an error.
+Single inputs and batches return the same JSON envelope in the tool message:
 
-Extraction differs from Crawl4AI: it converts the rendered document body with
-Turndown, preserving navigation and other body content rather than applying
-Crawl4AI's content-cleaning heuristics. It removes scripts, styles, templates,
-noscript content, hidden attributes, and elements with computed `display: none`
-or `visibility: hidden`. Links and image sources resolve against the rendered
-document's base URL. Markdown uses ATX headings, fenced code blocks, and dash
-lists; escaping, whitespace, tables, and other formatting can differ from
-Crawl4AI. Iframe documents and shadow DOM are not traversed. Service workers
-are blocked, and each read starts with a fresh browser session without existing
-login cookies.
+```json
+{
+  "urls": [{
+    "url": "https://example.com/article",
+    "finalUrl": "https://example.com/article",
+    "title": "Article",
+    "content": "Readable text",
+    "error": null,
+    "totalChars": 13,
+    "nextOffset": null
+  }]
+}
+```
+
+Results preserve input order and the requested URL. A missing title is an empty
+string. Each failed item has empty title/content, zero totalChars, null
+nextOffset, and a nonempty error; finalUrl is null until a final response is
+established. HTTP, unsupported-format, size, timeout, and extraction failures
+leave successful batch items intact.
+
+Pagination counts Unicode code points, preserving emoji and other non-BMP
+characters. `nextOffset` points after the returned chunk when more text remains.
+At or beyond the end, content is empty and nextOffset is null, retaining the
+full totalChars. Every continuation fetches and extracts again, so changing
+pages can produce inconsistent chunks. There is no cache, snapshot, or storage ID.
+
+At most three items execute concurrently. Each request has a 30-second deadline
+including body consumption and a streamed 5 MiB decoded response-body limit.
+Requests are not retried. Ctrl+C cancels active requests and prevents queued
+items from starting; readers and request timers are released on completion.
 
 ### Skills
 
@@ -391,7 +382,8 @@ There is no history-listing or resume command.
 - [DeepSeek model limits](https://api-docs.deepseek.com/quick_start/pricing/)
 - [Compaction design and pi sources](docs/adr/0002-token-budgeted-context-compaction.md)
 - [Brave Web Search API](https://api-dashboard.search.brave.com/app/documentation/web-search)
-- [Playwright browser API](https://playwright.dev/docs/api/class-browser)
+- [Readability main-content extraction](https://github.com/mozilla/readability)
+- [jsdom HTML parsing](https://github.com/jsdom/jsdom)
 - [Turndown HTML-to-Markdown conversion](https://github.com/mixmark-io/turndown)
 
 Compaction deviations from the fixed pi sources: manual compaction retains whole
@@ -413,10 +405,9 @@ npm run verify
 includes application source, tests, and the Vitest configuration. Run
 `npm run format` to apply formatting fixes.
 
-Ordinary tests use Vitest in Node.js and do not require credentials. Install
-matching Chromium as described in [Web page reading](#web-page-reading)
-before browser tests or the full suite. Tests serve all pages and subresources
-locally; they do not use real model or search credentials. Run a
+Ordinary tests use Vitest in Node.js and do not require credentials or a browser.
+Tests serve pages and controlled provider responses locally; they do not use
+real model or search credentials. Run a
 specific file with `npm test -- tests/startup.test.ts`. Live-service tests belong
 in `tests/live/` and are excluded from ordinary test discovery; no live-test
 command is configured yet.
@@ -466,9 +457,9 @@ src/
 │   ├── skill.ts           # Dynamic skill tool
 │   ├── web-access/
 │   │   ├── web-search.ts  # Search arguments and tool entry point
-│   │   ├── fetch-content.ts # Content arguments and tool entry point
+│   │   ├── fetch-content.ts # Bounded HTTP fetching, extraction, and pagination
 │   │   ├── brave.ts       # Internal Brave adapter
-│   │   └── rendered-page.ts # Retained Chromium implementation pending replacement
+│   │   └── rendered-page.ts # Obsolete Chromium implementation pending ticket 04 cleanup
 │   └── toolbox.ts         # Tool schemas, argument validation, and dispatch
 └── bot/startup.ts          # Bot startup placeholder
 ```
