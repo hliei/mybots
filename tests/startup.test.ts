@@ -50,7 +50,7 @@ it("imports Agent and CLI modules without reading configuration or starting serv
     [
       "--input-type=module",
       "-e",
-      'await import("./src/core/agent.ts"); await import("./src/cli.ts");',
+      'await import("./src/core/agent.ts"); await import("./src/core/events.ts"); await import("./src/core/runtime.ts"); await import("./src/cli.ts");',
     ],
     { cwd: projectRoot, encoding: "utf8", timeout: 5000 },
   );
