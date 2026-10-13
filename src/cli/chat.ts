@@ -58,7 +58,15 @@ export async function runCli(args: string[]): Promise<number> {
             if (command !== undefined) {
               console.log(command);
             } else {
-              console.log(`${agent.definition.id}: ${await agent.chat(input, controller.signal)}`);
+              const answer = await agent.chat(input, controller.signal);
+              const reply = (await agent.getPendingReplies()).at(-1);
+              await new Promise<void>((resolve, reject) => {
+                process.stdout.write(`${agent.definition.id}: ${answer}\n`, (error) => {
+                  if (error) reject(error);
+                  else resolve();
+                });
+              });
+              if (reply) await agent.acknowledgeReply(reply.replyId);
             }
           } catch (error) {
             if (controller.signal.aborted) break;

@@ -1,7 +1,7 @@
 # Durable outbound delivery
 
 Status: accepted
-Implementation: planned
+Implementation: completion commits, pending projections, chunk progress and acknowledgements delivered; network delivery and retries planned
 
 Generated replies awaiting delivery will be persisted, retried after delivery
 failure, and recovered after restart. A pending reply is cleared only after
@@ -25,3 +25,20 @@ are appended separately by stable reply identity. Pending files are projections
 of that log: rebuild missing pending files, resume at the saved chunk boundary,
 and suppress stale pending files whose replies have saved acknowledgements.
 Compaction records do not establish delivery or turn-completion state.
+
+The Agent commits completion before returning its answer. Senders use
+`getPendingReplies()`, `confirmChunks(replyId, confirmedChunks)` and
+`acknowledgeReply(replyId)`; the confirmed count is the number of chunks already
+accepted, so delivery resumes at that zero-based boundary. The CLI confirms only
+its current session's reply after the standard output write completes. Each CLI
+launch creates a new session and does not replay older CLI deliveries.
+
+Pending projections live at `event_path/pending/<sessionId>/<replyId>.json`.
+Recovery validates completion metadata and state references before repairing
+files; invalid completion metadata raises a session error. Missing projections
+are rebuilt and acknowledged or orphaned projections are removed. Projection
+failure after a completion append does not undo that append: recovery retains
+the answer and pending reply without invoking the model or tools again.
+
+Reply destinations retain the source encodings `platform-cli:cli-user`,
+`platform-telegram:<userId>:<chatId>` and `platform-ws:<userId>`.

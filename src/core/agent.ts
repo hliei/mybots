@@ -17,7 +17,7 @@ import {
   summaryInstructions,
   summaryMessage,
 } from "./compaction.ts";
-import type { SessionRecord } from "./history.ts";
+import type { PendingReply, SessionRecord } from "./history.ts";
 import { ConversationHistory } from "./history.ts";
 import type { Message } from "./messages.ts";
 import { SkillLoader } from "./skills.ts";
@@ -45,6 +45,7 @@ export class Agent {
   private system: Message;
   private readonly messages: Message[];
   private replying = false;
+  private recoveryRequired = false;
   private usage: { tokens: number; messageCount: number } | undefined;
   private summary: Message | undefined;
   private readonly entryIds = new WeakMap<Message, string>();
@@ -90,7 +91,9 @@ export class Agent {
         options.agent,
       ));
     let { config, definition } = await configuration.snapshot(options.agent);
-    const history = await ConversationHistory.open(config.history_path);
+    const history = await ConversationHistory.open(config.history_path, {
+      eventPath: config.event_path,
+    });
     const existing = options.sessionId ? await history.getSession(options.sessionId) : undefined;
     if (options.sessionId && !existing) throw new Error(`Session not found: ${options.sessionId}`);
     if (existing) {
@@ -111,20 +114,23 @@ export class Agent {
       configuration,
       !options.configuration,
     );
-    if (existing) {
-      const recovered = await history.recoverContext(existing.id);
-      agent.recoveryDiagnostics.push(...recovered.diagnostics);
-      for (const { id, message } of recovered.messages) {
-        agent.messages.push(message);
-        agent.entryIds.set(message, id);
-      }
-      if (recovered.summary) {
-        agent.messages.unshift(recovered.summary);
-        agent.summary = recovered.summary;
-      }
-    }
+    if (existing) await agent.restoreContext();
     if (!options.configuration) configuration.startWatching();
     return agent;
+  }
+
+  private async restoreContext(): Promise<void> {
+    const recovered = await this.history.recoverContext(this.sessionId);
+    this.recoveryDiagnostics.push(...recovered.diagnostics);
+    this.messages.length = 0;
+    this.summary = recovered.summary;
+    this.usage = undefined;
+    for (const { id, message } of recovered.messages) {
+      this.messages.push(message);
+      this.entryIds.set(message, id);
+    }
+    if (recovered.summary) this.messages.unshift(recovered.summary);
+    this.recoveryRequired = false;
   }
 
   /**
@@ -172,6 +178,7 @@ export class Agent {
     if (this.replying) throw new Error("An Agent reply or compaction is already in progress.");
     this.replying = true;
     try {
+      if (this.recoveryRequired) await this.restoreContext();
       await this.refreshSettings();
       const result = await this.compactContext(this.messages, signal);
       if (result.messages) {
@@ -254,6 +261,18 @@ export class Agent {
     }
   }
 
+  async getPendingReplies(): Promise<PendingReply[]> {
+    return this.history.getPendingReplies(this.sessionId);
+  }
+
+  async confirmChunks(replyId: string, confirmedChunks: number): Promise<void> {
+    await this.history.confirmChunks(this.sessionId, replyId, confirmedChunks);
+  }
+
+  async acknowledgeReply(replyId: string): Promise<void> {
+    await this.history.acknowledgeReply(this.sessionId, replyId);
+  }
+
   async close(): Promise<void> {
     if (this.ownsConfiguration) await this.configuration.stop();
   }
@@ -274,13 +293,19 @@ export class Agent {
     if (requestChanged) this.usage = undefined;
   }
 
-  async chat(input: string, signal?: AbortSignal): Promise<string> {
+  async chat(
+    input: string,
+    signal?: AbortSignal,
+    destination = "platform-cli:cli-user",
+  ): Promise<string> {
     if (this.replying) throw new Error("An Agent reply is already in progress.");
     this.replying = true;
     try {
+      if (this.recoveryRequired) await this.restoreContext();
       await this.refreshSettings();
       const user: Message = { role: "user", content: input };
-      this.entryIds.set(user, await this.history.saveMessage(this.sessionId, user));
+      const turnId = await this.history.saveMessage(this.sessionId, user);
+      this.entryIds.set(user, turnId);
       const pending: Message[] = [user];
       let usage = this.usage;
       while (true) {
@@ -303,7 +328,22 @@ export class Agent {
           this.toolbox.schemas,
           signal,
         );
-        this.entryIds.set(reply, await this.history.saveMessage(this.sessionId, reply));
+        let id: string;
+        try {
+          id = reply.tool_calls?.length
+            ? await this.history.saveMessage(this.sessionId, reply)
+            : await this.history.saveCompletion(this.sessionId, reply, {
+                turnId,
+                replyId: randomUUID(),
+                payload: reply.content,
+                destination,
+              });
+        } catch (error) {
+          // An append may have committed even if an index or pending projection failed.
+          this.recoveryRequired = true;
+          throw error;
+        }
+        this.entryIds.set(reply, id);
         pending.push(reply);
         if (usageTokens !== undefined) {
           usage = { tokens: usageTokens, messageCount: this.messages.length + pending.length };

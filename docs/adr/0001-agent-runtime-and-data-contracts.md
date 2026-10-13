@@ -118,7 +118,8 @@ rebuilds the active context used for subsequent model requests.
 compaction and interruption state records. Existing message fields remain
 compatible, and message-only history views exclude compaction/state records.
 Programmatic recovery restores saved context and repairs interrupted tools;
-completion and delivery state remain planned.
+final-message completion commits, pending projections, chunk progress and
+acknowledgements are implemented. Network delivery and retries remain planned.
 
 ## API and library documentation
 

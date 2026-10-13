@@ -1,8 +1,87 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { summaryMessage } from "./compaction.ts";
 import type { Message, ToolCall } from "./messages.ts";
+
+export interface Completion {
+  turnId: string;
+  replyId: string;
+  payload: string;
+  destination: string;
+}
+
+export interface PendingReply extends Completion {
+  sessionId: string;
+  confirmedChunks: number;
+}
+
+function completion(value: unknown): Completion | undefined {
+  const raw = asRecord(value);
+  if (
+    typeof raw?.turnId !== "string" ||
+    !raw.turnId ||
+    typeof raw.replyId !== "string" ||
+    !raw.replyId ||
+    typeof raw.payload !== "string" ||
+    typeof raw.destination !== "string" ||
+    !/^(platform-cli:cli-user|platform-telegram:\d+:-?\d+|platform-ws:.+)$/.test(raw.destination)
+  )
+    return undefined;
+  return {
+    turnId: raw.turnId,
+    replyId: raw.replyId,
+    payload: raw.payload,
+    destination: raw.destination,
+  };
+}
+
+function deliveryProjection(entries: LogEntry[], sessionId: string): PendingReply[] {
+  const replies = new Map<string, PendingReply>();
+  const acknowledged = new Set<string>();
+  const turns = new Set<string>();
+  for (const [index, entry] of entries.entries()) {
+    const raw = entry.raw;
+    if (!raw) continue;
+    if (Object.hasOwn(raw, "completion")) {
+      const saved = completion(raw.completion);
+      const inputs = entries.slice(0, index).filter((candidate) => candidate.id === saved?.turnId);
+      if (
+        !saved ||
+        !entry.message ||
+        entry.message.role !== "assistant" ||
+        entry.message.tool_calls?.length ||
+        saved.payload !== entry.message.content ||
+        typeof raw.id !== "string" ||
+        !raw.id ||
+        inputs.length !== 1 ||
+        inputs[0].message?.role !== "user" ||
+        replies.has(saved.replyId) ||
+        turns.has(saved.turnId)
+      ) {
+        throw new Error(`Invalid completion metadata in session ${sessionId}, line ${entry.line}`);
+      }
+      turns.add(saved.turnId);
+      replies.set(saved.replyId, { ...saved, sessionId, confirmedChunks: 0 });
+    }
+    if (raw.type === "reply_progress" || raw.type === "reply_acknowledged") {
+      const reply = typeof raw.replyId === "string" ? replies.get(raw.replyId) : undefined;
+      if (!reply)
+        throw new Error(`Invalid delivery state in session ${sessionId}, line ${entry.line}`);
+      if (raw.type === "reply_acknowledged") acknowledged.add(reply.replyId);
+      else {
+        if (
+          !Number.isSafeInteger(raw.confirmedChunks) ||
+          (raw.confirmedChunks as number) < reply.confirmedChunks ||
+          acknowledged.has(reply.replyId)
+        )
+          throw new Error(`Invalid chunk progress in session ${sessionId}, line ${entry.line}`);
+        reply.confirmedChunks = raw.confirmedChunks as number;
+      }
+    }
+  }
+  return [...replies.values()].filter((reply) => !acknowledged.has(reply.replyId));
+}
 
 /** Session metadata stored in the JSONL index. */
 export interface SessionRecord {
@@ -22,6 +101,7 @@ export interface HistoryMessage {
   tool_calls: ToolCall[] | null;
   tool_call_id: string | null;
   reasoning_content?: string;
+  completion?: Completion;
   interrupted_tool_call?: { assistantEntryId: string; outcome: "unknown" };
 }
 
@@ -134,6 +214,7 @@ function projectContext(entries: LogEntry[], diagnostics: string[]): RecoveredCo
 function toMessage(record: HistoryMessage): Message {
   const {
     timestamp: _timestamp,
+    completion: _completion,
     interrupted_tool_call: _interruption,
     tool_calls,
     tool_call_id,
@@ -344,16 +425,22 @@ function byUpdatedAtDesc(left: SessionRecord, right: SessionRecord): number {
 export class ConversationHistory {
   private readonly sessionsPath: string;
   private readonly indexFile: string;
+  private readonly pendingPath: string;
   private readonly now: () => Date;
 
-  private constructor(historyPath: string, now: () => Date) {
+  private constructor(historyPath: string, now: () => Date, eventPath: string) {
+    this.pendingPath = join(eventPath, "pending");
     this.sessionsPath = join(historyPath, "sessions");
     this.indexFile = join(historyPath, "index.jsonl");
     this.now = now;
   }
 
-  static async open(historyPath: string, options: { now?: () => Date } = {}) {
-    return new ConversationHistory(resolve(historyPath), options.now ?? (() => new Date()));
+  static async open(historyPath: string, options: { now?: () => Date; eventPath?: string } = {}) {
+    return new ConversationHistory(
+      resolve(historyPath),
+      options.now ?? (() => new Date()),
+      resolve(options.eventPath ?? join(historyPath, "..", ".event")),
+    );
   }
 
   /** Create session metadata in the log and its index entry. */
@@ -381,12 +468,35 @@ export class ConversationHistory {
 
   /** Append one message and update the session index. */
   async saveMessage(sessionId: string, message: Message): Promise<string> {
+    return this.saveRecord(sessionId, message);
+  }
+
+  async saveCompletion(sessionId: string, message: Message, metadata: Completion): Promise<string> {
+    if (!completion(metadata))
+      throw new Error(`Invalid completion metadata in session ${sessionId}`);
+    return this.saveRecord(sessionId, message, metadata);
+  }
+
+  private async saveRecord(
+    sessionId: string,
+    message: Message,
+    metadata?: Completion,
+  ): Promise<string> {
     return this.mutate(async () => {
       const entries = await this.readIndex();
       const entry = entries.find((candidate) => candidate.record.id === sessionId);
       if (!entry) throw new Error(`Session not found: ${sessionId}`);
       const id = randomUUID();
-      const record = { id, ...toHistoryMessage(message, nowIso(this.now())) };
+      const record = {
+        id,
+        ...toHistoryMessage(message, nowIso(this.now())),
+        ...(metadata ? { completion: metadata } : {}),
+      };
+      const { entries: log } = await this.readLog(sessionId);
+      deliveryProjection(
+        [...log, { id, raw: record, message: historyMessage(record), line: log.length + 1 }],
+        sessionId,
+      );
       await this.appendRecord(sessionId, record);
       entry.record.message_count = (await this.getMessages(sessionId)).length;
       entry.record.updated_at = nowIso(this.now());
@@ -394,6 +504,11 @@ export class ConversationHistory {
         entry.record.title = sessionTitle(record.content);
       }
       await this.writeIndex(entries);
+      if (metadata)
+        await this.repairPending(
+          sessionId,
+          deliveryProjection((await this.readLog(sessionId)).entries, sessionId),
+        );
       return id;
     });
   }
@@ -489,8 +604,65 @@ export class ConversationHistory {
       }
       entry.record.message_count = entries.filter((entry) => entry.message).length;
       await this.writeIndex(index);
+      await this.repairPending(sessionId, deliveryProjection(entries, sessionId));
       return projectContext(entries, diagnostics);
     });
+  }
+
+  /** Pending replies are reconstructed in completion order; files are only projections. */
+  async getPendingReplies(sessionId: string): Promise<PendingReply[]> {
+    return this.mutate(async () => {
+      const { entries } = await this.readLog(sessionId);
+      const replies = deliveryProjection(entries, sessionId);
+      await this.repairPending(sessionId, replies);
+      return replies;
+    });
+  }
+
+  async confirmChunks(sessionId: string, replyId: string, confirmedChunks: number): Promise<void> {
+    await this.saveDeliveryState(sessionId, { type: "reply_progress", replyId, confirmedChunks });
+  }
+
+  async acknowledgeReply(sessionId: string, replyId: string): Promise<void> {
+    await this.saveDeliveryState(sessionId, { type: "reply_acknowledged", replyId });
+  }
+
+  private async saveDeliveryState(
+    sessionId: string,
+    state: Record<string, unknown>,
+  ): Promise<void> {
+    return this.mutate(async () => {
+      const { entries } = await this.readLog(sessionId);
+      const id = randomUUID();
+      const record = { ...state, id, timestamp: nowIso(this.now()) };
+      const replies = deliveryProjection(
+        [...entries, { id, raw: record, line: entries.length + 1 }],
+        sessionId,
+      );
+      await this.appendRecord(sessionId, record);
+      await this.repairPending(sessionId, replies);
+    });
+  }
+
+  private async repairPending(sessionId: string, replies: PendingReply[]): Promise<void> {
+    const directory = join(this.pendingPath, encodeURIComponent(sessionId));
+    await mkdir(directory, { recursive: true });
+    const filenames = new Set<string>();
+    for (const reply of replies) {
+      const filename = `${encodeURIComponent(reply.replyId)}.json`;
+      filenames.add(filename);
+      const temporary = join(directory, `.${randomUUID()}.tmp`);
+      try {
+        await writeFile(temporary, serialized(reply), { flush: true });
+        await rename(temporary, join(directory, filename));
+      } finally {
+        await rm(temporary, { force: true });
+      }
+    }
+    for (const filename of await readdir(directory)) {
+      if (filename.endsWith(".json") && !filenames.has(filename))
+        await rm(join(directory, filename), { force: true });
+    }
   }
 
   private async mutate<T>(action: () => Promise<T>): Promise<T> {
@@ -536,6 +708,7 @@ export class ConversationHistory {
     if (source.length > 0 && !metadata && !(session && entries.some((entry) => entry.message))) {
       throw new Error(`Unrecognizable session log: ${sessionId}`);
     }
+    deliveryProjection(entries, sessionId);
     return { source, entries, diagnostics };
   }
 
@@ -550,12 +723,8 @@ export class ConversationHistory {
 
   /** Recorded messages in order; unreadable records are skipped. */
   async getMessages(sessionId: string): Promise<HistoryMessage[]> {
-    const messages: HistoryMessage[] = [];
-    for (const line of await nonBlankLines(this.sessionPath(sessionId))) {
-      const record = historyMessage(parse(line));
-      if (record) messages.push(record);
-    }
-    return messages;
+    const { entries } = await this.readLog(sessionId);
+    return entries.flatMap((entry) => (entry.message ? [entry.message] : []));
   }
 
   private sessionPath(sessionId: string): string {
