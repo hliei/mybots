@@ -37,7 +37,8 @@ content is read when the Skill loads.
 All relative directories resolve against the selected Workspace. Configuration
 validation itself opens no model or messaging connections. These fields prepare
 connection/routing consumers; this configuration module does not start those
-consumers. The bot entry point remains a startup placeholder in this delivery.
+consumers. The bot entry point serves the `/ws` interface when `api.enabled` is
+true, independently of channel enablement; Telegram wiring is added separately.
 
 A session keeps its Agent ID even when the default changes. Each turn captures
 its model, web tools and Agent definition before issuing requests; subsequent

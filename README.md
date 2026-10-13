@@ -6,8 +6,8 @@ bot, with a shared agent core.
 The CLI supports non-streaming, multi-turn conversations, local tool execution,
 Skill loading, and optional web search and HTTP content fetching with DeepSeek
 through a shared queued event runtime. Each launch creates
-a fresh session. The bot server currently prints a setup message or
-help and exits.
+a fresh session. The bot server serves the local WebSocket interface when
+`api.enabled` is set and otherwise prints help or a setup message and exits.
 
 ## Setup
 
@@ -37,7 +37,7 @@ with dependency changes. To install or update dependencies locally, use
 
 ```sh
 npm run dev:cli -- --workspace ./workspace
-npm run dev:bot
+npm run dev:bot -- --workspace ./workspace
 ```
 
 These commands run TypeScript source directly using Node.js native type
@@ -139,7 +139,8 @@ and legacy assistant messages do not create pending replies. The CLI acknowledge
 its reply after the standard output write completes, and each new launch creates
 a separate session without replaying replies from earlier CLI sessions.
 Optional runtime transports provide ordered, recoverable delivery with finite
-retries; live Telegram and WebSocket adapters remain planned.
+retries. The local WebSocket interface is the explicit sender for WebSocket
+replies; live Telegram adapters remain planned.
 
 ### Slash commands
 
@@ -475,8 +476,7 @@ directory are serialized within the process.
 `EventRuntime.open({ workspace, agent, delivery? })` explicitly starts a runtime and its
 configuration watcher. Importing runtime modules opens no resources. CLI and bot
 entry points embed independent runtimes; simultaneous workspace modification by
-both processes is outside the supported contract. Telegram and WebSocket entry
-points remain planned.
+both processes is outside the supported contract.
 
 The shared facade provides:
 
@@ -551,6 +551,39 @@ progress persistence can duplicate that chunk on retry or restart. Terminal
 replies remain scoped to their original CLI launch. Without `delivery` the facade
 keeps replies pending for explicit senders.
 
+### Local WebSocket interface
+
+`api.enabled: true` serves the local WebSocket interface at `/ws` on
+`api.host:api.port` (default `127.0.0.1:8000`). It starts independently of
+Telegram and requires no external service; `api` settings require restart.
+`npm run dev:bot -- --workspace ./workspace` starts the listener in that
+process, and importing the module opens no listener.
+
+A client sends a JSON text frame `{"source": "<client>", "content": "<text>",
+"agent_id": "<id>"?}`. `source` is the client identifier and becomes
+`platform-ws:<client>`; reconnecting with the same identifier continues its
+source-to-session binding. `agent_id` selects the Agent for a new binding and is
+rejected when it conflicts with an existing session. Malformed JSON, a missing or
+empty `source` or `content`, an invalid `agent_id`, or a rejected input returns
+`{"type":"error","message":"..."}` to the originating connection without closing
+it. Unknown fields are ignored.
+
+Every connected client receives reference-compatible `InboundEvent` and
+`OutboundEvent` envelopes for all sessions, including their `type`, `session_id`,
+`source`, `content`, `timestamp`, and inbound `retry_count` or outbound `error`.
+Generated answers also carry `reply_id`. An outbound reply is broadcast only
+after its completion record is committed. Connected clients are observers: a
+slow, failed, or disconnected peer is dropped without blocking the event
+dispatcher or another session's execution.
+
+The interface is the explicit sender for WebSocket replies. It acknowledges a
+pending `platform-ws:` reply only after at least one connected client accepted
+the outbound envelope; a reply with no recipient, or one destined for another
+platform, remains pending. There is no client acknowledgement or replay
+protocol, so a reconnect observes new events rather than historical replies.
+Stopping closes the listener and clients, cancels in-flight broadcasts, and
+leaves unconfirmed replies recoverable.
+
 ### API and library documentation
 
 - [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)
@@ -612,11 +645,12 @@ Git workflow tests install Husky in isolated temporary repositories.
 ```sh
 npm run build
 npm run start:cli -- --workspace ./workspace
-npm run start:bot
+npm run start:bot -- --workspace ./workspace
 ```
 
 Builds contain application code under `dist/`; tests and tool configuration
-are not emitted. Start commands use the existing build. For offline help:
+are not emitted. Start commands use the existing build. The bot server serves
+`/ws` when `api.enabled` is true. For offline help:
 
 ```sh
 npm run start:cli -- --help
@@ -657,7 +691,10 @@ src/
 │   │   ├── serpapi.ts     # Internal SerpApi Google adapter
 │   │   └── search-request.ts # Bounded search HTTP requests
 │   └── toolbox.ts         # Tool schemas, argument validation, and dispatch
-└── bot/startup.ts          # Bot startup placeholder
+├── websocket/
+│   ├── interface.ts        # Local listener, client registry, broadcast, and shutdown
+│   └── protocol.ts         # Input-frame validation and event/error serialization
+└── bot/startup.ts          # Bot entry: Workspace, shared runtime, and WebSocket interface
 ```
 
 The Agent supplies the available tool schemas to the provider. The provider

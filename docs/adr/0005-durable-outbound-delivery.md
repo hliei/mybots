@@ -1,7 +1,7 @@
 # Durable outbound delivery
 
 Status: accepted
-Implementation: completion commits, ordered delivery workers, finite retries, chunk progress and acknowledgements delivered; live channel adapters planned
+Implementation: completion commits, ordered delivery workers, finite retries, chunk progress, acknowledgements, and the local WebSocket interface delivered; Telegram adapters planned
 
 Generated replies awaiting delivery will be persisted, retried after delivery
 failure, and recovered after restart. A pending reply is cleared only after
@@ -62,3 +62,14 @@ the answer and pending reply without invoking the model or tools again.
 
 Reply destinations retain the source encodings `platform-cli:cli-user`,
 `platform-telegram:<userId>:<chatId>` and `platform-ws:<userId>`.
+
+The local WebSocket interface is the explicit sender for WebSocket replies and
+registers no delivery transport. It broadcasts each committed outbound envelope
+to every connected client and acknowledges a `platform-ws:` pending reply only
+after at least one client accepted that envelope. A reply with no connected
+recipient, or one whose destination belongs to another platform, stays pending
+for a later explicit sender. Connected clients are observers: a slow, failed, or
+disconnected peer is dropped without blocking the event dispatcher or another
+session. No client acknowledgement or replay protocol is added: a reconnect
+observes new events rather than historical replies, and unconfirmed replies stay
+recoverable for an explicit sender.

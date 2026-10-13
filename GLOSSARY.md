@@ -27,6 +27,11 @@ A message requesting work in an Agent session.
 **Outbound event**:
 An Agent response produced for delivery to the session's destination.
 
+**WebSocket interface**:
+The local trusted control and observation endpoint that submits client input as
+WebSocket-sourced events and broadcasts every inbound and outbound event to
+connected clients.
+
 **Conversation history**:
 The complete recorded sequence of messages in an Agent session.
 _Avoid_: Long-term memory

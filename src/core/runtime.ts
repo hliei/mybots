@@ -1,4 +1,5 @@
 import { WorkspaceConfiguration } from "../config/reload.ts";
+import type { WorkspaceSettings } from "../config/workspace.ts";
 import { Agent } from "./agent.ts";
 import type { DeliveryOptions } from "./delivery.ts";
 import { ReplyDelivery } from "./delivery.ts";
@@ -76,6 +77,11 @@ export class EventRuntime {
 
   get deliveryFailures() {
     return this.delivery?.failures ?? [];
+  }
+
+  /** Startup-frozen active settings; the bot entry reads bind values from here. */
+  get activeConfig(): WorkspaceSettings {
+    return this.configuration.activeConfig;
   }
 
   private agent(sessionId: string): Agent {
