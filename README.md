@@ -484,7 +484,18 @@ The shared facade provides:
   its existing Agent. Conflicting Agent selection fails.
 - `submit(event)`: validate and queue an `InboundEvent`, returning that turn's
   `OutboundEvent` or a `CancelledTurn` result. Queues execute independently per
-  session. Submit accepts only sessions already opened in this runtime.
+  session. Explicit events require an already opened session and must agree
+  with its saved source and configured binding. External events into legacy
+  sessions without source metadata require a matching configured binding.
+- `submit({ source, content, agent_id? })`: route a Telegram or WebSocket input
+  through a durable source-to-session binding. Sources use the serialized
+  encodings below; channel adapters add the namespace to their input identity.
+  First inputs create a session and save its binding in `config.runtime.yaml`
+  before queueing a turn. Concurrent first inputs reuse one session. WebSocket
+  inputs may select an Agent explicitly; otherwise new bindings use the default
+  Agent. Existing bindings retain their Agent and reject conflicting selection.
+  Invalid sources, missing Agents, unusable sessions and conflicting source
+  ownership fail without replacing history. CLI sessions remain fresh per launch.
 - `subscribe(handler)`: observe inbound and outbound events, with an unsubscribe
   callback. Each handler receives its own event copy and the shutdown signal;
   its callbacks run sequentially per session. Slow callbacks do not block Agent
@@ -509,8 +520,13 @@ or `platform-ws:<userId>`. Outbound events use the session's
 Generated answers add `reply_id`, linking the event to the durable completion
 record and its pending destination. Command results and turn errors are ephemeral
 outbound observations with no `reply_id`; they create no generated pending reply.
-Waiting inputs are never persisted. Source bindings and network delivery are
-separate planned capabilities.
+Waiting inputs are never persisted. A queued input keeps its resolved session
+and reply destination when configuration bindings change. Default Agent changes
+apply only to new bindings. Restarted runtimes reuse saved bindings and rebuild
+context from the session log, including saved compaction summaries, without
+replaying unfinished tools. New runtime sessions record their source in the log
+metadata and index; histories without that field remain readable and acquire no
+retroactive replies. Network delivery remains planned.
 
 ### API and library documentation
 

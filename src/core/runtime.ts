@@ -17,6 +17,7 @@ export type RuntimeResult =
   | { type: "CancelledTurn"; session_id: string; content: "" };
 
 export class EventRuntime {
+  private routing: Promise<void> = Promise.resolve();
   private readonly agents = new Map<string, Agent>();
   private readonly opening = new Map<string, Promise<Agent>>();
   private readonly sessions = new Map<string, Promise<unknown>>();
@@ -89,6 +90,14 @@ export class EventRuntime {
 
   async openSession(options: { agent?: string; sessionId?: string } = {}): Promise<RuntimeSession> {
     if (this.stopping) throw new Error("Runtime is stopping.");
+    return this.loadSession({ ...options, source: "platform-cli:cli-user" });
+  }
+
+  private async loadSession(options: {
+    agent?: string;
+    sessionId?: string;
+    source?: string;
+  }): Promise<RuntimeSession> {
     const existing = options.sessionId ? this.agents.get(options.sessionId) : undefined;
     let opening = options.sessionId ? this.opening.get(options.sessionId) : undefined;
     if (!opening) {
@@ -119,12 +128,81 @@ export class EventRuntime {
 
   async submit(value: unknown): Promise<RuntimeResult> {
     if (this.stopping) throw new Error("Runtime is stopping.");
+    if (value && typeof value === "object" && !("type" in value)) {
+      const data = value as Record<string, unknown>;
+      const input = parseEvent({
+        type: "InboundEvent",
+        session_id: "routing",
+        source: data.source,
+        content: data.content,
+        timestamp: Date.now() / 1000,
+        retry_count: 0,
+      }) as InboundEvent;
+      if (!/^platform-(telegram|ws):/u.test(input.source))
+        throw new Error("Invalid routing source: expected Telegram or WebSocket.");
+      if (
+        data.agent_id !== undefined &&
+        (typeof data.agent_id !== "string" || !data.agent_id.trim())
+      )
+        throw new Error("Invalid Agent selection.");
+      if (data.agent_id !== undefined && !input.source.startsWith("platform-ws:"))
+        throw new Error("Agent selection is only supported for WebSocket sources.");
+      const selection = data.agent_id as string | undefined;
+      const routed = this.routing.then(async () => {
+        await this.configuration.reload();
+        const binding = this.configuration.activeConfig.sources[input.source];
+        const session = await this.loadSession({
+          ...(binding ? { sessionId: binding.session_id } : { source: input.source }),
+          agent: selection,
+        });
+        const agent = this.agent(session.session_id);
+        if (agent.source !== undefined && agent.source !== input.source)
+          throw new Error("Session source does not match the requested source.");
+        const sources = this.configuration.activeConfig.sources;
+        if (
+          Object.entries(sources).some(
+            ([source, entry]) => source !== input.source && entry.session_id === session.session_id,
+          )
+        )
+          throw new Error("Session is already bound to another source.");
+        if (!binding)
+          await this.configuration.updateRuntime({
+            sources: { [input.source]: { session_id: session.session_id } },
+          });
+        return { result: this.enqueue({ ...input, session_id: session.session_id }) };
+      });
+      this.routing = routed.then(
+        () => {},
+        () => {},
+      );
+      return this.track(routed.then(({ result }) => result));
+    }
     const event = parseEvent(value);
     if (event.type !== "InboundEvent")
       throw new Error("Invalid submission: expected InboundEvent.");
     if (!event.source.startsWith("platform-"))
       throw new Error("Invalid submission: expected a platform source.");
-    this.agent(event.session_id);
+    const agent = this.agent(event.session_id);
+    if (agent.source !== undefined && agent.source !== event.source)
+      throw new Error("Session source does not match the requested source.");
+    const sources = this.configuration.activeConfig.sources;
+    if (
+      agent.source === undefined &&
+      event.source !== "platform-cli:cli-user" &&
+      sources[event.source]?.session_id !== event.session_id
+    )
+      throw new Error("External input to a legacy session requires a source-to-session binding.");
+    if (
+      Object.entries(sources).some(
+        ([source, binding]) => binding.session_id === event.session_id && source !== event.source,
+      ) ||
+      (sources[event.source] && sources[event.source].session_id !== event.session_id)
+    )
+      throw new Error("Submission conflicts with the source-to-session binding.");
+    return this.enqueue(event);
+  }
+
+  private enqueue(event: InboundEvent): Promise<RuntimeResult> {
     this.publish(event);
     const result = this.track(
       (this.sessions.get(event.session_id) ?? Promise.resolve()).then(() => this.execute(event)),

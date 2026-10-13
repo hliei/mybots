@@ -33,6 +33,7 @@ export class Agent {
     return this.currentDefinition;
   }
   readonly sessionId: string;
+  readonly source: string | undefined;
   readonly recoveryDiagnostics: string[] = [];
   private readonly createdAt: string;
   private readonly configuration: WorkspaceConfiguration;
@@ -67,6 +68,7 @@ export class Agent {
     this.currentDefinition = definition;
     this.history = history;
     this.sessionId = session.id;
+    this.source = session.source;
     this.createdAt = session.created_at;
     this.toolbox = toolbox;
     this.skills = skills;
@@ -81,9 +83,12 @@ export class Agent {
       workspace?: string;
       agent?: string;
       sessionId?: string;
+      source?: string;
       configuration?: WorkspaceConfiguration;
     } = {},
   ): Promise<Agent> {
+    if (options.sessionId && /[/\\\0]/u.test(options.sessionId))
+      throw new Error("Invalid session ID.");
     const configuration =
       options.configuration ??
       (await WorkspaceConfiguration.open(
@@ -102,7 +107,8 @@ export class Agent {
       ({ config, definition } = await configuration.snapshot(existing.agent_id));
     }
     const skills = new SkillLoader(config.skills_path);
-    const session = existing ?? (await history.createSession(definition.id, randomUUID()));
+    const session =
+      existing ?? (await history.createSession(definition.id, randomUUID(), options.source));
     const agent = new Agent(
       config,
       definition,
