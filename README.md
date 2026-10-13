@@ -17,18 +17,21 @@ Use Node.js 24.21.0, pinned in `.nvmrc`, and npm. With nvm installed:
 nvm install
 nvm use
 npm ci --ignore-scripts
+npm run prepare
 ```
 
 If Node.js 24 is not installed, npm can run a command with a temporary runtime:
 
 ```sh
 npm exec --yes --package=node@24.21.0 -- npm ci --ignore-scripts
+npm exec --yes --package=node@24.21.0 -- npm run prepare
 npm exec --yes --package=node@24.21.0 -- npm run verify
 ```
 
 Direct dependencies use exact versions. Commit `package-lock.json`
 with dependency changes. To install or update dependencies locally, use
-`npm install --ignore-scripts` and review the resulting changes.
+`npm install --ignore-scripts` and review the resulting changes. Run
+`npm run prepare` afterward to install or refresh the Husky Git hooks.
 
 ## Development
 

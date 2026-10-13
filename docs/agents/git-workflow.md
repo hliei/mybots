@@ -31,9 +31,12 @@ reversible. Ticket count does not determine branch count. Split large features
 into independently useful deliveries. Merge a prerequisite delivery before
 starting work that depends on it.
 
-Run `bash scripts/workflow.sh install` once per clone. It installs an absolute
-`core.hooksPath` shared by worktrees. Integrate an existing custom hook path
-before installation.
+After installing development dependencies, run `npm run prepare` in each clone
+or worktree. The standard `prepare: husky` lifecycle also runs this command when
+dependency installation allows scripts. Husky sets `core.hooksPath` to
+`.husky/_`, resolved relative to the checkout where Git runs. Each checkout
+needs its own generated files. Commit-message and push checks live directly in
+`.husky/`; generated `.husky/_` files stay outside version control.
 
 Before the first implementation edit, inspect the working directory and branch.
 For a new delivery, run:

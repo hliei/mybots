@@ -3,6 +3,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd -P)
 fixture=$(mktemp -d "${TMPDIR:-/tmp}/mybots-workflow.XXXXXX")
+fixture=$(cd "$fixture" && pwd -P)
 trap 'rm -rf "$fixture"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME='Workflow Test' GIT_COMMITTER_NAME='Workflow Test'
@@ -18,14 +19,23 @@ reject() {
 git init -q --initial-branch=main "$fixture/repo"
 git init -q --bare --initial-branch=main "$fixture/remote.git"
 cd "$fixture/repo"
-cp -R "$root/.githooks" "$root/scripts" .
-cp "$root/.gitignore" .
-bash scripts/workflow.sh install
-bash scripts/workflow.sh install
+cp -R "$root/scripts" .
+mkdir .husky
+cp "$root/.husky/commit-msg" "$root/.husky/pre-push" .husky/
+cp "$root/.gitignore" "$root/package.json" .
+mkdir node_modules
+ln -s "$root/node_modules/husky" node_modules/husky
+mkdir node_modules/.bin
+ln -s ../husky/bin.js node_modules/.bin/husky
+git config core.hooksPath "$fixture/repo/.githooks"
+npm run prepare
+[[ "$(git config --get core.hooksPath)" == .husky/_ ]]
+git check-ignore .husky/_/h >/dev/null
+npm run prepare
 mkdir -p .scratch .agents
 touch .scratch/spec.md .agents/local.md .env AGENTS.override.md skills-lock.json
 git check-ignore .scratch/spec.md .agents/local.md .env AGENTS.override.md skills-lock.json >/dev/null
-git add .gitignore .githooks scripts
+git add .gitignore .husky scripts package.json
 reject git commit -qm 'feat: bypass main workflow'
 reject git commit -qm 'invalid message'
 reject git commit -qm 'chore: setup' -m 'Unrequested body'
@@ -79,7 +89,7 @@ git add second.txt
 git commit -qm 'chore: follow feature commit'
 reject git push origin main
 zero=0000000000000000000000000000000000000000
-reject bash -c 'printf "%s %s %s %s\n" refs/heads/main "$1" refs/heads/main "$2" | .githooks/pre-push' _ "$(git rev-parse HEAD)" "$zero"
+reject bash -c 'printf "%s %s %s %s\n" refs/heads/main "$1" refs/heads/main "$2" | .husky/_/pre-push' _ "$(git rev-parse HEAD)" "$zero"
 git reset --hard -q origin/main
 reject git push origin :main
 reject git push --force origin main~1:main
@@ -105,7 +115,7 @@ git push -q origin main
 # Refuse true force pushes and local merge commits into main.
 old=$(git rev-parse HEAD~1)
 tip=$(git rev-parse HEAD)
-reject bash -c 'printf "%s %s %s %s\n" refs/heads/main "$1" refs/heads/main "$2" | .githooks/pre-push' _ "$old" "$tip"
+reject bash -c 'printf "%s %s %s %s\n" refs/heads/main "$1" refs/heads/main "$2" | .husky/_/pre-push' _ "$old" "$tip"
 git switch -q -c test/local-merge
 echo test >test.txt
 git add test.txt
@@ -118,9 +128,35 @@ git -c core.hooksPath=/dev/null merge -q --no-ff test/local-merge -m 'Merge loca
 reject git push origin main
 git reset --hard -q origin/main
 
+# Fresh clones and linked worktrees install their own Husky files.
+git clone -q "$fixture/remote.git" "$fixture/clone"
+(
+  cd "$fixture/clone"
+  mkdir node_modules
+  ln -s "$root/node_modules/husky" node_modules/husky
+  mkdir node_modules/.bin
+  ln -s ../husky/bin.js node_modules/.bin/husky
+  npm run prepare
+  reject git commit --allow-empty -qm 'feat: bypass cloned main'
+)
+git worktree add -q -b test/husky-worktree "$fixture/worktree" main
+(
+  cd "$fixture/worktree"
+  reject bash scripts/workflow.sh start docs
+  mkdir node_modules
+  ln -s "$root/node_modules/husky" node_modules/husky
+  mkdir node_modules/.bin
+  ln -s ../husky/bin.js node_modules/.bin/husky
+  npm run prepare
+  [[ "$(git config --get core.hooksPath)" == .husky/_ ]]
+  reject git commit --allow-empty -qm 'invalid message'
+  git commit --allow-empty -qm 'test: verify worktree hooks'
+)
+git worktree remove "$fixture/worktree"
+
 git config core.hooksPath /custom/hooks
-reject bash scripts/workflow.sh install
-git config core.hooksPath "$fixture/repo/.githooks"
+reject bash scripts/workflow.sh start docs
+npm run prepare
 git switch -q --detach
 reject bash scripts/workflow.sh start docs
 

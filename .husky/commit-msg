@@ -1,4 +1,3 @@
-#!/bin/sh
 # Commit-message check for the convention in docs/agents/git-workflow.md.
 #
 # Invoked by `git commit` and `git merge` with $1 = the proposed message file.
@@ -14,7 +13,7 @@ fi
 
 # Git strips comment lines when it creates the commit; strip them here too so the
 # check sees the message that will actually be recorded.
-message=$(grep -v '^#' "$msg_file")
+message=$(grep -v '^#' "$msg_file" || true)
 subject=$(printf '%s\n' "$message" | sed -e '/^[[:space:]]*$/d' | head -n 1)
 body=$(printf '%s\n' "$message" | sed -e '/^[[:space:]]*$/d' | tail -n +2)
 

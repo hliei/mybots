@@ -6,7 +6,6 @@ fail() { echo "workflow: $*" >&2; exit 1; }
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/workflow.sh install
   bash scripts/workflow.sh start <feat|fix|refactor|test> <delivery-name>
   bash scripts/workflow.sh start <docs|chore>
 
@@ -19,26 +18,14 @@ EOF
 
 case "${1:-help}" in
   help|--help|-h) usage; exit 0 ;;
-  install|start) ;;
+  start) ;;
   *) usage >&2; exit 1 ;;
 esac
 
 root=$(git rev-parse --show-toplevel)
-common=$(git rev-parse --path-format=absolute --git-common-dir)
-primary=$(cd "$common/.." && pwd -P)
 cd "$root"
 
 case "$1" in
-  install)
-    [[ $# == 1 ]] || fail "install takes no arguments"
-    current=$(git config --get core.hooksPath || true)
-    case "$current" in
-      ""|.githooks|"$primary/.githooks") ;;
-      *) fail "integrate existing hooksPath before installing: $current" ;;
-    esac
-    git config --local core.hooksPath "$primary/.githooks"
-    echo "Hooks installed: $primary/.githooks"
-    ;;
   start)
     [[ $# -ge 2 ]] || fail "start needs a task type"
     branch=""
@@ -52,8 +39,9 @@ case "$1" in
         ;;
       *) fail "unknown task type: $2" ;;
     esac
-    [[ "$(git config --get core.hooksPath || true)" == "$primary/.githooks" ]] ||
-      fail "run scripts/workflow.sh install first"
+    [[ "$(git config --get core.hooksPath || true)" == .husky/_ ]] ||
+      fail "run npm run prepare first"
+    [[ -x .husky/_/commit-msg && -x .husky/_/pre-push ]] || fail "run npm run prepare in this checkout first"
     [[ "$(git symbolic-ref --quiet --short HEAD || true)" == main ]] || fail "start from main"
     [[ -z "$(git status --porcelain --untracked-files=all)" ]] || fail "preserve working directory changes before starting"
     if git remote get-url origin >/dev/null 2>&1; then

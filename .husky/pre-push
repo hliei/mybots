@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+bash -c '
 set -euo pipefail
 
 fail() { echo "pre-push: $*" >&2; exit 1; }
@@ -21,3 +21,4 @@ while read -r local_ref local_sha remote_ref remote_sha; do
       fail "main direct pushes allow only docs/chore; found $commit: $subject"
   done
 done
+' "$@"
