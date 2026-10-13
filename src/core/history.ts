@@ -29,6 +29,22 @@ interface IndexEntry {
 
 const roles = ["user", "assistant", "system", "tool"] as const;
 const titleLength = 50;
+const indexWrites = new Map<string, Promise<void>>();
+
+/** Coordinate index mutations across History instances in this process. */
+async function updateIndex<T>(path: string, update: () => Promise<T>): Promise<T> {
+  const result = (indexWrites.get(path) ?? Promise.resolve()).then(update);
+  const settled = result.then(
+    () => {},
+    () => {},
+  );
+  indexWrites.set(path, settled);
+  try {
+    return await result;
+  } finally {
+    if (indexWrites.get(path) === settled) indexWrites.delete(path);
+  }
+}
 
 function nowIso(now: Date): string {
   const pad = (value: number, width = 2) => String(value).padStart(width, "0");
@@ -193,6 +209,10 @@ export class ConversationHistory {
 
   /** Create the session index entry and empty message log for a new session. */
   async createSession(agentId: string, sessionId: string): Promise<SessionRecord> {
+    return updateIndex(this.indexFile, () => this.createSessionRecord(agentId, sessionId));
+  }
+
+  private async createSessionRecord(agentId: string, sessionId: string): Promise<SessionRecord> {
     await mkdir(this.sessionsPath, { recursive: true });
     const timestamp = nowIso(this.now());
     const record: SessionRecord = {
@@ -210,6 +230,10 @@ export class ConversationHistory {
 
   /** Append one message and update the session index. */
   async saveMessage(sessionId: string, message: Message): Promise<void> {
+    return updateIndex(this.indexFile, () => this.appendMessage(sessionId, message));
+  }
+
+  private async appendMessage(sessionId: string, message: Message): Promise<void> {
     const entries = await this.readIndex();
     const entry = entries.find((candidate) => candidate.record.id === sessionId);
     if (!entry) throw new Error(`Session not found: ${sessionId}`);

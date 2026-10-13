@@ -27,6 +27,7 @@ const helpText = [
   "/session - Show current session details",
   "/context - Show active context and token budget",
   "/compact - Summarize older active context",
+  "/clear - Start a fresh session on the next message",
 ].join("\n");
 
 it("lists available commands through /help and its aliases regardless of case", async () => {

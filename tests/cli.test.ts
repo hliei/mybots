@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
@@ -69,6 +69,31 @@ it("accepts long options and starts each CLI launch with fresh context", async (
   ).toEqual([
     ["Give concise answers.", "First"],
     ["Give concise answers.", "Second"],
+  ]);
+});
+
+it("starts fresh after /clear without losing the selected Agent or earlier history", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace();
+  await mkdir(join(workspace, ".agents", "bots", "other"));
+  await writeFile(
+    join(workspace, ".agents", "bots", "other", "AGENT.md"),
+    "---\nname: Other\n---\nOther instructions.",
+  );
+  const result = await run(["-w", workspace, "-a", "other"], "Old\n/CLEAR\nFresh\nquit\n");
+  expect(result).toMatchObject({ status: 0, stderr: "" });
+  expect(result.stdout).toContain("Conversation cleared. Next message starts fresh.");
+  expect(result.stdout.match(/other: Hello!/g)).toHaveLength(2);
+  expect(fixture.requests[1].messages.map((message) => message.content)).toEqual([
+    "Other instructions.",
+    "Fresh",
+  ]);
+  const history = await ConversationHistory.open(join(workspace, ".history"));
+  expect(
+    (await history.listSessions()).map((session) => [session.title, session.agent_id]).sort(),
+  ).toEqual([
+    ["Fresh", "other"],
+    ["Old", "other"],
   ]);
 });
 

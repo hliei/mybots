@@ -8,6 +8,15 @@ A conversational agent that uses tools and Skills on behalf of its user.
 A conversation associated with one Agent, containing the user's messages, the
 Agent's replies, and exchanges with tools.
 
+**Conversation source**:
+The origin of a conversation that associates incoming messages and replies with
+an Agent session, such as a platform user in a chat or a WebSocket client identity.
+_Avoid_: Agent session when referring to where messages originate
+
+**Agent turn**:
+The processing of one user message by an Agent, including any tool exchanges
+needed to produce its reply.
+
 **Conversation history**:
 The complete recorded sequence of messages in an Agent session.
 _Avoid_: Long-term memory

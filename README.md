@@ -87,7 +87,28 @@ failures print an error and allow another message. Inputs that fail before a
 model response do not enter session context. Completed tool-call/result groups
 are retained if a later model request fails or is cancelled; local changes
 already made by tools remain in place. The shared Agent interface rejects
-overlapping `chat()` calls in the same session; the CLI submits turns sequentially.
+overlapping `chat()` calls in the same session. The CLI owns a local event runtime
+and submits messages and commands through its conversation source.
+
+The shared `EventRuntime` binds each conversation source to a live Agent session
+and executes its messages and commands in arrival order. Different sources keep
+independent active context and can execute concurrently. `submit(source, content)`
+returns an outbound event; `subscribe(listener)` observes inbound and outbound
+events and returns an unsubscribe function. Events carry `type`, `session_id`,
+`source`, `content`, and a Unix-seconds `timestamp`. Inbound events include
+`retry_count: 0`; outbound events use `agent:<agent_id>` as their source and a
+nullable `error`. Execution failures produce readable errors without retrying
+the turn or inserting substitute input.
+
+`openSource(source)` creates a session for an unattached source and returns its
+session and Agent details without recording chat. `close(graceMs)` stops accepting
+work and rejects unstarted queued calls, gives running work a bounded grace period
+(1,000 milliseconds by default), then cancels overdue requests and tools and awaits
+cleanup. Construction and imports start no workers or connections. Source bindings
+and queues currently live in memory; persistent server recovery remains planned.
+History index writes from live instances in one process are coordinated without
+limiting concurrent Agent execution. Coordination between separate CLI/server
+processes remains part of planned server recovery.
 Automatic context compaction and manual `/compact` are available.
 
 ### Slash commands
@@ -105,6 +126,7 @@ input, including a lone `/`, is sent to the model as ordinary chat.
 | `/skills <id>` | Show one Skill's name, description, and instruction body, or ``✗ Skill `<id>` not found.`` for an unknown ID. |
 | `/context` | Show active-message count (excluding the system prompt), estimated tokens, model context window, output reserve, and effective compaction threshold. |
 | `/compact` | Summarize older active context and retain recent complete turns. Report success, insufficient content or budget, failure, cancellation, or an unusable summary. |
+| `/clear` | Detach this conversation source from its current session. The next message, including already queued input, starts a fresh session without erasing old history. CLI `--agent` selection remains in effect. |
 
 Inspecting a Skill only reads it to render text. It does not register the `skill`
 tool, load the instructions into active context, or change `allow_skills`, and it
@@ -470,6 +492,7 @@ src/
 │   ├── compaction.ts      # Token estimates, retention boundary, and summary input
 │   ├── history.ts         # JSONL conversation history and session index
 │   ├── messages.ts        # Shared messages and tool protocol types
+│   ├── runtime.ts         # Source sessions, ordered execution, events, and cleanup
 │   └── skills.ts          # Skill discovery and loading
 ├── config/workspace.ts    # Workspace and Agent settings
 ├── providers/deepseek.ts  # DeepSeek request/response conversion

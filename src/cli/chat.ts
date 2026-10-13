@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
-import { Agent } from "../core/agent.ts";
+import { sessionCommands } from "../core/commands.ts";
+import { EventRuntime } from "../core/runtime.ts";
 
 export async function runCli(args: string[]): Promise<number> {
   try {
@@ -28,7 +29,10 @@ export async function runCli(args: string[]): Promise<number> {
     if (positionals.length > 1 || (positionals.length === 1 && positionals[0] !== "chat")) {
       throw new Error(`Unsupported arguments: ${positionals.join(" ")}`);
     }
-    const agent = await Agent.open({ workspace: values.workspace, agent: values.agent });
+    const runtime = new EventRuntime({ workspace: values.workspace, agent: values.agent });
+    const source = "platform-cli:cli-user";
+    const session = await runtime.openSource(source);
+    const commands = sessionCommands();
     const lines = createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -45,7 +49,7 @@ export async function runCli(args: string[]): Promise<number> {
     };
     process.once("SIGINT", interrupt);
     lines.once("SIGINT", interrupt);
-    console.log(`Chat with ${agent.definition.name}. Type /help for commands, or quit to end.`);
+    console.log(`Chat with ${session.agentName}. Type /help for commands, or quit to end.`);
     lines.prompt();
     try {
       for await (const line of lines) {
@@ -54,11 +58,14 @@ export async function runCli(args: string[]): Promise<number> {
         if (["quit", "exit", "q"].includes(input.toLowerCase())) break;
         if (input) {
           try {
-            const command = await agent.runCommand(input, controller.signal);
-            if (command !== undefined) {
-              console.log(command);
+            const reply = await runtime.submit(source, input, controller.signal);
+            if (controller.signal.aborted) break;
+            if (reply.error) {
+              console.error(reply.content);
+            } else if (commands.resolve(input)) {
+              console.log(reply.content);
             } else {
-              console.log(`${agent.definition.id}: ${await agent.chat(input, controller.signal)}`);
+              console.log(`${reply.source.slice("agent:".length)}: ${reply.content}`);
             }
           } catch (error) {
             if (controller.signal.aborted) break;
@@ -70,6 +77,7 @@ export async function runCli(args: string[]): Promise<number> {
     } finally {
       lines.close();
       process.removeListener("SIGINT", interrupt);
+      await runtime.close(0);
     }
     console.log("Goodbye!");
     return controller.signal.aborted ? 130 : 0;

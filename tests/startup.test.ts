@@ -44,13 +44,13 @@ describe.each([{ entry: "server", command: "bot", message: "Bot server is not im
   },
 );
 
-it("imports Agent and CLI modules without reading configuration or starting services", () => {
+it("imports Agent, runtime and CLI modules without reading configuration or starting services", () => {
   const result = spawnSync(
     process.execPath,
     [
       "--input-type=module",
       "-e",
-      'await import("./src/core/agent.ts"); await import("./src/cli.ts");',
+      'await import("./src/core/agent.ts"); await import("./src/core/runtime.ts"); await import("./src/cli.ts");',
     ],
     { cwd: projectRoot, encoding: "utf8", timeout: 5000 },
   );

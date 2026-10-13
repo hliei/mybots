@@ -84,7 +84,11 @@ export class Agent {
    * Runs a slash command against the current session. Returns `undefined` when
    * the input is not a registered command, so the caller can treat it as chat.
    */
-  async runCommand(input: string, signal?: AbortSignal): Promise<string | undefined> {
+  async runCommand(
+    input: string,
+    signal?: AbortSignal,
+    clear?: () => void,
+  ): Promise<string | undefined> {
     const context: CommandContext = {
       sessionId: this.sessionId,
       agentName: this.definition.name,
@@ -94,6 +98,7 @@ export class Agent {
       messageCount: this.messages.length,
       skills: this.skills,
       compact: () => this.compact(signal),
+      clear,
       contextReport: () => {
         const reserve = Math.max(16_384, this.definition.llm.max_tokens);
         return [

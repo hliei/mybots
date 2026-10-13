@@ -11,6 +11,7 @@ export interface CommandContext {
   skills: SkillLoader;
   contextReport(): string;
   compact(): Promise<string>;
+  clear?: () => void;
 }
 
 export interface Command {
@@ -148,6 +149,16 @@ const contextCommand: Command = {
   },
 };
 
+const clearCommand: Command = {
+  name: "clear",
+  description: "Start a fresh session on the next message",
+  async execute(_args, context) {
+    if (!context.clear) throw new Error("Session reset requires a conversation source.");
+    context.clear();
+    return "Conversation cleared. Next message starts fresh.";
+  },
+};
+
 /** The slash commands available to an interactive CLI session. */
 export function sessionCommands(): CommandRegistry {
   const registry = new CommandRegistry();
@@ -156,5 +167,6 @@ export function sessionCommands(): CommandRegistry {
   registry.register(sessionCommand);
   registry.register(contextCommand);
   registry.register(compactCommand);
+  registry.register(clearCommand);
   return registry;
 }
