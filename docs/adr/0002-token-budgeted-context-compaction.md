@@ -78,6 +78,13 @@ session. Original JSONL records are neither truncated nor rewritten. A new CLI
 launch starts a new session; persisted summary checkpoints and automatic retries
 after context-overflow errors are outside the initial session lifecycle.
 
+Planned recovery in [ADR 0004](0004-persisted-active-context.md) extends this
+initial lifecycle with successful compaction records in the append-only session
+log. It reconstructs context from the saved summary and stable retention boundary,
+without a separate full-context snapshot or regenerating that summary. The
+compaction algorithm and its validation remain applicable; log-based recovery
+has not yet been implemented.
+
 This separates context management from the
 [conversation-history contract](0001-agent-runtime-and-data-contracts.md) and
 preserves the original reasoning needed by the model's retained tool exchanges.
