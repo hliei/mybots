@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
 import { Agent } from "../src/core/agent.ts";
 import { ConversationHistory } from "../src/core/history.ts";
-import { chatFixture, toolReply } from "./chat-fixture.ts";
+import { chatFixture, toolReply, unavailableResponses } from "./chat-fixture.ts";
 
 let fixture: Awaited<ReturnType<typeof chatFixture>> | undefined;
 afterEach(async () => {
@@ -355,9 +355,10 @@ it("keeps unknown index fields from another writer when recording a message", as
 it("records user input even when the first model request fails", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  fixture.responses.push({ status: 503, body: { error: { message: "Unavailable" } } });
+  fixture.responses.push(...unavailableResponses());
   const agent = await Agent.open({ workspace });
   await expect(agent.chat("Keep this failed turn")).rejects.toThrow("HTTP 503");
+  expect(fixture.requests).toHaveLength(3);
   const reader = await ConversationHistory.open(join(workspace, ".history"));
   expect(await reader.getMessages(agent.sessionId)).toEqual([
     expect.objectContaining({ role: "user", content: "Keep this failed turn" }),

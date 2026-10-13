@@ -82,9 +82,17 @@ disable thinking. DeepSeek ignores temperature while thinking is enabled.
 Assistant messages retain full `reasoning_content` in session context; the CLI
 prints the final text only.
 
-Requests time out after 60 seconds and are not automatically retried. Provider
-failures print an error and allow another message. Inputs that fail before a
-model response do not enter session context. Completed tool-call/result groups
+Each model request attempt has a 60-second timeout. The SDK retries connection
+and timeout failures and HTTP 408, 409, 429, and 5xx responses at most twice,
+following server retry hints and its backoff policy. This applies to conversation
+and compaction requests; total request time can exceed 60 seconds. Retries keep
+the same context, reasoning, tools, and settings without rerunning completed
+tools. Ctrl+C interrupts an active request or retry wait. Permanent errors and
+invalid successful replies end the turn without a whole-turn retry.
+
+Provider failures after retry exhaustion print an error and allow another
+message. Inputs that fail before a model response do not enter session context.
+Completed tool-call/result groups
 are retained if a later model request fails or is cancelled; local changes
 already made by tools remain in place. The shared Agent interface rejects
 overlapping `chat()` calls in the same session; the CLI submits turns sequentially.

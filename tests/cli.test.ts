@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
 import { ConversationHistory } from "../src/core/history.ts";
-import { chatFixture, toolReply } from "./chat-fixture.ts";
+import { chatFixture, toolReply, unavailableResponses } from "./chat-fixture.ts";
 import { pageFixture } from "./page-fixture.ts";
 import { searchFixture } from "./search-fixture.ts";
 
@@ -86,12 +86,13 @@ it("uses the default workspace and Agent and exits on EOF while ignoring blank i
 
 it("reports a provider error and lets the CLI user continue", async () => {
   fixture = await chatFixture();
-  fixture.responses.push({ status: 503, body: { error: { message: "Unavailable" } } });
+  fixture.responses.push(...unavailableResponses());
   const result = await run(["-w", await fixture.workspace()], "Fail\nRecover\nquit\n");
   expect(result.status).toBe(0);
   expect(result.stderr).toContain("DeepSeek request failed (HTTP 503)");
   expect(result.stdout).toContain("helper: Hello!");
-  expect(fixture.requests[1].messages).toHaveLength(2);
+  expect(fixture.requests).toHaveLength(4);
+  expect(fixture.requests[3].messages).toHaveLength(2);
 });
 
 it("prints help without configuration or a service connection", async () => {
@@ -338,7 +339,7 @@ it("reports insufficient context and a summary failure in the CLI while allowing
       status: 200,
       body: { choices: [{ message: { role: "assistant", content: "Recent answer" } }] },
     },
-    { status: 503, body: { error: { message: "Unavailable" } } },
+    ...unavailableResponses(),
   );
   const result = await run(
     ["-w", workspace],
@@ -348,11 +349,12 @@ it("reports insufficient context and a summary failure in the CLI while allowing
   expect(result.stdout).toContain("Not enough compactable context");
   expect(result.stdout).toContain("Compaction failed; active context unchanged");
   expect(result.stdout).toContain("helper: Hello!");
-  expect(fixture.requests[3].messages).toHaveLength(6);
+  expect(fixture.requests).toHaveLength(6);
+  expect(fixture.requests[5].messages).toHaveLength(6);
 });
 
 it.each([false, true])(
-  "continues CLI chat after automatic compaction (first attempt fails: %s)",
+  "continues CLI chat after automatic compaction (first request exhausts retries: %s)",
   async (fails) => {
     fixture = await chatFixture();
     const workspace = await fixture.workspace(fixture.root, "  context_window: 100000\n");
@@ -377,7 +379,7 @@ it.each([false, true])(
         },
       },
     );
-    if (fails) fixture.responses.push({ status: 503, body: { error: { message: "Unavailable" } } });
+    if (fails) fixture.responses.push(...unavailableResponses());
     fixture.responses.push({
       status: 200,
       body: {
