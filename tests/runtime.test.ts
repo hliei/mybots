@@ -354,16 +354,18 @@ it.each(["platform-cli:cli-user", "platform-telegram:123:-456", "platform-ws:use
   async (source) => {
     fixture = await chatFixture();
     runtime = await EventRuntime.open({ workspace: await fixture.workspace() });
-    const { session_id } = await runtime.openSession();
     const observed: RuntimeEvent[] = [];
     runtime.subscribe(async (event) => {
       observed.push(event);
     });
-    const event = { ...input(session_id, "Hello"), source, retry_count: 2 };
-    await runtime.submit(event);
+    const event =
+      source === "platform-cli:cli-user"
+        ? { ...input((await runtime.openSession()).session_id, "Hello"), source, retry_count: 2 }
+        : { source, content: "Hello" };
+    const result = await runtime.submit(event);
     await runtime.stop();
-    expect(observed[0]).toEqual(event);
-    expect(await runtime.getPendingReplies(session_id)).toEqual([
+    expect(observed[0]).toMatchObject(event);
+    expect(await runtime.getPendingReplies(result.session_id)).toEqual([
       expect.objectContaining({ destination: source }),
     ]);
     expect(fixture.requests).toHaveLength(1);

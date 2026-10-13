@@ -1,3 +1,13 @@
+export function parsePlatformSource(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    !/^(platform-cli:cli-user|platform-telegram:\d+:-?\d+|platform-ws:.+)$/u.test(value) ||
+    (value.startsWith("platform-ws:") && !value.slice("platform-ws:".length).trim())
+  )
+    throw new Error("Invalid platform source.");
+  return value;
+}
+
 export interface InboundEvent {
   type: "InboundEvent";
   session_id: string;
@@ -34,6 +44,7 @@ export function parseEvent(value: unknown): RuntimeEvent {
     )
   )
     throw new Error("Invalid event source.");
+  if (data.source.startsWith("platform-")) parsePlatformSource(data.source);
   if (typeof data.content !== "string") throw new Error("Invalid event content.");
   if (typeof data.timestamp !== "number" || !Number.isFinite(data.timestamp) || data.timestamp < 0)
     throw new Error("Invalid event timestamp: expected Unix seconds.");

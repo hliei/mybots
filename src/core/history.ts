@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { summaryMessage } from "./compaction.ts";
+import { parsePlatformSource } from "./events.ts";
 import type { Message, ToolCall } from "./messages.ts";
 
 export interface Completion {
@@ -85,6 +86,7 @@ function deliveryProjection(entries: LogEntry[], sessionId: string): PendingRepl
 
 /** Session metadata stored in the JSONL index. */
 export interface SessionRecord {
+  source?: string;
   id: string;
   agent_id: string;
   title: string | null;
@@ -280,7 +282,12 @@ function sessionMetadata(value: unknown) {
     !raw.created_at
   )
     return undefined;
-  return { id: raw.id, agent_id: raw.agent_id, created_at: raw.created_at };
+  return {
+    id: raw.id,
+    agent_id: raw.agent_id,
+    created_at: raw.created_at,
+    ...(raw.source === undefined ? {} : { source: parsePlatformSource(raw.source) }),
+  };
 }
 
 function parse(line: string): unknown {
@@ -315,6 +322,7 @@ function sessionRecord(raw: Record<string, unknown>): SessionRecord | undefined 
     message_count: typeof raw.message_count === "number" ? raw.message_count : 0,
     created_at: raw.created_at,
     updated_at: raw.updated_at,
+    ...(raw.source === undefined ? {} : { source: parsePlatformSource(raw.source) }),
   };
 }
 
@@ -444,13 +452,15 @@ export class ConversationHistory {
   }
 
   /** Create session metadata in the log and its index entry. */
-  async createSession(agentId: string, sessionId: string): Promise<SessionRecord> {
+  async createSession(agentId: string, sessionId: string, source?: string): Promise<SessionRecord> {
     return this.mutate(async () => {
+      if (source !== undefined) parsePlatformSource(source);
       await mkdir(this.sessionsPath, { recursive: true });
       const timestamp = nowIso(this.now());
       const record: SessionRecord = {
         id: sessionId,
         agent_id: agentId,
+        ...(source === undefined ? {} : { source }),
         title: null,
         message_count: 0,
         created_at: timestamp,
@@ -458,7 +468,13 @@ export class ConversationHistory {
       };
       await writeFile(
         this.sessionPath(sessionId),
-        serialized({ type: "session", id: sessionId, agent_id: agentId, created_at: timestamp }),
+        serialized({
+          type: "session",
+          id: sessionId,
+          agent_id: agentId,
+          created_at: timestamp,
+          ...(source === undefined ? {} : { source }),
+        }),
         { flag: "wx", flush: true },
       );
       await appendFile(this.indexFile, serialized(record));
@@ -537,11 +553,21 @@ export class ConversationHistory {
 
   async getSession(sessionId: string): Promise<SessionRecord | undefined> {
     const indexed = (await this.readIndex()).find((entry) => entry.record.id === sessionId)?.record;
-    if (indexed) return indexed;
     const records = (await nonBlankLines(this.sessionPath(sessionId))).map((line) =>
       asRecord(parse(line)),
     );
     const metadata = records.map(sessionMetadata).find((record) => record?.id === sessionId);
+    if (indexed) {
+      if (
+        metadata &&
+        (metadata.agent_id !== indexed.agent_id ||
+          (metadata.source !== undefined &&
+            indexed.source !== undefined &&
+            metadata.source !== indexed.source))
+      )
+        throw new Error(`Conflicting session Agent or source metadata: ${sessionId}`);
+      return { ...indexed, ...(metadata?.source === undefined ? {} : { source: metadata.source }) };
+    }
     if (!metadata) return undefined;
     const messages = records.flatMap((raw) => {
       const message = historyMessage(raw);
@@ -551,6 +577,7 @@ export class ConversationHistory {
     return {
       id: sessionId,
       agent_id: metadata.agent_id,
+      ...(metadata.source === undefined ? {} : { source: metadata.source }),
       created_at: metadata.created_at,
       updated_at: messages.at(-1)?.timestamp ?? metadata.created_at,
       title: firstUser ? sessionTitle(firstUser.content) : null,
