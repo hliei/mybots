@@ -147,7 +147,12 @@ it("searches the explicitly configured real provider through the Agent", async (
     expect(item.results.length).toBeLessThanOrEqual(2);
     expect(item.results.some((source: { url: string }) => answer.includes(source.url))).toBe(true);
   }
-  const sourceUrl = items[0].results[0].url;
+  const source = items
+    .flatMap((item) => item.results)
+    .find((result: { url: string }) => new URL(result.url).hostname === "httpwg.org");
+  expect(source).toBeDefined();
+  const sourceUrl = source.url;
+  console.log(`Live source fetching: ${sourceUrl}`);
   expect(
     (
       await agent.chat(

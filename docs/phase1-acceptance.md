@@ -6,6 +6,10 @@ history, manual/automatic compaction, explicit-provider search and HTTP content
 fetching. The bot entry point remains a startup placeholder. Later-phase
 channels, routing, scheduling and long-term memory remain outside this acceptance.
 
+Real-service acceptance completed on October 13, 2026: all four live cases
+passed with DeepSeek and SerpApi. Brave remains covered by offline tests only.
+The final successful run is recorded below alongside earlier failed checkpoints.
+
 ## Offline verification
 
 Run `npm run verify` with Node.js 24.21.0: formatting/lint, type checking, the
@@ -41,8 +45,10 @@ allowance and a 100,000-token context budget for these cases only.
 1. Recall a fact across turns, then load a Skill and execute `write`, `edit`,
    `read` and a fixed `printf` shell command. Check artifacts, replies, call/result
    IDs and original saved reasoning through a fresh reader.
-2. Search through the selected adapter, fetch one returned source, and continue
-   the model answer. Require nonempty sources and readable fetched text. Print
+2. Search for HTTP Semantics through the selected adapter, fetch the HTTP Working
+   Group source from the returned results, and continue the model answer. Require
+   nonempty sources and readable fetched text. This known public source avoids
+   making acceptance depend on the highest-ranked mirror's availability. Print
    the exercised provider; untested adapters gain no live coverage claim.
 3. Fetch RFC 9110 from the RFC Editor, then fetch its next 400-character chunk
    through the Agent. Check readable text, offsets, URL metadata, history and
@@ -123,9 +129,9 @@ does not complete the real-service gate.
   edit, read and shell results. Its three nonmatching cases were filtered out;
   this focused pass alone does not establish full acceptance.
 
-### October 13, 2026: final available live checkpoint
+### October 13, 2026: checkpoint before search configuration
 
-The final full command, with the strengthened assertions, was:
+The full command at this checkpoint, with the strengthened assertions, was:
 
 ```sh
 npm exec --yes --package=node@24.21.0 -- npm run test:live
@@ -143,8 +149,63 @@ model `deepseek-flash` at the official DeepSeek endpoint, with thinking enabled.
 
 The command exited after request completion; filesystem inspection found zero
 remaining `mybots-live-*` temporary Workspaces. Automated review has zero
-remaining Standards or Spec findings. **Overall real-service acceptance remains
-incomplete** pending configured search and the combined search/fetch case.
-Supply/save a source Workspace with `web_search.provider` and `api_key`, then
-rerun the full live command and append its separate results before resolving
-the acceptance ticket. This checkpoint does not claim a successful live gate.
+remaining Standards or Spec findings. At this checkpoint, overall real-service
+acceptance was incomplete pending configured search and the combined search/fetch
+case. This checkpoint did not establish a successful live gate.
+
+### October 13, 2026: configured SerpApi follow-up
+
+The source Workspace was saved with `web_search.provider: serpapi` and its
+credential. No credentials were added to version control or result reports.
+
+The first configured full run passed three cases but failed fetching the
+highest-ranked search source (`fetch failed`). A direct Node.js 24 probe of the
+same diagnostic query's first source, `https://www.protokols.ru/rfc9110/`,
+reproduced `UND_ERR_CONNECT_TIMEOUT`; its HTTP Working Group result returned
+HTTP 200. An attempted RFC Editor domain-restricted query returned no sources;
+another diagnostic request timed out after 30 seconds. A new HTTP Semantics
+query also timed out. These failed runs do not count as completed acceptance.
+
+The fixture retains the original RFC 9110 query and now chooses the HTTP Working
+Group URL from its actual search results instead of fetching the highest-ranked
+mirror. It logs the chosen public source URL. Application code, service deadlines,
+retry behavior and provider selection are unchanged. Missing expected sources or
+failed content still fail the case.
+
+`npm exec --yes --package=node@24.21.0 -- npm run test:live -- -t 'searches the explicitly configured'`
+passed the focused case: SerpApi returned nonempty sources, the Agent fetched
+`https://httpwg.org/http-core/draft-ietf-httpbis-semantics-latest.html`, and
+DeepSeek continued with a final reply. The fresh history reader recovered both
+tool exchanges with their matching IDs and original reasoning. Three unrelated
+cases were filtered out in this focused run.
+
+`npm exec --yes --package=node@24.21.0 -- npm run verify` was rerun and passed
+all 277 offline tests, checks/types, build and executable startup smoke checks.
+Focused-case type checking passed after the final fixture adjustment.
+
+### October 13, 2026: completed real-service acceptance
+
+Final full command under Node.js 24.21.0:
+
+```sh
+npm exec --yes --package=node@24.21.0 -- npm run test:live
+```
+
+Result: **4 passed, 0 failed, 0 skipped**, exit status 0, duration 60.34 seconds.
+Source Workspace: `./workspace`. Model: official DeepSeek `deepseek-flash`,
+thinking enabled. Exercised search provider: **SerpApi**; this run does not
+establish Brave live coverage.
+
+| Scenario | Final observable result |
+| --- | --- |
+| Conversation/Skills/local tools | Fact recalled across turns; successful Skill/write/edit/read/bash exchanges with exact arguments and dependent ordering; fresh reader recovered paired results and original nonempty/empty reasoning strings |
+| Search and fetched source | SerpApi returned sources; Agent fetched the returned HTTPWG HTML page, received readable content and continued its final answer; saved search/fetch exchanges retained IDs and reasoning |
+| HTTP continuation | RFC 9110 text returned consecutive 400-character chunks, offsets 400/800 and equal total length; Agent continued after each fetch |
+| Compaction | Real summary removed four older messages, leaving five active messages; original log/index stayed byte-for-byte intact; subsequent reply recalled the original fact and appended history |
+
+The command exited normally and temporary Workspace inspection found no
+leftovers. No live failures remain in this final acceptance run. Earlier mirror
+connection failures and SerpApi query timeouts remain documented above; passing
+this run does not guarantee future service availability. Final Standards and
+Spec reviews found no remaining issues. Offline verification remains separate:
+277 tests, check/types, build and compiled entry-point startup checks passed.
