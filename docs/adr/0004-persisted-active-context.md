@@ -1,9 +1,9 @@
 # Append-only session recovery
 
 Status: accepted
-Implementation: planned
+Implementation: session recognition, compaction persistence, active-context reconstruction, and interrupted-tool repair delivered; completion and delivery state planned
 
-Messages and successful compaction records will share one append-only, linear
+Messages and successful compaction records share one append-only, linear
 session log. A compaction record stores the original summary and a stable
 `firstKeptEntryId` retention boundary. Active context is reconstructed from the
 latest valid compaction's summary, retained original messages before that record,
@@ -61,7 +61,8 @@ from the log. A saved acknowledgement wins over a stale pending file. Legacy
 messages without completion metadata never create retroactive pending replies.
 
 This extends the initial in-memory lifecycle described in
-[ADR 0002](0002-token-budgeted-context-compaction.md). The current implementation
-still keeps compaction state in memory; this decision describes planned behavior.
+[ADR 0002](0002-token-budgeted-context-compaction.md). Programmatic session recovery
+and interruption repair are implemented; the completion and delivery commit
+contracts above remain planned.
 Conversation and compaction remain linear; branching and alternate session paths
 are outside the selected design.

@@ -33,6 +33,7 @@ export class Agent {
     return this.currentDefinition;
   }
   readonly sessionId: string;
+  readonly recoveryDiagnostics: string[] = [];
   private readonly createdAt: string;
   private readonly configuration: WorkspaceConfiguration;
   private readonly ownsConfiguration: boolean;
@@ -46,6 +47,7 @@ export class Agent {
   private replying = false;
   private usage: { tokens: number; messageCount: number } | undefined;
   private summary: Message | undefined;
+  private readonly entryIds = new WeakMap<Message, string>();
 
   private constructor(
     config: WorkspaceSettings,
@@ -74,7 +76,12 @@ export class Agent {
   }
 
   static async open(
-    options: { workspace?: string; agent?: string; configuration?: WorkspaceConfiguration } = {},
+    options: {
+      workspace?: string;
+      agent?: string;
+      sessionId?: string;
+      configuration?: WorkspaceConfiguration;
+    } = {},
   ): Promise<Agent> {
     const configuration =
       options.configuration ??
@@ -82,11 +89,17 @@ export class Agent {
         options.workspace ?? "../default_workspace",
         options.agent,
       ));
-    const { config, definition } = await configuration.snapshot(options.agent);
+    let { config, definition } = await configuration.snapshot(options.agent);
     const history = await ConversationHistory.open(config.history_path);
+    const existing = options.sessionId ? await history.getSession(options.sessionId) : undefined;
+    if (options.sessionId && !existing) throw new Error(`Session not found: ${options.sessionId}`);
+    if (existing) {
+      if (options.agent && options.agent !== existing.agent_id)
+        throw new Error("Session Agent does not match the requested Agent.");
+      ({ config, definition } = await configuration.snapshot(existing.agent_id));
+    }
     const skills = new SkillLoader(config.skills_path);
-    const sessionId = randomUUID();
-    const session = await history.createSession(definition.id, sessionId);
+    const session = existing ?? (await history.createSession(definition.id, randomUUID()));
     const agent = new Agent(
       config,
       definition,
@@ -98,6 +111,18 @@ export class Agent {
       configuration,
       !options.configuration,
     );
+    if (existing) {
+      const recovered = await history.recoverContext(existing.id);
+      agent.recoveryDiagnostics.push(...recovered.diagnostics);
+      for (const { id, message } of recovered.messages) {
+        agent.messages.push(message);
+        agent.entryIds.set(message, id);
+      }
+      if (recovered.summary) {
+        agent.messages.unshift(recovered.summary);
+        agent.summary = recovered.summary;
+      }
+    }
     if (!options.configuration) configuration.startWatching();
     return agent;
   }
@@ -206,6 +231,17 @@ export class Agent {
         return { report: "Unusable summary; active context unchanged." };
       }
       const compacted = [summary, ...messages.slice(cut)];
+      if (automatic && this.contextTokens(compacted, null) > this.inputBudget) {
+        return {
+          report: "Automatic compaction cannot fit the input budget; active context unchanged.",
+        };
+      }
+      const firstKept = messages[cut];
+      await this.history.saveCompaction(
+        this.sessionId,
+        reply.message.content.trim(),
+        firstKept ? this.entryIds.get(firstKept) : undefined,
+      );
       return {
         messages: compacted,
         report: `Compacted ${cut} older messages; ${compacted.length} active messages remain.`,
@@ -244,7 +280,7 @@ export class Agent {
     try {
       await this.refreshSettings();
       const user: Message = { role: "user", content: input };
-      await this.history.saveMessage(this.sessionId, user);
+      this.entryIds.set(user, await this.history.saveMessage(this.sessionId, user));
       const pending: Message[] = [user];
       let usage = this.usage;
       while (true) {
@@ -252,11 +288,6 @@ export class Agent {
         if (this.contextTokens(context, usage) > this.inputBudget) {
           const result = await this.compactContext(context, signal, true);
           if (!result.messages) throw new Error(`Automatic compaction: ${result.report}`);
-          if (this.contextTokens(result.messages, null) > this.inputBudget) {
-            throw new Error(
-              "Automatic compaction cannot fit the input budget; active context unchanged.",
-            );
-          }
           // The newest input stays pending until a response or complete tool group is saved.
           this.messages.splice(
             0,
@@ -272,7 +303,7 @@ export class Agent {
           this.toolbox.schemas,
           signal,
         );
-        await this.history.saveMessage(this.sessionId, reply);
+        this.entryIds.set(reply, await this.history.saveMessage(this.sessionId, reply));
         pending.push(reply);
         if (usageTokens !== undefined) {
           usage = { tokens: usageTokens, messageCount: this.messages.length + pending.length };
@@ -288,7 +319,7 @@ export class Agent {
             tool_call_id: call.id,
             content: await this.toolbox.execute(call, signal),
           };
-          await this.history.saveMessage(this.sessionId, result);
+          this.entryIds.set(result, await this.history.saveMessage(this.sessionId, result));
           pending.push(result);
         }
         this.messages.push(...pending);

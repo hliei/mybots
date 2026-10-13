@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { ConversationHistory } from "../src/core/history.ts";
-import { chatFixture, toolReply } from "./chat-fixture.ts";
+import { chatFixture, toolReply, unavailableResponses } from "./chat-fixture.ts";
 
 let fixture: Awaited<ReturnType<typeof chatFixture>> | undefined;
 afterEach(async () => {
@@ -89,7 +89,9 @@ it("compacts older visible tool work while preserving the complete recent turn, 
   expect(serialized).toContain("truncated");
   expect(serialized).not.toContain("Secret older reasoning");
   expect(serialized).not.toContain("Recent objective");
-  expect(await readFile(log, "utf8")).toBe(before);
+  const saved = await readFile(log, "utf8");
+  expect(saved.startsWith(before)).toBe(true);
+  expect(JSON.parse(saved.slice(before.length))).toMatchObject({ type: "compaction" });
   const reader = await ConversationHistory.open(join(workspace, ".history"));
   expect(await reader.getMessages(agent.sessionId)).toHaveLength(8);
   await agent.chat("Continue");
@@ -184,8 +186,9 @@ it.each([
   const before = await agent.runCommand("/context");
   const log = join(workspace, ".history", "sessions", `${agent.sessionId}.jsonl`);
   const saved = await readFile(log, "utf8");
-  fixture.responses.push(response);
+  fixture.responses.push(...(response.status === 503 ? unavailableResponses() : [response]));
   expect(await agent.runCommand("/compact")).toContain(expected);
+  expect(fixture.requests).toHaveLength(response.status === 503 ? 5 : 3);
   expect(await agent.runCommand("/context")).toBe(before);
   expect(await readFile(log, "utf8")).toBe(saved);
   await agent.chat("Continue");
@@ -305,7 +308,7 @@ it("adds tool-result estimates to the latest usage after a later request fails",
         usage: { prompt_tokens: 19000, completion_tokens: 1000, total_tokens: 20000 },
       },
     },
-    { status: 503, body: { error: { message: "Unavailable" } } },
+    ...unavailableResponses(),
   );
   await expect(agent.chat("Read the file")).rejects.toThrow("HTTP 503");
   const report = await agent.runCommand("/context");
@@ -604,10 +607,10 @@ it.each([
   });
   await agent.chat(`Recent ${"r".repeat(90000)}`);
   const before = await agent.runCommand("/context");
-  fixture.responses.push(response);
+  fixture.responses.push(...(response.status === 503 ? unavailableResponses() : [response]));
   await expect(agent.chat("Next")).rejects.toThrow("Automatic compaction");
   expect(await agent.runCommand("/context")).toBe(before);
-  expect(fixture.requests).toHaveLength(3);
+  expect(fixture.requests).toHaveLength(response.status === 503 ? 5 : 3);
   const history = await ConversationHistory.open(join(workspace, ".history"));
   const raw = await history.getMessages(agent.sessionId);
   expect(raw).toHaveLength(5);
@@ -625,10 +628,7 @@ it("keeps an unanswered input out of committed context when chat fails after suc
   });
   await agent.chat(`Older ${"o".repeat(90000)}`);
   await agent.chat(`Recent ${"r".repeat(90000)}`);
-  fixture.responses.push(summaryResponse("Checkpoint."), {
-    status: 503,
-    body: { error: { message: "Unavailable" } },
-  });
+  fixture.responses.push(summaryResponse("Checkpoint."), ...unavailableResponses());
   await expect(agent.chat(`Unanswered ${"n".repeat(90000)}`)).rejects.toThrow("HTTP 503");
   expect(await agent.runCommand("/context")).toContain("**Active messages:** 1");
   await agent.chat("Recover");

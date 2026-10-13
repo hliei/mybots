@@ -261,6 +261,38 @@ it("keeps session ownership when default Agent changes and reads Skill content a
   ]);
 });
 
+it("retains recovered context and session ownership while applying next-turn settings", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace();
+  const original = await openAgent({ workspace });
+  await original.chat("Remember Alice");
+  await original.close();
+  await mkdir(join(workspace, ".agents/bots/other"));
+  await writeFile(
+    join(workspace, ".agents/bots/other/AGENT.md"),
+    "---\nname: Other\n---\nOther instructions.",
+  );
+  const configuration = await openConfiguration(workspace);
+  await configuration.updateRuntime({ default_agent: "other", llm: { model: "recovery-model" } });
+  const resumed = await openAgent({ configuration, sessionId: original.sessionId });
+  expect(resumed.sessionId).toBe(original.sessionId);
+  expect(resumed.definition.id).toBe("helper");
+  expect(fixture.requests).toHaveLength(1);
+  await configuration.updateRuntime({ llm: { model: "next-model" } });
+  await resumed.chat("Who did I mention?");
+  expect(fixture.requests[1]).toMatchObject({
+    model: "next-model",
+    messages: [
+      { role: "system", content: "Give concise answers." },
+      { role: "user", content: "Remember Alice" },
+      { role: "assistant", content: "Hello!", reasoning_content: "Full reasoning." },
+      { role: "user", content: "Who did I mention?" },
+    ],
+  });
+  await resumed.close();
+  await expect(configuration.reload()).resolves.toBe(true);
+});
+
 it("uses a web tool's original credentials during a turn and replacement credentials next turn", async () => {
   fixture = await chatFixture();
   const search = await searchFixture();

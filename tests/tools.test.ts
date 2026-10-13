@@ -2,7 +2,7 @@ import { watch } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { chatFixture, toolReply } from "./chat-fixture.ts";
+import { chatFixture, toolReply, unavailableResponses } from "./chat-fixture.ts";
 
 let fixture: Awaited<ReturnType<typeof chatFixture>> | undefined;
 afterEach(async () => {
@@ -262,18 +262,19 @@ it("retains completed tool exchanges when the continuation request fails", async
       status: 200,
       body: toolReply([{ name: "write", id: "completed", args: { path, content: "Done" } }]),
     },
-    { status: 503, body: { error: { message: "Unavailable" } } },
+    ...unavailableResponses(),
   );
   await expect(agent.chat("Write")).rejects.toThrow("HTTP 503");
+  expect(fixture.requests).toHaveLength(4);
   await agent.chat("Continue without repeating");
-  expect(fixture.requests[2].messages.map((message) => message.role)).toEqual([
+  expect(fixture.requests[4].messages.map((message) => message.role)).toEqual([
     "system",
     "user",
     "assistant",
     "tool",
     "user",
   ]);
-  expect(fixture.requests[2].messages[3]).toMatchObject({
+  expect(fixture.requests[4].messages[3]).toMatchObject({
     tool_call_id: "completed",
     content: `Successfully wrote to: ${path}`,
   });
