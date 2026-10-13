@@ -6,8 +6,9 @@ bot, with a shared agent core.
 The CLI supports non-streaming, multi-turn conversations, local tool execution,
 Skill loading, and optional web search and HTTP content fetching with DeepSeek
 through a shared queued event runtime. Each launch creates
-a fresh session. The bot server currently prints a setup message or
-help and exits.
+a fresh session. The bot entry point embeds the same runtime and runs a
+long-polling Telegram channel when it is enabled, returning replies to the
+originating chat.
 
 ## Setup
 
@@ -37,7 +38,7 @@ with dependency changes. To install or update dependencies locally, use
 
 ```sh
 npm run dev:cli -- --workspace ./workspace
-npm run dev:bot
+npm run dev:bot -- --workspace ./workspace
 ```
 
 These commands run TypeScript source directly using Node.js native type
@@ -139,7 +140,8 @@ and legacy assistant messages do not create pending replies. The CLI acknowledge
 its reply after the standard output write completes, and each new launch creates
 a separate session without replaying replies from earlier CLI sessions.
 Optional runtime transports provide ordered, recoverable delivery with finite
-retries; live Telegram and WebSocket adapters remain planned.
+retries; the Telegram bot entry point supplies a Telegram transport, and a
+WebSocket adapter remains planned.
 
 ### Slash commands
 
@@ -475,8 +477,8 @@ directory are serialized within the process.
 `EventRuntime.open({ workspace, agent, delivery? })` explicitly starts a runtime and its
 configuration watcher. Importing runtime modules opens no resources. CLI and bot
 entry points embed independent runtimes; simultaneous workspace modification by
-both processes is outside the supported contract. Telegram and WebSocket entry
-points remain planned.
+both processes is outside the supported contract. The bot entry point runs the
+configured Telegram channel; the WebSocket entry point remains planned.
 
 The shared facade provides:
 
@@ -556,6 +558,7 @@ keeps replies pending for explicit senders.
 - [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)
 - [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/)
 - [DeepSeek model limits](https://api-docs.deepseek.com/quick_start/pricing/)
+- [Telegram Bot API](https://core.telegram.org/bots/api)
 - [Token-budgeted context compaction](docs/adr/0002-token-budgeted-context-compaction.md)
 - [Brave Web Search API](https://api-dashboard.search.brave.com/app/documentation/web-search)
 - [Readability main-content extraction](https://github.com/mozilla/readability)
@@ -566,6 +569,56 @@ Manual compaction retains whole user turns, while automatic compaction can
 summarize a long turn's prefix. Token estimates use UTF-8 bytes with a framing
 margin, and saved summaries can be restored from the append-only session log.
 Manual and automatic compaction both support incremental summary updates.
+
+## Telegram bot
+
+The bot entry point embeds the same shared runtime as the CLI and runs a
+long-polling Telegram channel when it is enabled. Copy the example Workspace and
+enable the channel in the merged configuration:
+
+```yaml
+channels:
+  enabled: true
+  telegram:
+    enabled: true
+    bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+    allowed_user_ids: ["123456789"] # Empty allows every user.
+```
+
+```sh
+npm run dev:bot -- --workspace ./workspace
+# or, after npm run build:
+npm run start:bot -- --workspace ./workspace
+```
+
+Without `--workspace` / `-w` the default Workspace is `../default_workspace`.
+`--help` prints usage without loading configuration. Starting with Telegram
+disabled prints a message and exits with status 0, so the entry point can be
+checked without credentials or network access. Channel enablement, `bot_token`
+and `allowed_user_ids` are restart-only settings; edit them and restart the
+process.
+
+The Telegram Bot API is called directly over HTTPS; its request and response
+shapes stay in `src/bot/telegram-api.ts`, so no Telegram SDK dependency is added.
+User and chat identifiers are carried as digit strings and sent back as strings,
+so routing, allowlist checks and delivery never depend on JavaScript numeric
+precision. A numeric identifier that cannot be represented exactly at the JSON
+boundary is rejected instead of silently rounded.
+
+Each user/chat pair maps to its own Agent session, so a user's group and private
+conversations stay separate, and a new source binding is saved in
+`config.runtime.yaml` before the first turn. Text messages become normal runtime
+inputs: follow-ups queue in reception order, tools and Skills work, and generated
+replies travel through the durable chunked delivery path (4,096 code-point
+chunks) with finite retries. A failed send keeps its pending reply and resumes on
+a later restart. Command results and turn errors are ephemeral observations, like
+the CLI, and are sent without a durable record. Messages from users outside a
+nonempty allowlist are ignored; an empty allowlist allows everyone, matching the
+configured behavior. Ctrl+C stops polling and awaits runtime cleanup.
+
+Ordinary tests drive controlled Telegram updates and sends against the real
+runtime; they never contact Telegram. Real send/receive acceptance is separate
+and uses a user-controlled test destination.
 
 ## Checks and tests
 
@@ -612,7 +665,7 @@ Git workflow tests install Husky in isolated temporary repositories.
 ```sh
 npm run build
 npm run start:cli -- --workspace ./workspace
-npm run start:bot
+npm run start:bot -- --workspace ./workspace
 ```
 
 Builds contain application code under `dist/`; tests and tool configuration
@@ -657,7 +710,10 @@ src/
 │   │   ├── serpapi.ts     # Internal SerpApi Google adapter
 │   │   └── search-request.ts # Bounded search HTTP requests
 │   └── toolbox.ts         # Tool schemas, argument validation, and dispatch
-└── bot/startup.ts          # Bot startup placeholder
+└── bot/
+    ├── startup.ts         # Bot arguments, runtime ownership, and shutdown
+    ├── telegram.ts        # Telegram channel lifecycle and reply transport
+    └── telegram-api.ts    # Telegram Bot API request/response boundary
 ```
 
 The Agent supplies the available tool schemas to the provider. The provider

@@ -22,7 +22,8 @@ export interface DeliveryOptions {
   wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
 }
 
-function chunks(content: string, limit: number): string[] {
+/** Split text at paragraph boundaries, falling back to Unicode code-point runs. */
+export function chunkContent(content: string, limit: number): string[] {
   if (Array.from(content).length <= limit) return [content];
   const result: string[] = [];
   let current = "";
@@ -103,7 +104,7 @@ export class ReplyDelivery {
   }
 
   private async deliver(reply: PendingReply, transport: DeliveryTransport): Promise<void> {
-    const parts = chunks(reply.payload, transport.limit);
+    const parts = chunkContent(reply.payload, transport.limit);
     if (reply.confirmedChunks > parts.length)
       throw new Error("Saved progress exceeds the delivery chunk count.");
     for (let attempt = 1; attempt <= 5; attempt++) {
