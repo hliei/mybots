@@ -1,3 +1,3 @@
-import { runStartup } from "./bot/startup.ts";
+import { runBot } from "./bot/startup.ts";
 
-process.exitCode = runStartup("bot", process.argv.slice(2));
+if (import.meta.main) process.exitCode = await runBot(process.argv.slice(2));

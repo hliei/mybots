@@ -1,56 +1,60 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { chatFixture } from "./chat-fixture.ts";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
+let fixture: Awaited<ReturnType<typeof chatFixture>> | undefined;
+afterEach(async () => {
+  await fixture?.close();
+  fixture = undefined;
+});
 
-describe.each([{ entry: "server", command: "bot", message: "Bot server is not implemented yet." }])(
-  "$command startup",
-  ({ entry, command, message }) => {
-    function run(...args: string[]) {
-      return spawnSync(process.execPath, [`src/${entry}.ts`, ...args], {
-        cwd: projectRoot,
-        encoding: "utf8",
-        timeout: 5000,
-      });
-    }
-
-    it("prints help and exits without connecting to services", () => {
-      const result = run("--help");
-
-      expect(result.error).toBeUndefined();
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain(`Usage: npm run start:${command}`);
-      expect(result.stderr).toBe("");
+describe("bot startup", () => {
+  function run(...args: string[]) {
+    return spawnSync(process.execPath, ["src/server.ts", ...args], {
+      cwd: projectRoot,
+      encoding: "utf8",
+      timeout: 5000,
     });
+  }
 
-    it("reports that application functionality is not implemented", () => {
-      const result = run();
+  it("prints help and exits without connecting to services", () => {
+    const result = run("--help");
 
-      expect(result.error).toBeUndefined();
-      expect(result.status).toBe(0);
-      expect(result.stdout.trim()).toBe(message);
-      expect(result.stderr).toBe("");
-    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Usage: npm run start:bot");
+    expect(result.stderr).toBe("");
+  });
 
-    it("rejects unsupported arguments with a failing exit status", () => {
-      const result = run("--unknown");
+  it("reports a disabled Telegram channel without credentials or network", async () => {
+    fixture = await chatFixture();
+    const result = run("--workspace", await fixture.workspace());
 
-      expect(result.error).toBeUndefined();
-      expect(result.status).toBe(1);
-      expect(result.stdout).toBe("");
-      expect(result.stderr).toContain("Unsupported arguments: --unknown");
-    });
-  },
-);
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Telegram is disabled");
+    expect(result.stderr).toBe("");
+  });
 
-it("imports Agent and CLI modules without reading configuration or starting services", () => {
+  it("rejects unsupported arguments with a failing exit status", () => {
+    const result = run("--unknown");
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("--unknown");
+  });
+});
+
+it("imports Agent, CLI and bot modules without reading configuration or starting services", () => {
   const result = spawnSync(
     process.execPath,
     [
       "--input-type=module",
       "-e",
-      'await import("./src/core/agent.ts"); await import("./src/core/events.ts"); await import("./src/core/runtime.ts"); await import("./src/cli.ts");',
+      'await import("./src/core/agent.ts"); await import("./src/core/events.ts"); await import("./src/core/runtime.ts"); await import("./src/cli.ts"); await import("./src/bot/startup.ts"); await import("./src/bot/telegram.ts"); await import("./src/bot/telegram-api.ts");',
     ],
     { cwd: projectRoot, encoding: "utf8", timeout: 5000 },
   );

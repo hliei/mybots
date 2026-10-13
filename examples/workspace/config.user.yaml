@@ -17,16 +17,17 @@ llm:
 #   api_key: YOUR_SEARCH_API_KEY
 # fetch_content: {} # Direct HTTP HTML/Markdown/plain text; no JavaScript rendering.
 
-# Connection configuration is validated here; connections are provided by the bot runtime.
-# All directories and connection settings require restart.
+# Connection configuration is validated here; the bot runtime starts Telegram
+# polling only when channels.enabled and channels.telegram.enabled are both true.
+# Channel enablement, the bot token, the allowlist and all directories require restart.
 logging_path: .logs
 event_path: .event
 channels:
   enabled: false
   telegram:
     enabled: false
-    bot_token: ""
-    allowed_user_ids: [] # Numeric user IDs as strings, e.g. ["123456789"].
+    bot_token: "" # Required when Telegram is enabled; keep real secrets out of Git.
+    allowed_user_ids: [] # Numeric user IDs as strings, e.g. ["123456789"]; empty allows every user.
 api:
   enabled: false
   host: 127.0.0.1
