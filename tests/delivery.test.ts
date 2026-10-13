@@ -1,8 +1,14 @@
+import { watch } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { EventRuntime } from "../src/core/runtime.ts";
 import { chatFixture } from "./chat-fixture.ts";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, watch: vi.fn(actual.watch) };
+});
 
 let fixture: Awaited<ReturnType<typeof chatFixture>> | undefined;
 let runtime: EventRuntime | undefined;
@@ -466,4 +472,35 @@ it.each([
   await runtime.stop();
   expect(observed).toEqual(waits);
   expect(runtime.deliveryFailures).toHaveLength(1);
+});
+
+it("does not start recovered sends when runtime resource initialization fails", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace();
+  runtime = await EventRuntime.open({ workspace });
+  const result = await runtime.submit({ source: "platform-telegram:1:2", content: "Pending" });
+  await runtime.stop();
+  vi.mocked(watch).mockImplementationOnce(() => {
+    throw new Error("Watcher unavailable");
+  });
+  const sent: string[] = [];
+  await expect(
+    EventRuntime.open({
+      workspace,
+      delivery: {
+        transports: [
+          {
+            platform: "telegram",
+            limit: 4096,
+            async send(chunk) {
+              sent.push(chunk.content);
+            },
+          },
+        ],
+      },
+    }),
+  ).rejects.toThrow("Watcher unavailable");
+  runtime = await EventRuntime.open({ workspace });
+  await runtime.getPendingReplies(result.session_id);
+  expect(sent).toEqual([]);
 });

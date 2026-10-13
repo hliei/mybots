@@ -105,14 +105,15 @@ export class EventRuntime {
       eventPath: config.event_path,
     });
     const runtime = new EventRuntime(configuration, history, options.delivery);
-    if (runtime.delivery) {
-      const sessions = new Set([
-        ...(await history.listSessions()).map((session) => session.id),
-        ...Object.values(config.sources).map((binding) => binding.session_id),
-      ]);
-      for (const sessionId of sessions) runtime.track(runtime.delivery.schedule(sessionId));
-    }
+    const sessions = runtime.delivery
+      ? new Set([
+          ...(await history.listSessions()).map((session) => session.id),
+          ...Object.values(config.sources).map((binding) => binding.session_id),
+        ])
+      : [];
     configuration.startWatching();
+    if (runtime.delivery)
+      for (const sessionId of sessions) runtime.track(runtime.delivery.schedule(sessionId));
     return runtime;
   }
 
