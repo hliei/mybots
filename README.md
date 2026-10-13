@@ -7,7 +7,7 @@ The CLI supports non-streaming, multi-turn conversations, local tool execution,
 Skill loading, and optional web search and HTTP content fetching with DeepSeek
 through a shared queued event runtime. Each launch creates
 a fresh session. The bot server serves the local WebSocket interface when
-`api.enabled` is set and otherwise prints help or a setup message and exits.
+`api.enabled` is set; otherwise it reports the disabled interface and exits.
 
 ## Setup
 
@@ -579,10 +579,13 @@ dispatcher or another session's execution.
 The interface is the explicit sender for WebSocket replies. It acknowledges a
 pending `platform-ws:` reply only after at least one connected client accepted
 the outbound envelope; a reply with no recipient, or one destined for another
-platform, remains pending. There is no client acknowledgement or replay
-protocol, so a reconnect observes new events rather than historical replies.
-Stopping closes the listener and clients, cancels in-flight broadcasts, and
-leaves unconfirmed replies recoverable.
+platform, remains pending. Acknowledgement is per committed reply: an older
+unconfirmed reply stays pending and does not gate a later broadcast
+acknowledgement, because the interface delivers no historical replies and every
+connected client already observes outbound events in per-session order. There is
+no client acknowledgement or replay protocol, so a reconnect observes new events
+rather than historical replies. Stopping closes the listener and clients,
+cancels in-flight broadcasts, and leaves unconfirmed replies recoverable.
 
 ### API and library documentation
 

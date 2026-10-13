@@ -18,10 +18,6 @@ function printHelp(): void {
   );
 }
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /**
  * Own the bot process: load the Workspace, embed one shared runtime, serve the
  * local WebSocket interface when `api.enabled` is set, and close the listener,
@@ -73,7 +69,7 @@ export async function runBot(args: string[], dependencies: BotDependencies = {})
     });
     return 0;
   } catch (error) {
-    console.error(`Error: ${describe(error)}`);
+    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   } finally {
     process.removeListener("SIGINT", abort);

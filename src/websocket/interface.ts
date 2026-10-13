@@ -8,16 +8,18 @@ import {
   parseWebSocketInput,
   serializeError,
   serializeEvent,
+  type WebSocketInput,
   websocketSource,
 } from "./protocol.ts";
 
 export interface WebSocketInterfaceOptions {
   runtime: EventRuntime;
   host: string;
+  /** Configured bind port, or 0 to select an ephemeral port for embedding/tests. */
   port: number;
   /** Request path; defaults to `/ws`. */
   path?: string;
-  /** Bounded wait for one client write before that peer is dropped. */
+  /** Bounded wait for one client write or close before that peer is dropped. */
   sendTimeoutMs?: number;
 }
 
@@ -53,7 +55,6 @@ export class WebSocketInterface {
   private webSocketServer: WebSocketServer | undefined;
   private unsubscribe: (() => void) | undefined;
   private boundAddress: WebSocketAddress | undefined;
-  private lastError: string | undefined;
 
   constructor(options: WebSocketInterfaceOptions) {
     if (typeof options.host !== "string" || !options.host.trim())
@@ -82,23 +83,11 @@ export class WebSocketInterface {
     return this.clients.size;
   }
 
-  get address(): WebSocketAddress | undefined {
-    return this.boundAddress ? { ...this.boundAddress } : undefined;
-  }
-
-  /** The most recent listener or WebSocket-server error, for operator diagnostics. */
-  get error(): string | undefined {
-    return this.lastError;
-  }
-
   async start(): Promise<WebSocketAddress> {
     if (this.server) return { ...(this.boundAddress as WebSocketAddress) };
     const server = createServer((request, response) => this.handleRequest(request, response));
     const webSocketServer = new WebSocketServer({ server, path: this.path });
     webSocketServer.on("connection", (socket) => this.handleConnection(socket));
-    webSocketServer.on("error", (error) => {
-      this.lastError = error.message;
-    });
     try {
       await new Promise<void>((resolve, reject) => {
         const onError = (error: Error) => {
@@ -112,9 +101,6 @@ export class WebSocketInterface {
         server.once("error", onError);
         server.once("listening", onListening);
         server.listen(this.port, this.host);
-      });
-      server.on("error", (error) => {
-        this.lastError = error.message;
       });
       const bound = server.address();
       const port = typeof bound === "object" && bound !== null ? bound.port : this.port;
@@ -175,7 +161,7 @@ export class WebSocketInterface {
   }
 
   private async handleMessage(socket: WebSocket, raw: string): Promise<void> {
-    let input: ReturnType<typeof parseWebSocketInput>;
+    let input: WebSocketInput;
     try {
       input = parseWebSocketInput(raw);
     } catch (error) {

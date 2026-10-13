@@ -9,7 +9,7 @@ import { runBot } from "../src/bot/startup.ts";
 import { ConversationHistory } from "../src/core/history.ts";
 import { EventRuntime } from "../src/core/runtime.ts";
 import { type WebSocketAddress, WebSocketInterface } from "../src/websocket/interface.ts";
-import { chatFixture } from "./chat-fixture.ts";
+import { chatFixture, unavailableResponses } from "./chat-fixture.ts";
 
 interface Client {
   socket: WebSocket;
@@ -99,29 +99,53 @@ it("observes another platform's reply without acknowledging it", async () => {
   ]);
 });
 
-it("keeps a reply pending without a client and never replays it to a later connection", async () => {
+it("keeps an unobserved reply pending and never replays it to a later connection", async () => {
   fixture = await chatFixture();
   runtime = await EventRuntime.open({ workspace: await fixture.workspace() });
   server = new WebSocketInterface({ runtime, host: "127.0.0.1", port: 0 });
   const address = await server.start();
 
   const result = await runtime.submit({ source: "platform-ws:alice", content: "Unobserved" });
-  expect(await runtime.getPendingReplies(result.session_id)).toEqual([
-    expect.objectContaining({ payload: "Hello!", destination: "platform-ws:alice" }),
-  ]);
+  const [unobserved] = await runtime.getPendingReplies(result.session_id);
+  expect(unobserved).toMatchObject({ payload: "Hello!", destination: "platform-ws:alice" });
 
   const late = await openClient(address);
   expect(late.messages).toEqual([]);
   late.send({ source: "alice", content: "Observed" });
-  await late.waitFor(
+  const delivered = await late.waitFor(
     (message) => message.type === "OutboundEvent" && message.content === "Hello!",
     "new reply",
   );
+  expect(delivered.reply_id).not.toBe(unobserved.replyId);
   await vi.waitFor(async () => {
     const pending = await runtime?.getPendingReplies(result.session_id);
-    expect(pending).toHaveLength(2);
-    expect(pending?.at(-1)).toMatchObject({ payload: "Hello!", destination: "platform-ws:alice" });
+    expect(pending).toEqual([expect.objectContaining({ replyId: unobserved.replyId })]);
   });
+});
+
+it("broadcasts a rejected turn as an error envelope without a pending reply", async () => {
+  fixture = await chatFixture();
+  fixture.responses.push(...unavailableResponses());
+  runtime = await EventRuntime.open({ workspace: await fixture.workspace() });
+  server = new WebSocketInterface({ runtime, host: "127.0.0.1", port: 0 });
+  const client = await openClient(await server.start());
+
+  client.send({ source: "alice", content: "Fail" });
+  const outbound = await client.waitFor((message) => message.type === "OutboundEvent", "error");
+  expect(outbound).toMatchObject({ content: "", error: expect.stringContaining("HTTP 503") });
+  expect(outbound).not.toHaveProperty("reply_id");
+  expect(await runtime.getPendingReplies(outbound.session_id as string)).toEqual([]);
+});
+
+it("answers plain HTTP requests with upgrade and not-found statuses", async () => {
+  fixture = await chatFixture();
+  runtime = await EventRuntime.open({ workspace: await fixture.workspace() });
+  server = new WebSocketInterface({ runtime, host: "127.0.0.1", port: 0 });
+  const address = await server.start();
+  const base = `http://${address.host}:${address.port}`;
+
+  expect((await fetch(`${base}${address.path}`)).status).toBe(426);
+  expect((await fetch(`${base}/other`)).status).toBe(404);
 });
 
 it("retains session identity and reuses the saved summary after reconnect", async () => {

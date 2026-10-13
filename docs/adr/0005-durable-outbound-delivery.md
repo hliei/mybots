@@ -33,8 +33,8 @@ accepted, so delivery resumes at that zero-based boundary. The CLI confirms only
 its current session's reply after the standard output write completes. Each CLI
 launch creates a new session and does not replay older CLI deliveries.
 
-The runtime optionally accepts delivery transports for Telegram and WebSocket.
-Adapters own recipient lookup, a stable maximum chunk size in Unicode code points,
+The runtime optionally accepts delivery transports for Telegram and WebSocket
+destinations. Adapters own recipient lookup, a stable maximum chunk size in Unicode code points,
 and asynchronous sends that settle only after cancellation cleanup. Terminal
 delivery stays with the current CLI subscriber and is never recovered into a
 later launch's output. Without delivery transports the runtime leaves generated
@@ -68,7 +68,11 @@ registers no delivery transport. It broadcasts each committed outbound envelope
 to every connected client and acknowledges a `platform-ws:` pending reply only
 after at least one client accepted that envelope. A reply with no connected
 recipient, or one whose destination belongs to another platform, stays pending
-for a later explicit sender. Connected clients are observers: a slow, failed, or
+for a later explicit sender. Acknowledgement is per committed reply: an older
+unconfirmed reply remains pending without gating a later broadcast
+acknowledgement, because the interface replays no historical replies and
+per-session event order already governs what connected clients observe.
+Connected clients are observers: a slow, failed, or
 disconnected peer is dropped without blocking the event dispatcher or another
 session. No client acknowledgement or replay protocol is added: a reconnect
 observes new events rather than historical replies, and unconfirmed replies stay
