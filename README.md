@@ -421,9 +421,20 @@ includes application source, tests, and the Vitest configuration. Run
 Ordinary tests use Vitest in Node.js and do not require credentials or a browser.
 Tests serve pages and controlled provider responses locally; they do not use
 real model or search credentials. Run a
-specific file with `npm test -- tests/startup.test.ts`. Live-service tests belong
-in `tests/live/` and are excluded from ordinary test discovery; no live-test
-command is configured yet.
+specific file with `npm test -- tests/startup.test.ts`. Live-service tests are
+excluded from ordinary tests, watching and `verify`. With DeepSeek and explicit
+Brave or SerpApi settings configured in a local Workspace, run:
+
+```sh
+MYBOTS_ACCEPTANCE_WORKSPACE=/absolute/path/to/workspace npm run test:live
+```
+
+The source defaults to `./workspace`. Acceptance uses temporary Workspaces and
+real services, consumes model/search quota, and fails when required configuration
+or a service check is missing. It covers thinking/tool continuation, Skills and
+local tools, saved history, search, HTTP continuation and real compaction. See
+[Phase 1 acceptance](docs/phase1-acceptance.md) for scenarios, compatibility
+exceptions and separate validation evidence.
 
 `verify` runs checks, ordinary tests, compilation, and offline startup checks
 of both compiled entry points. It does not start a long-running service or
