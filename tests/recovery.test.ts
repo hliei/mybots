@@ -1,7 +1,6 @@
 import { access, appendFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { Agent } from "../src/core/agent.ts";
 import { ConversationHistory } from "../src/core/history.ts";
 import { chatFixture, toolReply, unavailableResponses } from "./chat-fixture.ts";
 
@@ -33,7 +32,7 @@ async function savedSession(lines: unknown[]) {
     log,
     `${lines.map((line) => (typeof line === "string" ? line : JSON.stringify(line))).join("\n")}\n`,
   );
-  return { workspace, root, log };
+  return { workspace, root, log, fixture };
 }
 
 const user = (content: string, id?: string) => ({
@@ -61,7 +60,7 @@ it.each([
 ])(
   "falls back from a compaction with %s to the last valid summary",
   async (_name, summary, boundary) => {
-    const { workspace } = await savedSession([
+    const { workspace, fixture } = await savedSession([
       user("Old", "old"),
       user("Recent", "recent"),
       compaction("valid", "Saved checkpoint", "recent"),
@@ -69,7 +68,7 @@ it.each([
       compaction("invalid", summary, boundary),
       user("Later", "later"),
     ]);
-    const agent = await Agent.open({ workspace, sessionId: "saved" });
+    const agent = await fixture.openAgent({ workspace, sessionId: "saved" });
     expect(fixture?.requests).toHaveLength(0);
     expect(agent.recoveryDiagnostics.join("\n")).toContain("invalid compaction");
     await agent.chat("Next");
@@ -86,9 +85,9 @@ it.each([
   ["invalid records", ["not json", { type: "compaction", summary: "orphan" }]],
   ["whitespace-only bytes", ["   ", "\t"]],
 ])("rejects and preserves a nonempty unrecognizable session with %s", async (_name, lines) => {
-  const { workspace, log } = await savedSession(lines);
+  const { workspace, log, fixture } = await savedSession(lines);
   const before = await readFile(log, "utf8");
-  await expect(Agent.open({ workspace, sessionId: "saved" })).rejects.toThrow(
+  await expect(fixture.openAgent({ workspace, sessionId: "saved" })).rejects.toThrow(
     "Unrecognizable session log",
   );
   expect(await readFile(log, "utf8")).toBe(before);
@@ -100,7 +99,7 @@ it("projects interruption repairs next to their original exchange even after lat
     type: "function",
     function: { name, arguments: "{}" },
   });
-  const { workspace, log } = await savedSession([
+  const { workspace, log, fixture } = await savedSession([
     user("First turn", "first"),
     {
       timestamp: "t",
@@ -126,10 +125,10 @@ it("projects interruption repairs next to their original exchange even after lat
     { timestamp: "t", role: "assistant", content: "Second answer" },
   ]);
   const before = await readFile(log, "utf8");
-  const resumed = await Agent.open({ workspace, sessionId: "saved" });
+  const resumed = await fixture.openAgent({ workspace, sessionId: "saved" });
   const repaired = await readFile(log, "utf8");
   expect(repaired.startsWith(before)).toBe(true);
-  await Agent.open({ workspace, sessionId: "saved" });
+  await fixture.openAgent({ workspace, sessionId: "saved" });
   expect(await readFile(log, "utf8")).toBe(repaired);
   await resumed.chat("Next");
   expect(fixture?.requests.at(-1)?.messages.slice(1)).toEqual([
@@ -149,7 +148,7 @@ it("projects interruption repairs next to their original exchange even after lat
 });
 
 it("can compact a repaired earlier exchange and recover the retained later turn", async () => {
-  const { workspace } = await savedSession([
+  const { workspace, fixture } = await savedSession([
     user(`Older ${"o".repeat(90000)}`, "older"),
     {
       timestamp: "t",
@@ -163,7 +162,7 @@ it("can compact a repaired earlier exchange and recover the retained later turn"
     user(`Recent ${"r".repeat(90000)}`, "recent"),
     { timestamp: "t", role: "assistant", content: "Recent answer" },
   ]);
-  const first = await Agent.open({ workspace, sessionId: "saved" });
+  const first = await fixture.openAgent({ workspace, sessionId: "saved" });
   fixture?.responses.push({
     status: 200,
     body: {
@@ -171,7 +170,7 @@ it("can compact a repaired earlier exchange and recover the retained later turn"
     },
   });
   expect(await first.runCommand("/compact")).toContain("Compacted");
-  const second = await Agent.open({ workspace, sessionId: "saved" });
+  const second = await fixture.openAgent({ workspace, sessionId: "saved" });
   expect(second.recoveryDiagnostics.join("\n")).not.toContain("invalid compaction");
   await second.chat("Next");
   expect(
@@ -188,7 +187,7 @@ it("can compact a repaired earlier exchange and recover the retained later turn"
 });
 
 it("keeps physical legacy IDs stable across malformed lines and unterminated appends", async () => {
-  const { workspace, log, root } = await savedSession([
+  const { workspace, log, root, fixture } = await savedSession([
     user("Old"),
     "broken JSON",
     "",
@@ -197,11 +196,11 @@ it("keeps physical legacy IDs stable across malformed lines and unterminated app
   ]);
   await appendFile(log, '{"role":');
   const before = await readFile(log, "utf8");
-  const first = await Agent.open({ workspace, sessionId: "saved" });
+  const first = await fixture.openAgent({ workspace, sessionId: "saved" });
   expect(first.recoveryDiagnostics.join("\n")).toContain("Line 2");
   await first.chat("After restart");
   expect((await readFile(log, "utf8")).startsWith(`${before}\n`)).toBe(true);
-  const second = await Agent.open({ workspace, sessionId: "saved" });
+  const second = await fixture.openAgent({ workspace, sessionId: "saved" });
   await second.chat("Again");
   expect(
     fixture?.requests
@@ -225,7 +224,7 @@ it("repairs missing tool results once, preserving reasoning and never replaying 
     type: "function",
     function: { name: "write", arguments: '{"path":"must-not-exist","content":"effect"}' },
   });
-  const { workspace, root, log } = await savedSession([
+  const { workspace, root, log, fixture } = await savedSession([
     user("Run two writes", "input"),
     {
       id: "calls",
@@ -237,7 +236,7 @@ it("repairs missing tool results once, preserving reasoning and never replaying 
     },
     { timestamp: "t", role: "tool", content: "Already saved result", tool_call_id: "confirmed" },
   ]);
-  const first = await Agent.open({ workspace, sessionId: "saved" });
+  const first = await fixture.openAgent({ workspace, sessionId: "saved" });
   expect(fixture?.requests).toHaveLength(0);
   const reader = await ConversationHistory.open(root);
   const messages = await reader.getMessages("saved");
@@ -251,7 +250,7 @@ it("repairs missing tool results once, preserving reasoning and never replaying 
   expect(JSON.parse(repaired.trim().split("\n").at(-1) ?? "")).toMatchObject({
     type: "turn_interrupted",
   });
-  const second = await Agent.open({ workspace, sessionId: "saved" });
+  const second = await fixture.openAgent({ workspace, sessionId: "saved" });
   expect(await readFile(log, "utf8")).toBe(repaired);
   await expect(access(join(workspace, "must-not-exist"))).rejects.toThrow();
   await second.chat("Continue without replay");
@@ -266,7 +265,7 @@ it("repairs missing tool results once, preserving reasoning and never replaying 
 it("recognizes new sessions by log metadata and preserves stable IDs without the index", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  const original = await Agent.open({ workspace });
+  const original = await fixture.openAgent({ workspace });
   const input = `${"a".repeat(49)}😀b`;
   await original.chat(input);
   const root = join(workspace, ".history");
@@ -279,7 +278,7 @@ it("recognizes new sessions by log metadata and preserves stable IDs without the
   expect(entries[0]).toMatchObject({ type: "session", id: original.sessionId, agent_id: "helper" });
   expect(new Set(entries.map((entry) => entry.id)).size).toBe(3);
   await rm(join(root, "index.jsonl"));
-  const resumed = await Agent.open({ workspace, sessionId: original.sessionId });
+  const resumed = await fixture.openAgent({ workspace, sessionId: original.sessionId });
   await resumed.chat("Next");
   expect((await readFile(log, "utf8")).startsWith(before)).toBe(true);
   expect(
@@ -318,7 +317,7 @@ it("serializes session writes across independent readers without losing index up
 
 it("retains message extensions and exact tool arguments/results through resumed model and tool execution", async () => {
   const originalArguments = '{ "path": "unused", "extension": true }';
-  const { workspace, root } = await savedSession([
+  const { workspace, root, fixture } = await savedSession([
     { ...user("Read", "input"), name: "saved-user" },
     {
       timestamp: "t",
@@ -346,7 +345,7 @@ it("retains message extensions and exact tool arguments/results through resumed 
       { id: "new-write", name: "write", args: { path, content: "Resumed effect" } },
     ]),
   });
-  const resumed = await Agent.open({ workspace, sessionId: "saved" });
+  const resumed = await fixture.openAgent({ workspace, sessionId: "saved" });
   expect(await resumed.chat("Write a new artifact")).toBe("Hello!");
   expect(await readFile(path, "utf8")).toBe("Resumed effect");
   const request = fixture?.requests[0].messages;
@@ -374,7 +373,7 @@ it("retains message extensions and exact tool arguments/results through resumed 
 it("does not install a summary when its log cannot be persisted", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.chat(`Older ${"o".repeat(90000)}`);
   await agent.chat(`Recent ${"r".repeat(90000)}`);
   const context = await agent.runCommand("/context");
@@ -399,7 +398,7 @@ it("does not install a summary when its log cannot be persisted", async () => {
 });
 
 it("recognizes the explicit empty-prefix marker and ignores invalid optional statistics", async () => {
-  const { workspace, root } = await savedSession([
+  const { workspace, root, fixture } = await savedSession([
     user("Old", "old"),
     {
       ...compaction("checkpoint", "Keep this exact summary\n", "checkpoint"),
@@ -408,7 +407,7 @@ it("recognizes the explicit empty-prefix marker and ignores invalid optional sta
     },
     user("Later", "later"),
   ]);
-  const agent = await Agent.open({ workspace, sessionId: "saved" });
+  const agent = await fixture.openAgent({ workspace, sessionId: "saved" });
   expect(agent.recoveryDiagnostics.join("\n")).toContain("ignoring invalid compaction statistic");
   await agent.chat("Next");
   expect(
@@ -429,13 +428,13 @@ it.each([
   ["duplicate boundary", compaction("invalid", "Bad", "duplicate")],
   ["duplicate identity", compaction("duplicate", "Bad", "recent")],
 ])("uses recognized full history for a compaction with %s", async (_name, invalid) => {
-  const { workspace } = await savedSession([
+  const { workspace, fixture } = await savedSession([
     user("Old", "duplicate"),
     user("Recent", "recent"),
     { type: "turn_interrupted", id: "duplicate" },
     invalid,
   ]);
-  const agent = await Agent.open({ workspace, sessionId: "saved" });
+  const agent = await fixture.openAgent({ workspace, sessionId: "saved" });
   expect(agent.recoveryDiagnostics.join("\n")).toContain("invalid compaction");
   await agent.chat("Next");
   expect(
@@ -450,14 +449,14 @@ it.each(["result", "after-exchange"])(
   "rejects a compaction that cuts an unfinished tool exchange at %s",
   async (boundary) => {
     const call = { id: "missing", type: "function", function: { name: "read", arguments: "{}" } };
-    const { workspace } = await savedSession([
+    const { workspace, fixture } = await savedSession([
       user("Input", "input"),
       { timestamp: "t", id: "calls", role: "assistant", content: "", tool_calls: [call] },
       { timestamp: "t", id: "result", role: "tool", content: "Unrelated", tool_call_id: "other" },
       user("After exchange", "after-exchange"),
       compaction("invalid", "Bad", boundary),
     ]);
-    const agent = await Agent.open({ workspace, sessionId: "saved" });
+    const agent = await fixture.openAgent({ workspace, sessionId: "saved" });
     expect(agent.recoveryDiagnostics.join("\n")).toContain("invalid compaction");
     await agent.chat("Next");
     expect(fixture?.requests.at(-1)?.messages[1].content).toBe("Input");
@@ -467,7 +466,7 @@ it.each(["result", "after-exchange"])(
 it("appends a successful compaction while preserving original messages", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.chat(`Older objective ${"o".repeat(90000)}`);
   await agent.chat(`Recent objective ${"r".repeat(90000)}`);
   const log = join(workspace, ".history", "sessions", `${agent.sessionId}.jsonl`);
@@ -494,7 +493,7 @@ it("appends a successful compaction while preserving original messages", async (
 it("restores the saved summary and retained messages without another summary request", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  const original = await Agent.open({ workspace });
+  const original = await fixture.openAgent({ workspace });
   await original.chat(`Older ${"o".repeat(90000)}`);
   await original.chat(`Recent ${"r".repeat(90000)}`);
   fixture.responses.push({
@@ -505,7 +504,7 @@ it("restores the saved summary and retained messages without another summary req
   });
   await original.runCommand("/compact");
   const requestsBefore = fixture.requests.length;
-  const resumed = await Agent.open({ workspace, sessionId: original.sessionId });
+  const resumed = await fixture.openAgent({ workspace, sessionId: original.sessionId });
   expect(resumed.sessionId).toBe(original.sessionId);
   expect(fixture.requests).toHaveLength(requestsBefore);
   await resumed.chat("Continue");
@@ -525,7 +524,7 @@ it("restores the saved summary and retained messages without another summary req
 it("recovers repeated compactions and incrementally updates only the retained transcript", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  const first = await Agent.open({ workspace });
+  const first = await fixture.openAgent({ workspace });
   await first.chat(`First objective ${"a".repeat(90000)}`);
   await first.chat(`Second objective ${"b".repeat(90000)}`);
   fixture.responses.push({
@@ -533,7 +532,7 @@ it("recovers repeated compactions and incrementally updates only the retained tr
     body: { choices: [{ finish_reason: "stop", message: { content: "Checkpoint one." } }] },
   });
   await first.runCommand("/compact");
-  const second = await Agent.open({ workspace, sessionId: first.sessionId });
+  const second = await fixture.openAgent({ workspace, sessionId: first.sessionId });
   await second.chat(`Third objective ${"c".repeat(90000)}`);
   fixture.responses.push({
     status: 200,
@@ -544,7 +543,7 @@ it("recovers repeated compactions and incrementally updates only the retained tr
   expect(summaryInput).toContain("Checkpoint one.");
   expect(summaryInput).toContain("Second objective");
   expect(summaryInput).not.toContain("First objective");
-  const third = await Agent.open({ workspace, sessionId: first.sessionId });
+  const third = await fixture.openAgent({ workspace, sessionId: first.sessionId });
   await third.chat("Continue");
   const contents = fixture.requests
     .at(-1)
@@ -556,7 +555,7 @@ it("recovers repeated compactions and incrementally updates only the retained tr
     "Hello!",
     "Continue",
   ]);
-  const fresh = await Agent.open({ workspace });
+  const fresh = await fixture.openAgent({ workspace });
   expect(fresh.sessionId).not.toBe(first.sessionId);
   expect(await fresh.runCommand("/context")).toContain("**Active messages:** 0");
 });
@@ -564,10 +563,10 @@ it("recovers repeated compactions and incrementally updates only the retained tr
 it("keeps attempted input after a failed request without automatically restarting it", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  const first = await Agent.open({ workspace });
+  const first = await fixture.openAgent({ workspace });
   fixture.responses.push(...unavailableResponses());
   await expect(first.chat("Saved attempted input")).rejects.toThrow("HTTP 503");
-  const resumed = await Agent.open({ workspace, sessionId: first.sessionId });
+  const resumed = await fixture.openAgent({ workspace, sessionId: first.sessionId });
   expect(fixture.requests).toHaveLength(3);
   await resumed.chat("New input");
   expect(
@@ -579,7 +578,7 @@ it("keeps attempted input after a failed request without automatically restartin
 });
 
 it("skips invalid saved messages with diagnostics instead of sending malformed tool data", async () => {
-  const { workspace, root } = await savedSession([
+  const { workspace, root, fixture } = await savedSession([
     user("Recognized", "user"),
     { timestamp: "t", role: "tool", content: "Missing call identity" },
     {
@@ -591,7 +590,7 @@ it("skips invalid saved messages with diagnostics instead of sending malformed t
     { ...user("Invalid entry identity"), id: 42 },
     { timestamp: "t", role: "assistant", content: "Valid answer" },
   ]);
-  const agent = await Agent.open({ workspace, sessionId: "saved" });
+  const agent = await fixture.openAgent({ workspace, sessionId: "saved" });
   expect(
     agent.recoveryDiagnostics.filter((diagnostic) => diagnostic.includes("invalid message")),
   ).toHaveLength(3);

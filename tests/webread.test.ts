@@ -2,7 +2,7 @@ import { once } from "node:events";
 import type { ServerResponse } from "node:http";
 import { gzipSync } from "node:zlib";
 import { afterEach, expect, it } from "vitest";
-import { Agent } from "../src/core/agent.ts";
+import type { Agent } from "../src/core/agent.ts";
 import { ConversationHistory } from "../src/core/history.ts";
 import { chatFixture, toolReply } from "./chat-fixture.ts";
 import { pageFixture } from "./page-fixture.ts";
@@ -27,7 +27,7 @@ afterEach(async () => {
 async function setup() {
   model = await chatFixture();
   pages = await pageFixture();
-  return Agent.open({ workspace: await model.workspace(undefined, "fetch_content: {}\n") });
+  return model.openAgent({ workspace: await model.workspace(undefined, "fetch_content: {}\n") });
 }
 
 async function read(agent: Agent, args: unknown, signal?: AbortSignal): Promise<ContentItem[]> {
@@ -417,7 +417,7 @@ it.each([undefined, "fetch_content: null\n"])(
   "omits fetch_content when unconfigured",
   async (settings) => {
     model = await chatFixture();
-    const agent = await Agent.open({ workspace: await model.workspace(undefined, settings) });
+    const agent = await model.openAgent({ workspace: await model.workspace(undefined, settings) });
     await agent.chat("Hello");
     expect(model.requests[0].tools.map((tool) => tool.function.name)).not.toContain(
       "fetch_content",
@@ -430,7 +430,7 @@ it.each(["fetch_content: []\n", "fetch_content:\n  provider: playwright\n"])(
   async (settings) => {
     model = await chatFixture();
     await expect(
-      Agent.open({ workspace: await model.workspace(undefined, settings) }),
+      model.openAgent({ workspace: await model.workspace(undefined, settings) }),
     ).rejects.toThrow();
     expect(model.requests).toHaveLength(0);
   },

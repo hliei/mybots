@@ -2,7 +2,6 @@ import { once } from "node:events";
 import { appendFile, mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { Agent } from "../src/core/agent.ts";
 import { chatFixture } from "./chat-fixture.ts";
 
 let fixture: Awaited<ReturnType<typeof chatFixture>> | undefined;
@@ -14,7 +13,7 @@ afterEach(async () => {
 
 it("uses workspace defaults and Agent instructions for a DeepSeek reply", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   expect(await agent.chat("Hello")).toBe("Hello!");
   expect(fixture.requests[0]).toMatchObject({
     model: "deepseek-flash",
@@ -31,7 +30,7 @@ it("uses workspace defaults and Agent instructions for a DeepSeek reply", async 
 
 it("continues a session with the earlier user reply and complete reasoning", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   await agent.chat("Remember Alice");
   await agent.chat("Who did I mention?");
   expect(fixture.requests[1].messages).toEqual([
@@ -50,7 +49,7 @@ it("selects another Agent and merges all model overrides with workspace settings
     join(path, ".agents", "bots", "other", "AGENT.md"),
     `---\nname: Other\ndescription: Another assistant\nallow_skills: true\nllm:\n  model: custom-model\n  thinking: false\n  temperature: 1.2\n  max_tokens: 4096\n---\nOther instructions.`,
   );
-  const agent = await Agent.open({ workspace: path, agent: "other" });
+  const agent = await fixture.openAgent({ workspace: path, agent: "other" });
   await agent.chat("Hello");
   expect(agent.definition).toMatchObject({
     id: "other",
@@ -80,7 +79,7 @@ it.each([
   ["  thinking: false\n", "llm:\n  thinking: true\n", "enabled"],
 ])("honors Workspace and Agent thinking settings %s %s", async (settings, metadata, expected) => {
   fixture = await chatFixture();
-  const agent = await Agent.open({
+  const agent = await fixture.openAgent({
     workspace: await fixture.workspace(fixture.root, settings, metadata),
   });
   await agent.chat("Hello");
@@ -90,7 +89,7 @@ it.each([
 it("starts a fresh Agent session without reasoning invented for a plain response", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  const first = await Agent.open({ workspace });
+  const first = await fixture.openAgent({ workspace });
   fixture.responses.push({
     status: 200,
     body: { choices: [{ message: { role: "assistant", content: "Plain reply" } }] },
@@ -98,7 +97,7 @@ it("starts a fresh Agent session without reasoning invented for a plain response
   await first.chat("One");
   await first.chat("Two");
   expect(fixture.requests[1].messages[2]).toEqual({ role: "assistant", content: "Plain reply" });
-  const second = await Agent.open({ workspace });
+  const second = await fixture.openAgent({ workspace });
   expect(second.sessionId).not.toBe(first.sessionId);
   await second.chat("Fresh");
   expect(fixture.requests[2].messages).toHaveLength(2);
@@ -106,7 +105,7 @@ it("starts a fresh Agent session without reasoning invented for a plain response
 
 it("preserves successful conversation when a provider request fails", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   await agent.chat("First");
   fixture.responses.push({ status: 401, body: { error: { message: "Invalid test key" } } });
   await expect(agent.chat("Failed turn")).rejects.toThrow("DeepSeek request failed (HTTP 401).");
@@ -122,13 +121,13 @@ it("preserves successful conversation when a provider request fails", async () =
 it("accepts an empty optional Agent description", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace(fixture.root, "", 'description: ""\n');
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   expect(agent.definition.description).toBe("");
 });
 
 it.each(["brave", "serpapi"])("loads explicit %s web search configuration", async (provider) => {
   fixture = await chatFixture();
-  const agent = await Agent.open({
+  const agent = await fixture.openAgent({
     workspace: await fixture.workspace(
       undefined,
       `web_search:\n  provider: ${provider}\n  api_key: offline-web-key\n  api_base: ${fixture.endpoint}/search\nfetch_content: {}\n`,
@@ -149,7 +148,7 @@ it.each([
 ])("rejects legacy web configuration with migration instructions: %s", async (settings) => {
   fixture = await chatFixture();
   await expect(
-    Agent.open({ workspace: await fixture.workspace(undefined, settings) }),
+    fixture.openAgent({ workspace: await fixture.workspace(undefined, settings) }),
   ).rejects.toThrow(/Migrate websearch to web_search.*replace webread with fetch_content: \{\}/);
   expect(fixture.requests).toHaveLength(0);
 });
@@ -176,7 +175,7 @@ it.each([
 ])("rejects invalid replacement settings: %s", async (settings, error) => {
   fixture = await chatFixture();
   await expect(
-    Agent.open({ workspace: await fixture.workspace(undefined, settings) }),
+    fixture.openAgent({ workspace: await fixture.workspace(undefined, settings) }),
   ).rejects.toThrow(error);
   expect(fixture.requests).toHaveLength(0);
 });
@@ -189,7 +188,7 @@ it.each([
 ])("rejects invalid settings before contacting the provider %s", async (settings, error) => {
   fixture = await chatFixture();
   await expect(
-    Agent.open({ workspace: await fixture.workspace(fixture.root, settings) }),
+    fixture.openAgent({ workspace: await fixture.workspace(fixture.root, settings) }),
   ).rejects.toThrow(error);
   expect(fixture.requests).toHaveLength(0);
 });
@@ -202,7 +201,7 @@ it("loads custom Workspace paths and preserves optional web settings", async () 
     join(workspace, "config.user.yaml"),
     "agents_path: definitions\nskills_path: abilities\nhistory_path: logs\nweb_search:\n  provider: brave\n  api_key: offline-web-key\nfetch_content: {}\n",
   );
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   expect(agent.config).toMatchObject({
     agents_path: join(workspace, "definitions"),
     skills_path: join(workspace, "abilities"),
@@ -215,7 +214,7 @@ it("loads custom Workspace paths and preserves optional web settings", async () 
 
 it("rejects unusable provider replies without adding them to the next request", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   fixture.responses.push({ status: 200, body: { choices: [] } });
   await expect(agent.chat("Lost")).rejects.toThrow("DeepSeek returned no text reply");
   await agent.chat("Next");
@@ -224,7 +223,7 @@ it("rejects unusable provider replies without adding them to the next request", 
 
 it("cancels a provider request without contacting a live service", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   await expect(agent.chat("Cancelled", AbortSignal.abort())).rejects.toThrow(
     "DeepSeek request cancelled",
   );
@@ -238,7 +237,7 @@ it("uses Agent-level credentials and endpoint overrides for Chat Completions", a
     "",
     `llm:\n  api_key: agent-test-key\n  api_base: ${fixture.endpoint}/custom\n`,
   );
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.chat("Hello");
   expect(fixture.transports[0]).toEqual({
     path: "/v1/custom/chat/completions",
@@ -248,7 +247,7 @@ it("uses Agent-level credentials and endpoint overrides for Chat Completions", a
 
 it("rejects overlapping calls in one session and preserves the completed turn", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   let release!: (value: unknown) => void;
   const body = new Promise<unknown>((resolve) => {
     release = resolve;

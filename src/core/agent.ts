@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { WorkspaceConfiguration } from "../config/reload.ts";
 import type { AgentDefinition, WorkspaceSettings } from "../config/workspace.ts";
-import { loadSettings } from "../config/workspace.ts";
 import { DeepSeek } from "../providers/deepseek.ts";
 import { builtinTools } from "../tools/builtin.ts";
 import { createSkillTool } from "../tools/skill.ts";
@@ -23,17 +23,26 @@ import type { Message } from "./messages.ts";
 import { SkillLoader } from "./skills.ts";
 
 export class Agent {
-  readonly config: WorkspaceSettings;
-  readonly definition: AgentDefinition;
+  private currentConfig: WorkspaceSettings;
+  private currentDefinition: AgentDefinition;
+
+  get config(): WorkspaceSettings {
+    return this.currentConfig;
+  }
+  get definition(): AgentDefinition {
+    return this.currentDefinition;
+  }
   readonly sessionId: string;
   readonly recoveryDiagnostics: string[] = [];
   private readonly createdAt: string;
+  private readonly configuration: WorkspaceConfiguration;
+  private readonly ownsConfiguration: boolean;
   private readonly history: ConversationHistory;
-  private readonly model: DeepSeek;
-  private readonly toolbox: Toolbox;
+  private model: DeepSeek;
+  private toolbox: Toolbox;
   private readonly skills: SkillLoader;
   private readonly commands: CommandRegistry;
-  private readonly system: Message;
+  private system: Message;
   private readonly messages: Message[];
   private replying = false;
   private usage: { tokens: number; messageCount: number } | undefined;
@@ -48,9 +57,13 @@ export class Agent {
     toolbox: Toolbox,
     skills: SkillLoader,
     commands: CommandRegistry,
+    configuration: WorkspaceConfiguration,
+    ownsConfiguration: boolean,
   ) {
-    this.config = config;
-    this.definition = definition;
+    this.ownsConfiguration = ownsConfiguration;
+    this.configuration = configuration;
+    this.currentConfig = config;
+    this.currentDefinition = definition;
     this.history = history;
     this.sessionId = session.id;
     this.createdAt = session.created_at;
@@ -63,19 +76,27 @@ export class Agent {
   }
 
   static async open(
-    options: { workspace?: string; agent?: string; sessionId?: string } = {},
+    options: {
+      workspace?: string;
+      agent?: string;
+      sessionId?: string;
+      configuration?: WorkspaceConfiguration;
+    } = {},
   ): Promise<Agent> {
-    let { config, definition } = await loadSettings(
-      options.workspace ?? "../default_workspace",
-      options.agent,
-    );
+    const configuration =
+      options.configuration ??
+      (await WorkspaceConfiguration.open(
+        options.workspace ?? "../default_workspace",
+        options.agent,
+      ));
+    let { config, definition } = await configuration.snapshot(options.agent);
     const history = await ConversationHistory.open(config.history_path);
     const existing = options.sessionId ? await history.getSession(options.sessionId) : undefined;
     if (options.sessionId && !existing) throw new Error(`Session not found: ${options.sessionId}`);
     if (existing) {
       if (options.agent && options.agent !== existing.agent_id)
         throw new Error("Session Agent does not match the requested Agent.");
-      ({ config, definition } = await loadSettings(config.workspace, existing.agent_id));
+      ({ config, definition } = await configuration.snapshot(existing.agent_id));
     }
     const skills = new SkillLoader(config.skills_path);
     const session = existing ?? (await history.createSession(definition.id, randomUUID()));
@@ -87,6 +108,8 @@ export class Agent {
       await buildToolbox(skills, definition, config),
       skills,
       sessionCommands(),
+      configuration,
+      !options.configuration,
     );
     if (existing) {
       const recovered = await history.recoverContext(existing.id);
@@ -100,6 +123,7 @@ export class Agent {
         agent.summary = recovered.summary;
       }
     }
+    if (!options.configuration) configuration.startWatching();
     return agent;
   }
 
@@ -148,6 +172,7 @@ export class Agent {
     if (this.replying) throw new Error("An Agent reply or compaction is already in progress.");
     this.replying = true;
     try {
+      await this.refreshSettings();
       const result = await this.compactContext(this.messages, signal);
       if (result.messages) {
         this.messages.splice(0, this.messages.length, ...result.messages);
@@ -229,10 +254,31 @@ export class Agent {
     }
   }
 
+  async close(): Promise<void> {
+    if (this.ownsConfiguration) await this.configuration.stop();
+  }
+
+  private async refreshSettings(): Promise<void> {
+    const { config, definition } = await this.configuration.snapshot(this.definition.id);
+    if (JSON.stringify([config, definition]) === JSON.stringify([this.config, this.definition]))
+      return;
+    const toolbox = await buildToolbox(this.skills, definition, config);
+    const requestChanged =
+      JSON.stringify([definition.llm, definition.agent_md, toolbox.schemas]) !==
+      JSON.stringify([this.definition.llm, this.definition.agent_md, this.toolbox.schemas]);
+    this.currentConfig = config;
+    this.currentDefinition = definition;
+    this.model = new DeepSeek(definition.llm);
+    this.toolbox = toolbox;
+    this.system = { role: "system", content: definition.agent_md };
+    if (requestChanged) this.usage = undefined;
+  }
+
   async chat(input: string, signal?: AbortSignal): Promise<string> {
     if (this.replying) throw new Error("An Agent reply is already in progress.");
     this.replying = true;
     try {
+      await this.refreshSettings();
       const user: Message = { role: "user", content: input };
       this.entryIds.set(user, await this.history.saveMessage(this.sessionId, user));
       const pending: Message[] = [user];

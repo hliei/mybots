@@ -1,7 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { Agent } from "../src/core/agent.ts";
 import { ConversationHistory } from "../src/core/history.ts";
 import { chatFixture, type ModelRequest, toolReply, unavailableResponses } from "./chat-fixture.ts";
 
@@ -15,7 +14,7 @@ afterEach(async () => {
 
 it("recovers after a write without executing the completed write again", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   const path = join(fixture.root, "written.txt");
   const failure = Promise.withResolvers<unknown>();
   const continuation = Promise.withResolvers<void>();
@@ -68,7 +67,7 @@ it("recovers after a write without executing the completed write again", async (
 
 it("exhausts two retries while retaining the saved input and completed tool results", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   const path = join(fixture.root, "written.txt");
   fixture.responses.push({
     status: 200,
@@ -94,7 +93,7 @@ it("exhausts two retries while retaining the saved input and completed tool resu
 
 it("recovers a transient model failure with the same context, tools, reasoning, and settings", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   await agent.chat("Remember Alice");
   fixture.responses.push({ status: 503, body: { error: { message: "Unavailable" } } });
   expect(await agent.chat("Who did I mention?")).toBe("Hello!");
@@ -110,7 +109,7 @@ it("recovers a transient model failure with the same context, tools, reasoning, 
 
 it.each([408, 409, 429, 500, 503])("recovers SDK-retryable HTTP %s responses", async (status) => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   fixture.responses.push({
     status,
     body: { error: { message: "Transient failure" } },
@@ -125,7 +124,7 @@ it.each([400, 401, 403, 404, 422])(
   "ends a turn on permanent HTTP %s without retrying",
   async (status) => {
     fixture = await chatFixture();
-    const agent = await Agent.open({ workspace: await fixture.workspace() });
+    const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
     fixture.responses.push({ status, body: { error: { message: "Permanent failure" } } });
     await expect(agent.chat("Fail")).rejects.toThrow(`HTTP ${status}`);
     expect(fixture.requests).toHaveLength(1);
@@ -141,7 +140,7 @@ it.each([
   [503, "false", false],
 ])("honors server retry overrides for HTTP %s", async (status, hint, recovers) => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   fixture.responses.push({
     status,
     body: { error: { message: "Server-directed retry policy" } },
@@ -162,7 +161,7 @@ it("recovers a connection failure through the SDK without restarting the turn", 
   const fetch = vi
     .spyOn(globalThis, "fetch")
     .mockRejectedValueOnce(new TypeError("Connection reset"));
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   expect(await agent.chat("Recover the connection")).toBe("Hello!");
   expect(fetch).toHaveBeenCalledTimes(2);
   expect(fetch.mock.calls[1][1]?.body).toBe(fetch.mock.calls[0][1]?.body);
@@ -194,7 +193,7 @@ it("gives each retry its own 60-second timeout", async () => {
       );
     });
   });
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   const running = agent.chat("Wait for recovery");
   await started[0].promise;
   await vi.advanceTimersByTimeAsync(59_999);
@@ -212,7 +211,7 @@ it("gives each retry its own 60-second timeout", async () => {
 
 it("cancels an active model request without starting a retry", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   const response = Promise.withResolvers<unknown>();
   fixture.responses.push({ status: 200, body: response.promise });
   const controller = new AbortController();
@@ -232,7 +231,7 @@ it("cancels an active model request without starting a retry", async () => {
 
 it("cancels the server-directed backoff wait without another attempt", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   fixture.responses.push({
     status: 429,
     body: { error: { message: "Wait before retrying" } },
@@ -263,7 +262,7 @@ it("cancels the server-directed backoff wait without another attempt", async () 
 
 it("rejects an invalid successful response without retrying it", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   fixture.responses.push({ status: 200, body: { choices: [] } });
   await expect(agent.chat("Invalid response")).rejects.toThrow("DeepSeek returned no text reply");
   expect(fixture.requests).toHaveLength(1);
@@ -271,7 +270,7 @@ it("rejects an invalid successful response without retrying it", async () => {
 
 it("recovers a compaction request with the same transcript and no tools", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   await agent.chat(`Older ${"o".repeat(90000)}`);
   await agent.chat(`Recent ${"r".repeat(90000)}`);
   fixture.responses.push(
@@ -304,7 +303,7 @@ it.each(["retry exhaustion", "unusable summary"])(
   "preserves a committed summary and usage after compaction %s",
   async (failure) => {
     fixture = await chatFixture();
-    const agent = await Agent.open({ workspace: await fixture.workspace() });
+    const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
     await agent.chat(`Older ${"o".repeat(90000)}`);
     await agent.chat(`Recent ${"r".repeat(90000)}`);
     fixture.responses.push({

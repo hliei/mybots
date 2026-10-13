@@ -1,7 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { Agent } from "../src/core/agent.ts";
 import { chatFixture, toolReply } from "./chat-fixture.ts";
 
 let fixture: Awaited<ReturnType<typeof chatFixture>> | undefined;
@@ -25,7 +24,7 @@ it("registers the skill tool from discovered Skill metadata", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace(fixture.root, "", "allow_skills: true\n");
   await fixture.writeSkill("weather", weatherSkill, workspace);
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.chat("Hi");
   expect(fixture.requests[0].tools.map((tool) => tool.function.name)).toEqual([
     ...builtinToolNames,
@@ -56,7 +55,7 @@ it("loads a Skill body without frontmatter as the matching tool result", async (
   fixture = await chatFixture();
   const workspace = await fixture.workspace(fixture.root, "", "allow_skills: true\n");
   await fixture.writeSkill("weather", weatherSkill, workspace);
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   fixture.responses.push({
     status: 200,
     body: toolReply(
@@ -98,7 +97,7 @@ it("registers only valid Skills and excludes invalid definitions", async () => {
   );
   await mkdir(join(workspace, ".agents", "skills", "empty"), { recursive: true });
   await writeFile(join(workspace, ".agents", "skills", "stray.txt"), "Not a Skill directory");
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.chat("Hi");
   const tool = fixture.requests[0].tools.at(-1);
   expect(tool?.function.name).toBe("skill");
@@ -112,7 +111,7 @@ it("does not register the skill tool when the Agent disallows Skills", async () 
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
   await fixture.writeSkill("weather", weatherSkill, workspace);
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.chat("Hi");
   expect(fixture.requests[0].tools.map((tool) => tool.function.name)).toEqual(builtinToolNames);
 });
@@ -123,7 +122,7 @@ it.each(["empty", "missing"])(
     fixture = await chatFixture();
     const workspace = await fixture.workspace(fixture.root, "", "allow_skills: true\n");
     if (kind === "empty") await mkdir(join(workspace, ".agents", "skills"), { recursive: true });
-    const agent = await Agent.open({ workspace });
+    const agent = await fixture.openAgent({ workspace });
     await agent.chat("Hi");
     expect(fixture.requests[0].tools.map((tool) => tool.function.name)).toEqual(builtinToolNames);
   },
@@ -133,7 +132,7 @@ it("returns a not-found error when the model requests an unavailable Skill", asy
   fixture = await chatFixture();
   const workspace = await fixture.workspace(fixture.root, "", "allow_skills: true\n");
   await fixture.writeSkill("weather", weatherSkill, workspace);
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   fixture.responses.push({
     status: 200,
     body: toolReply([{ name: "skill", id: "skill-missing", args: { skill_name: "missing" } }]),
@@ -152,7 +151,7 @@ it("treats a path outside the discovered Skill IDs as unavailable", async () => 
   await fixture.writeSkill("weather", weatherSkill, workspace);
   await mkdir(join(workspace, "outside"), { recursive: true });
   await writeFile(join(workspace, "outside", "SKILL.md"), weatherSkill);
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   fixture.responses.push({
     status: 200,
     body: toolReply([{ name: "skill", id: "skill-outside", args: { skill_name: "../outside" } }]),
@@ -177,7 +176,7 @@ it.each([true, false])(
     await fixture.writeSkill("weather", weatherSkill, workspace);
     const note = join(fixture.root, "note.txt");
     await writeFile(note, "Note text");
-    const agent = await Agent.open({ workspace });
+    const agent = await fixture.openAgent({ workspace });
     fixture.responses.push(
       {
         status: 200,

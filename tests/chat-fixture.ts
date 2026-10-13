@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Agent } from "../src/core/agent.ts";
 
 export interface ModelRequest {
   model: string;
@@ -33,6 +34,7 @@ export interface ModelRequest {
 
 export async function chatFixture() {
   const root = await mkdtemp(join(tmpdir(), "mybots-chat-"));
+  const agents: Agent[] = [];
   const requests: ModelRequest[] = [];
   const transports: { path: string | undefined; authorization: string | undefined }[] = [];
   const responses: { status: number; body: unknown; headers?: Record<string, string> }[] = [];
@@ -78,6 +80,11 @@ export async function chatFixture() {
 
   return {
     root,
+    async openAgent(options: Parameters<typeof Agent.open>[0]) {
+      const agent = await Agent.open(options);
+      agents.push(agent);
+      return agent;
+    },
     server,
     endpoint,
     requests,
@@ -86,6 +93,7 @@ export async function chatFixture() {
     workspace,
     writeSkill,
     async close() {
+      await Promise.all(agents.splice(0).map((agent) => agent.close()));
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),

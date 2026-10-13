@@ -59,8 +59,8 @@ npm run dev:cli -- -w ./workspace -a helper
 
 Without `--workspace` / `-w`, the default Workspace is `../default_workspace`,
 relative to the process working directory. Without `--agent` / `-a`, the CLI
-uses `default_agent` from `config.user.yaml`. Enter one message per line. Replies
-print after the complete response arrives. Blank lines are ignored; `quit`,
+uses `default_agent` from the merged Workspace configuration. Enter one message
+per line. Replies print after the complete response arrives. Blank lines are ignored; `quit`,
 `exit`, `q`, EOF, and Ctrl+C end the session. Ctrl+C cancels an in-flight request.
 Type `/help` to list the available commands.
 
@@ -69,6 +69,25 @@ and `history_path`. Relative paths resolve against the Workspace. Optional
 `web_search` enables search; `fetch_content: {}` enables content fetching. The legacy
 `websearch` and `webread` settings fail startup with migration instructions,
 including when new settings are also present.
+
+Workspace configuration overlays `config.user.yaml` with `config.runtime.yaml`.
+Mappings merge recursively; runtime scalars, lists and nulls replace user values.
+The complete candidate and the default/loaded Agent definitions are validated
+before publication. Invalid reloads retain the last valid settings.
+Model settings, web tools and Agent instructions change on the next turn,
+including manual compaction, while an in-flight turn keeps its original settings.
+Context and original reasoning survive these changes. `default_agent` affects
+new sessions only; Skill instructions are read when loaded.
+
+Every configured directory, API host/port/enablement and channel settings
+(including Telegram token/allowlist) require restart. The Agent continues to
+report its active resource settings. The configuration store exposes the latest
+valid settings separately from active settings and lists changes requiring
+restart. Both configuration files are watched at their parent directory, so
+atomic-save replacement is observed. CLI shutdown closes its watcher and drains
+queued configuration work. See [Configuration](docs/configuration.md) for fields,
+validation, runtime updates and ownership.
+
 Agent definitions default to `.agents/bots/<id>/AGENT.md` (configured by `agents_path`); frontmatter preserves
 `name`, `description`, `llm`, and `allow_skills`. The Markdown body supplies the
 system instructions. Agent `llm` fields override matching Workspace fields.
@@ -511,7 +530,9 @@ src/
 │   ├── history.ts         # JSONL conversation history and session index
 │   ├── messages.ts        # Shared messages and tool protocol types
 │   └── skills.ts          # Skill discovery and loading
-├── config/workspace.ts    # Workspace and Agent settings
+├── config/
+│   ├── workspace.ts        # Workspace and Agent validation
+│   └── reload.ts           # Configuration snapshots, observation, and runtime writes
 ├── providers/deepseek.ts  # DeepSeek request/response conversion
 ├── tools/
 │   ├── builtin.ts         # Local tool definitions and execution

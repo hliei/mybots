@@ -2,7 +2,6 @@ import { once } from "node:events";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { Agent } from "../src/core/agent.ts";
 import { ConversationHistory } from "../src/core/history.ts";
 import { chatFixture, toolReply, unavailableResponses } from "./chat-fixture.ts";
 
@@ -15,7 +14,7 @@ afterEach(async () => {
 
 it("reports active messages and a model budget that covers the output allowance without chat", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({
+  const agent = await fixture.openAgent({
     workspace: await fixture.workspace(fixture.root, "  max_tokens: 32000\n"),
   });
   const report = await agent.runCommand("/CONTEXT");
@@ -38,7 +37,7 @@ function summaryResponse(
 
 it("automatically compacts before the next request exceeds the effective input budget", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({
+  const agent = await fixture.openAgent({
     workspace: await fixture.workspace(fixture.root, "  context_window: 100000\n"),
   });
   await agent.chat(`Older objective ${"o".repeat(90000)}`);
@@ -60,7 +59,7 @@ it("compacts older visible tool work while preserving the complete recent turn, 
   const workspace = await fixture.workspace();
   const path = join(workspace, "note.txt");
   await writeFile(path, `Older artifact ${"x".repeat(10000)}`);
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   fixture.responses.push({
     status: 200,
     body: toolReply([{ name: "read", id: "old-read", args: { path } }], "Secret older reasoning"),
@@ -116,7 +115,7 @@ it("compacts older visible tool work while preserving the complete recent turn, 
 it("uses valid provider usage and clears it after compaction", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.chat(`Older objective ${"o".repeat(90000)}`);
   fixture.responses.push({
     status: 200,
@@ -138,7 +137,7 @@ it("uses valid provider usage and clears it after compaction", async () => {
 
 it("uses the configured context window for a custom model and Agent overrides", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({
+  const agent = await fixture.openAgent({
     workspace: await fixture.workspace(
       fixture.root,
       "  model: custom-model\n  context_window: 64000\n  max_tokens: 24000\n",
@@ -181,7 +180,7 @@ it.each([
 ])("preserves active context and history after %s", async (_name, response, expected) => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.chat(`Older ${"o".repeat(90000)}`);
   await agent.chat(`Recent ${"r".repeat(90000)}`);
   const before = await agent.runCommand("/context");
@@ -205,7 +204,7 @@ it.each([
 
 it("reports insufficient compactable content without a model call or message loss", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   expect(await agent.runCommand("/compact")).toContain("Not enough compactable context");
   await agent.chat(`Only one large turn ${"x".repeat(90000)}`);
   const before = await agent.runCommand("/context");
@@ -217,7 +216,7 @@ it("reports insufficient compactable content without a model call or message los
 it("counts reasoning, tool arguments, and tool definitions even with no provider usage", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   const initial = await agent.runCommand("/context");
   expect(Number(/Estimated tokens:\*\* (\d+)/.exec(initial ?? "")?.[1])).toBeGreaterThan(300);
   fixture.responses.push({
@@ -239,7 +238,7 @@ it.each([
   { prompt_tokens: "100", completion_tokens: 100, total_tokens: 200 },
 ])("ignores invalid provider usage %j", async (usage) => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   fixture.responses.push({ status: 200, body: { ...summaryResponse("Answer").body, usage } });
   await agent.chat("Question");
   const report = await agent.runCommand("/context");
@@ -251,7 +250,7 @@ it.each([
 it("cancels an in-flight summary and prevents overlapping mutation without changing context or history", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.chat(`Older ${"o".repeat(90000)}`);
   await agent.chat(`Recent ${"r".repeat(90000)}`);
   const before = await agent.runCommand("/context");
@@ -286,7 +285,7 @@ it("cancels an in-flight summary and prevents overlapping mutation without chang
 
 it("honors cancellation before summarization without making a request", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   await agent.chat(`Older ${"o".repeat(90000)}`);
   await agent.chat(`Recent ${"r".repeat(90000)}`);
   const before = await agent.runCommand("/context");
@@ -300,7 +299,7 @@ it("adds tool-result estimates to the latest usage after a later request fails",
   const workspace = await fixture.workspace();
   const path = join(workspace, "large.txt");
   await writeFile(path, "x".repeat(12000));
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   fixture.responses.push(
     {
       status: 200,
@@ -321,7 +320,7 @@ it("adds tool-result estimates to the latest usage after a later request fails",
 
 it("selects multiple recent turns by their token budget instead of a fixed message count", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   await agent.chat(`Older ${"o".repeat(90000)}`);
   await agent.chat(`Recent one ${"a".repeat(30000)}`);
   await agent.chat(`Recent two ${"b".repeat(30000)}`);
@@ -345,7 +344,7 @@ it("selects multiple recent turns by their token budget instead of a fixed messa
 it("preserves every call and result when a large tool group extends the retained turn", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.chat(`Older ${"o".repeat(90000)}`);
   const path = join(workspace, "large.txt");
   await writeFile(path, "x".repeat(90000));
@@ -374,7 +373,7 @@ it("preserves every call and result when a large tool group extends the retained
 
 it("leaves context unchanged when the separate summary request cannot fit the model budget", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({
+  const agent = await fixture.openAgent({
     workspace: await fixture.workspace(fixture.root, "  context_window: 24000\n"),
   });
   for (const content of ["o".repeat(90000), "r".repeat(90000)]) {
@@ -398,7 +397,7 @@ it("continues a long tool turn with incremental prefix summaries and complete re
   const workspace = await fixture.workspace(fixture.root, "  context_window: 100000\n");
   const path = join(workspace, "large.txt");
   await writeFile(path, "Artifact ".repeat(11250));
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   const round = (id: string) => ({
     status: 200,
     body: toolReply(
@@ -449,7 +448,7 @@ it.each([
   "checks appended input against the output-adjusted boundary after usage %i",
   async (tokens, compacted) => {
     fixture = await chatFixture();
-    const agent = await Agent.open({
+    const agent = await fixture.openAgent({
       workspace: await fixture.workspace(
         fixture.root,
         "  context_window: 100000\n  max_tokens: 24000\n",
@@ -482,7 +481,7 @@ it("adds tool-result estimates to provider usage before continuing the current t
   const workspace = await fixture.workspace(fixture.root, "  context_window: 100000\n");
   const path = join(workspace, "large.txt");
   await writeFile(path, "x".repeat(90000));
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   fixture.responses.push(
     {
       status: 200,
@@ -507,7 +506,7 @@ it("rejects an oversized retained exchange without committing a partial automati
   const workspace = await fixture.workspace(fixture.root, "  context_window: 100000\n");
   const path = join(workspace, "huge.txt");
   await writeFile(path, "x".repeat(270000));
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   fixture.responses.push(
     { status: 200, body: toolReply([{ name: "read", id: "huge", args: { path } }]) },
     summaryResponse("Goal: read the file."),
@@ -527,7 +526,7 @@ it("rejects an oversized retained exchange without committing a partial automati
 it("cancels automatic summarization while preserving committed usage, context, and raw history", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace(fixture.root, "  context_window: 100000\n");
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.chat(`Older ${"o".repeat(90000)}`);
   await agent.chat(`Recent ${"r".repeat(90000)}`);
   const before = await agent.runCommand("/context");
@@ -563,7 +562,7 @@ it("cancels automatic summarization while preserving committed usage, context, a
 it("updates summaries across alternating manual and automatic compaction without rereading raw history", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace(fixture.root, "  context_window: 100000\n");
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.chat(`First raw objective ${"a".repeat(90000)}`);
   await agent.chat(`Second objective ${"b".repeat(90000)}`);
   fixture.responses.push(summaryResponse("Checkpoint one: first objective."));
@@ -597,7 +596,7 @@ it.each([
 ])("stops automatic compaction atomically after %s", async (_name, response) => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace(fixture.root, "  context_window: 100000\n");
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.chat(`Older ${"o".repeat(90000)}`);
   fixture.responses.push({
     status: 200,
@@ -624,7 +623,7 @@ it.each([
 
 it("keeps an unanswered input out of committed context when chat fails after successful compaction", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({
+  const agent = await fixture.openAgent({
     workspace: await fixture.workspace(fixture.root, "  context_window: 100000\n"),
   });
   await agent.chat(`Older ${"o".repeat(90000)}`);

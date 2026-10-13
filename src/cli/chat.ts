@@ -69,6 +69,7 @@ export async function runCli(args: string[]): Promise<number> {
       }
     } finally {
       lines.close();
+      await agent.close();
       process.removeListener("SIGINT", interrupt);
     }
     console.log("Goodbye!");
