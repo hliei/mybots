@@ -1,0 +1,196 @@
+import { WorkspaceConfiguration } from "../config/reload.ts";
+import { Agent } from "./agent.ts";
+import type { InboundEvent, OutboundEvent, RuntimeEvent } from "./events.ts";
+import { parseEvent } from "./events.ts";
+import type { PendingReply } from "./history.ts";
+
+type Subscriber = (event: RuntimeEvent, signal: AbortSignal) => Promise<void>;
+
+export interface RuntimeSession {
+  session_id: string;
+  agent_id: string;
+  agent_name: string;
+}
+
+export type RuntimeResult =
+  | OutboundEvent
+  | { type: "CancelledTurn"; session_id: string; content: "" };
+
+export class EventRuntime {
+  private readonly agents = new Map<string, Agent>();
+  private readonly opening = new Map<string, Promise<Agent>>();
+  private readonly sessions = new Map<string, Promise<unknown>>();
+  private readonly tasks = new Set<Promise<unknown>>();
+  private readonly subscribers = new Map<Subscriber, Map<string, Promise<void>>>();
+  private readonly controller = new AbortController();
+  private stopping = false;
+  private stopTask: Promise<void> | undefined;
+  private readonly configuration: WorkspaceConfiguration;
+  readonly subscriberFailures: { event: RuntimeEvent; error: unknown }[] = [];
+
+  private constructor(configuration: WorkspaceConfiguration) {
+    this.configuration = configuration;
+  }
+
+  subscribe(handler: Subscriber): () => void {
+    if (this.stopping) throw new Error("Runtime is stopping.");
+    this.subscribers.set(handler, new Map());
+    return () => this.subscribers.delete(handler);
+  }
+
+  private publish(event: RuntimeEvent): void {
+    for (const [handler, tails] of this.subscribers) {
+      const task = this.track(
+        (tails.get(event.session_id) ?? Promise.resolve())
+          .then(async () => {
+            if (!this.controller.signal.aborted)
+              await handler(structuredClone(event), this.controller.signal);
+          })
+          .catch((error: unknown) => {
+            if (!this.controller.signal.aborted || error !== this.controller.signal.reason)
+              this.subscriberFailures.push({ event, error });
+          }),
+      );
+      tails.set(event.session_id, task);
+    }
+  }
+
+  getPendingReplies(sessionId: string): Promise<PendingReply[]> {
+    return this.agent(sessionId).getPendingReplies();
+  }
+
+  acknowledgeReply(sessionId: string, replyId: string): Promise<void> {
+    return this.track(this.agent(sessionId).acknowledgeReply(replyId));
+  }
+
+  private agent(sessionId: string): Agent {
+    const agent = this.agents.get(sessionId);
+    if (!agent) throw new Error(`Unknown session: ${sessionId}`);
+    return agent;
+  }
+
+  private track<T>(task: Promise<T>): Promise<T> {
+    this.tasks.add(task);
+    void task.then(
+      () => this.tasks.delete(task),
+      () => this.tasks.delete(task),
+    );
+    return task;
+  }
+
+  static async open(options: { workspace?: string; agent?: string } = {}): Promise<EventRuntime> {
+    const configuration = await WorkspaceConfiguration.open(
+      options.workspace ?? "../default_workspace",
+      options.agent,
+    );
+    configuration.startWatching();
+    return new EventRuntime(configuration);
+  }
+
+  async openSession(options: { agent?: string; sessionId?: string } = {}): Promise<RuntimeSession> {
+    if (this.stopping) throw new Error("Runtime is stopping.");
+    const existing = options.sessionId ? this.agents.get(options.sessionId) : undefined;
+    let opening = options.sessionId ? this.opening.get(options.sessionId) : undefined;
+    if (!opening) {
+      opening = existing
+        ? Promise.resolve(existing)
+        : Agent.open({ configuration: this.configuration, ...options });
+      if (options.sessionId) this.opening.set(options.sessionId, opening);
+    }
+    return this.track(
+      (async () => {
+        let agent: Agent;
+        try {
+          agent = await opening;
+        } finally {
+          if (options.sessionId) this.opening.delete(options.sessionId);
+        }
+        if (options.agent && options.agent !== agent.definition.id)
+          throw new Error("Session Agent does not match the requested Agent.");
+        this.agents.set(agent.sessionId, agent);
+        return {
+          session_id: agent.sessionId,
+          agent_id: agent.definition.id,
+          agent_name: agent.definition.name,
+        };
+      })(),
+    );
+  }
+
+  async submit(value: unknown): Promise<RuntimeResult> {
+    if (this.stopping) throw new Error("Runtime is stopping.");
+    const event = parseEvent(value);
+    if (event.type !== "InboundEvent")
+      throw new Error("Invalid submission: expected InboundEvent.");
+    if (!event.source.startsWith("platform-"))
+      throw new Error("Invalid submission: expected a platform source.");
+    this.agent(event.session_id);
+    this.publish(event);
+    const result = this.track(
+      (this.sessions.get(event.session_id) ?? Promise.resolve()).then(() => this.execute(event)),
+    );
+    this.sessions.set(
+      event.session_id,
+      result.catch(() => {}),
+    );
+    return result;
+  }
+
+  private async execute(event: InboundEvent): Promise<RuntimeResult> {
+    const agent = this.agent(event.session_id);
+    const signal = this.controller.signal;
+    const cancelled = {
+      type: "CancelledTurn" as const,
+      session_id: event.session_id,
+      content: "" as const,
+    };
+    if (signal.aborted) return cancelled;
+    let content = "";
+    let error: string | null = null;
+    let replyId: string | undefined;
+    try {
+      const command = await agent.runCommand(event.content, signal);
+      if (signal.aborted) return cancelled;
+      if (command !== undefined) content = command;
+      else {
+        content = await agent.chat(event.content, signal, event.source);
+        replyId = (await agent.getPendingReplies()).at(-1)?.replyId;
+      }
+    } catch (cause) {
+      if (signal.aborted) return cancelled;
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+    const outbound: OutboundEvent = {
+      type: "OutboundEvent",
+      session_id: event.session_id,
+      source: `agent:${agent.definition.id}`,
+      content,
+      timestamp: Date.now() / 1000,
+      error,
+      ...(replyId ? { reply_id: replyId } : {}),
+    };
+    this.publish(parseEvent(outbound));
+    return outbound;
+  }
+
+  stop(options: { graceMs?: number } = {}): Promise<void> {
+    const graceMs = options.graceMs ?? 1000;
+    if (!Number.isFinite(graceMs) || graceMs < 0) throw new Error("Invalid shutdown grace period.");
+    this.stopping = true;
+    if (graceMs === 0) this.controller.abort();
+    this.stopTask ??= this.finishStop(graceMs);
+    return this.stopTask;
+  }
+
+  private async finishStop(graceMs: number): Promise<void> {
+    const timer = setTimeout(() => this.controller.abort(), graceMs);
+    try {
+      while (this.tasks.size) await Promise.allSettled([...this.tasks]);
+    } finally {
+      clearTimeout(timer);
+    }
+    await Promise.all([...this.agents.values()].map((agent) => agent.close()));
+    await this.configuration.stop();
+    this.subscribers.clear();
+  }
+}

@@ -5,8 +5,8 @@ bot, with a shared agent core.
 
 The CLI supports non-streaming, multi-turn conversations, local tool execution,
 Skill loading, and optional web search and HTTP content fetching with DeepSeek
-through a shared Agent core. Each launch creates
-a fresh session in memory. The bot server currently prints a setup message or
+through a shared queued event runtime. Each launch creates
+a fresh session. The bot server currently prints a setup message or
 help and exits.
 
 ## Setup
@@ -63,8 +63,17 @@ npm run dev:cli -- -w ./workspace -a helper
 Without `--workspace` / `-w`, the default Workspace is `../default_workspace`,
 relative to the process working directory. Without `--agent` / `-a`, the CLI
 uses `default_agent` from the merged Workspace configuration. Enter one message
-per line. Replies print after the complete response arrives. Blank lines are ignored; `quit`,
-`exit`, `q`, EOF, and Ctrl+C end the session. Ctrl+C cancels an in-flight request.
+per line. Replies print after the complete response arrives. Input received during
+a turn becomes a follow-up, executed in reception order with the preceding context.
+Slash commands use the same session queue. Blank lines are ignored; `quit`,
+`exit`, `q`, EOF, and Ctrl+C end the session. Normal exit stops input and gives
+accepted work one second to finish, then cancels remaining execution and output
+tasks and awaits cleanup. Ctrl+C cancels immediately and exits with status 130;
+normal exit uses 0, and startup or terminal delivery failures use 1. Individual
+turn failures are reported and allow continued input. Waiting input stays in
+memory and is lost on cancellation or abnormal exit; recovery never restarts it.
+Cancellation closes a blocked output pipe, leaves its reply pending, and omits
+the farewell when standard output can no longer be written.
 Type `/help` to list the available commands.
 
 Workspace settings preserve `llm`, `default_agent`, `agents_path`, `skills_path`,
@@ -460,6 +469,49 @@ places it within that tool exchange, even if later turns were already saved.
 Repair metadata is excluded from model messages. Writes to the same history
 directory are serialized within the process.
 
+### Event runtime
+
+`EventRuntime.open({ workspace, agent })` explicitly starts a runtime and its
+configuration watcher. Importing runtime modules opens no resources. CLI and bot
+entry points embed independent runtimes; simultaneous workspace modification by
+both processes is outside the supported contract. Telegram and WebSocket entry
+points remain planned.
+
+The shared facade provides:
+
+- `openSession({ agent?, sessionId? })`: create a fresh session, or recover an
+  existing session without starting model work. Reopening a running session uses
+  its existing Agent. Conflicting Agent selection fails.
+- `submit(event)`: validate and queue an `InboundEvent`, returning that turn's
+  `OutboundEvent` or a `CancelledTurn` result. Queues execute independently per
+  session. Submit accepts only sessions already opened in this runtime.
+- `subscribe(handler)`: observe inbound and outbound events, with an unsubscribe
+  callback. Each handler receives its own event copy and the shutdown signal;
+  its callbacks run sequentially per session. Slow callbacks do not block Agent
+  execution, other observers, or other sessions. Failures are recorded in
+  `subscriberFailures` and leave generated replies pending.
+- `getPendingReplies(sessionId)` and `acknowledgeReply(sessionId, replyId)`:
+  inspect committed deliveries and acknowledge a successful send. The CLI waits
+  for standard output to complete before acknowledging.
+- `stop({ graceMs? })`: reject new sessions/input/subscriptions, allow a finite
+  grace period (default 1,000 ms), abort remaining requests, retry waits and
+  subscribers, and await all owned tasks before closing the watcher. Subscribers
+  must respond to the supplied signal and await their own resource cleanup.
+  Unsubscribing does not detach an already running task from runtime shutdown.
+  Calling stop again with `graceMs: 0` escalates an ongoing graceful shutdown.
+
+Events preserve `type` (`InboundEvent` or `OutboundEvent`), `session_id`, `source`,
+`content` and numeric Unix-seconds `timestamp`. Inbound events include a
+nonnegative integer `retry_count`; this field never triggers a whole-turn retry.
+Inbound sources use `platform-cli:cli-user`, `platform-telegram:<userId>:<chatId>`
+or `platform-ws:<userId>`. Outbound events use the session's
+`agent:<agentId>` source and `error: null` on success or an error string on failure.
+Generated answers add `reply_id`, linking the event to the durable completion
+record and its pending destination. Command results and turn errors are ephemeral
+outbound observations with no `reply_id`; they create no generated pending reply.
+Waiting inputs are never persisted. Source bindings and network delivery are
+separate planned capabilities.
+
 ### API and library documentation
 
 - [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)
@@ -547,7 +599,9 @@ src/
 │   ├── commands.ts        # Slash-command registry and handlers
 │   ├── compaction.ts      # Token estimates, retention boundary, and summary input
 │   ├── history.ts         # JSONL conversation history and session index
+│   ├── events.ts          # Validated inbound/outbound event contracts
 │   ├── messages.ts        # Shared messages and tool protocol types
+│   ├── runtime.ts         # Per-session work queues, observation, and shutdown
 │   └── skills.ts          # Skill discovery and loading
 ├── config/
 │   ├── workspace.ts        # Workspace and Agent validation

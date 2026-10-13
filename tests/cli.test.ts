@@ -58,6 +58,76 @@ it("prints complete replies for two CLI turns and forwards the previous context"
   ]);
 });
 
+it("exits after its finite EOF grace period and leaves a busy follow-up unexecuted", async () => {
+  fixture = await chatFixture();
+  const held = Promise.withResolvers<unknown>();
+  fixture.responses.push({ status: 200, body: held.promise });
+  try {
+    const result = await run(["-w", await fixture.workspace()], "Active\nWaiting\n");
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(result.stdout).toContain("Goodbye!");
+    expect(result.stdout).not.toContain("helper: Hello!");
+    expect(fixture.requests).toHaveLength(1);
+    const history = await ConversationHistory.open(join(fixture.root, ".history"));
+    const [session] = await history.listSessions();
+    expect((await history.getMessages(session.id)).map((message) => message.content)).toEqual([
+      "Active",
+    ]);
+  } finally {
+    held.resolve({ choices: [{ message: { role: "assistant", content: "Late answer" } }] });
+  }
+});
+
+it.each(["interrupt", "eof", "closed pipe"])(
+  "cancels a blocked terminal write on %s without acknowledging incomplete output",
+  async (mode) => {
+    fixture = await chatFixture();
+    const workspace = await fixture.workspace();
+    fixture.responses.push({
+      status: 200,
+      body: { choices: [{ message: { role: "assistant", content: "x".repeat(2_000_000) } }] },
+    });
+    const child = spawn(process.execPath, [entry, "-w", workspace], { stdio: "pipe" });
+    let output = "";
+    let errors = "";
+    child.stderr.setEncoding("utf8").on("data", (text) => {
+      errors += text;
+    });
+    child.stdout.setEncoding("utf8").on("data", (text) => {
+      output += text;
+      if (output.includes("helper: ")) {
+        if (mode === "closed pipe") child.stdout.destroy();
+        else {
+          child.stdout.pause();
+          if (mode === "interrupt") child.kill("SIGINT");
+          else child.stdin.end();
+        }
+      }
+    });
+    const exited = new Promise<number | null>((resolve, reject) => {
+      child.once("exit", resolve);
+      child.once("error", reject);
+    });
+    const timeout = setTimeout(() => child.kill("SIGKILL"), 3000);
+    try {
+      child.stdin.write("Hello\n");
+      expect(await exited).toBe(mode === "interrupt" ? 130 : mode === "closed pipe" ? 1 : 0);
+      if (mode === "closed pipe") expect(errors).toContain("EPIPE");
+      else expect(errors).toBe("");
+      const history = await ConversationHistory.open(join(workspace, ".history"));
+      const [session] = await history.listSessions();
+      expect(await history.getPendingReplies(session.id)).toHaveLength(1);
+    } finally {
+      clearTimeout(timeout);
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      child.stdout.destroy();
+      child.stderr.destroy();
+      child.stdin.destroy();
+      await exited;
+    }
+  },
+);
+
 it("accepts long options and starts each CLI launch with fresh context", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
