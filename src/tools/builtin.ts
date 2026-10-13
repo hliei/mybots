@@ -10,7 +10,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Shared filesystem failures whose reference wording depends only on the action. */
+/** Shared filesystem failures with action-specific error messages. */
 function pathError(code: string | undefined, path: string, action: string): string | undefined {
   if (code === "EISDIR") return `Error: Path is a directory, not a file: ${path}`;
   if (code === "EACCES" || code === "EPERM") return `Error: Permission denied ${action}: ${path}`;

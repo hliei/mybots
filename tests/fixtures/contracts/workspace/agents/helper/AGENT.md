@@ -1,9 +1,9 @@
 ---
-name: Reference helper
+name: Contract helper
 description: Contract acceptance helper
 allow_skills: true
 llm:
-  model: reference-override
+  model: fixture-override
   temperature: 0.2
   max_tokens: 3072
 ---

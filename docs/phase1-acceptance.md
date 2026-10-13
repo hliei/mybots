@@ -17,7 +17,7 @@ ordinary offline suite, compilation, and executable CLI/bot startup checks.
 Normal Vitest discovery explicitly excludes `tests/live/`, including watching.
 Credentials do not change ordinary test behavior.
 
-The [independent reference fixtures](../tests/fixtures/reference/README.md)
+The [data contract fixtures](../tests/fixtures/contracts/README.md)
 cover Workspace, Agent, Skill, message and index contracts. Agent/CLI tests also
 cover tools, inspection without model calls, ordered results, thinking on/off,
 saved reasoning and new-reader history recovery. Compaction tests cover automatic
@@ -71,23 +71,22 @@ wording. Logs print model/provider names and reasoning lengths, not keys or
 reasoning text. Empty reasoning strings on individual provider rounds are valid;
 the conversation case additionally requires some nonempty saved reasoning.
 
-## Compatibility exception record
+## Data contracts and compatibility guarantees
 
-The fixed tutorial is the common-field baseline. Approved extensions and
-replacements limit compatibility as follows.
+The delivered runtime, data formats, and tool behavior are covered as follows.
 
-| Area | Delivered exception | Decision and validation |
+| Area | Delivered contract | Decision and validation |
 | --- | --- | --- |
 | Runtime/provider | TypeScript/Node.js; DeepSeek is the sole initial provider, default `deepseek-flash` | [ADR 0001](adr/0001-agent-runtime-and-data-contracts.md); controlled requests and live effective settings |
-| Default paths | `.agents/bots` and `.agents/skills` replace reference `agents` and `skills` | ADR 0001; explicit-path fixtures preserve reference layout |
+| Default paths | `.agents/bots` and `.agents/skills`; explicit `agents_path` and `skills_path` override defaults | ADR 0001; explicit-path fixtures |
 | Model settings | `thinking` defaults to true; `context_window` controls budgets without being sent to the API | ADRs 0001/0002; overrides and thinking on/off tests |
-| Messages | Optional original `reasoning_content`, including empty strings; absent values are never invented | ADR 0001; legacy fixtures and exact reasoning tests. Python drops reasoning on rewrites; lossless exchange covers common fields |
-| Unknown fields | Retain index extensions on rewrite; message files are append-only | ADR 0001; extension fixtures. Python drops unknown index fields |
-| Skill inspection | Correct the reference's missing session-attribute lookup; inspection does not load context | ADR 0001; command/CLI tests |
-| Tool ordering | Execute multiple calls in order rather than reference concurrency; preserve result pairing | Approved Phase 1 spec and README; ordered dependency tests |
-| Compaction | Pi-style incremental active-context summaries, reserve/usage budgets, UTF-8 estimates, safe tool boundaries, in-memory state | [ADR 0002](adr/0002-token-budgeted-context-compaction.md); offline manual/automatic invariants and real manual summary |
+| Messages | Optional original `reasoning_content`, including empty strings; absent values are never invented | ADR 0001; legacy fixtures and exact reasoning tests |
+| Unknown fields | Retain index extensions on rewrite; message files are append-only | ADR 0001; extension fixtures |
+| Skill inspection | Read discovered definitions through `SkillLoader`; inspection does not load context | ADR 0001; command/CLI tests |
+| Tool ordering | Execute multiple calls in order and preserve call/result pairing | README; ordered dependency tests |
+| Compaction | Incremental active-context summaries, reserve/usage budgets, UTF-8 estimates, safe tool boundaries, in-memory state | [ADR 0002](adr/0002-token-budgeted-context-compaction.md); offline manual/automatic invariants and real manual summary |
 | Web tools | `web_search`/`fetch_content` replace legacy names/configuration without aliases; explicit Brave/SerpApi choice | [ADR 0003](adr/0003-web-search-and-content-fetching.md); migration errors and both offline adapters |
-| Web content | Direct HTTP without JavaScript rendering; bounded JSON, Unicode pagination and refetching | ADR 0003 supersedes rendered-browser acceptance; extraction/Markdown differ from Crawl4AI, chunks are not stable snapshots |
+| Web content | Direct HTTP without JavaScript rendering; bounded JSON, Unicode pagination and refetching; chunks are not stable snapshots | ADR 0003 supersedes rendered-browser acceptance; extraction and pagination tests |
 | Dependencies | Native Node.js error wording and HTTP deadlines covering body consumption | ADRs 0001/0003 and README; errors, deadline and cleanup tests |
 
 No guarantee covers legacy web settings, thinking replay from records that never
@@ -100,7 +99,7 @@ does not complete the real-service gate.
 
 ### October 13, 2026: offline results
 
-- `npm exec --yes --package=node@24.21.0 -- npm test -- tests/reference-contracts.test.ts`
+- `npm exec --yes --package=node@24.21.0 -- npm test -- tests/workspace-contracts.test.ts`
   passed the independent Workspace/Agent/Skill fixture case.
 - `npm exec --yes --package=node@24.21.0 -- npm run verify` passed all 277
   ordinary tests across 12 files, formatting/lint, type checking, compilation

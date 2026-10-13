@@ -2,7 +2,7 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Message, ToolCall } from "./messages.ts";
 
-/** Session metadata stored in the JSONL index, matching the reference contract. */
+/** Session metadata stored in the JSONL index. */
 export interface SessionRecord {
   id: string;
   agent_id: string;
@@ -12,7 +12,7 @@ export interface SessionRecord {
   updated_at: string;
 }
 
-/** One recorded conversation message, matching the reference JSONL contract. */
+/** One recorded conversation message in the JSONL message log. */
 export interface HistoryMessage {
   timestamp: string;
   role: "user" | "assistant" | "system" | "tool";
@@ -173,7 +173,7 @@ function byUpdatedAtDesc(left: SessionRecord, right: SessionRecord): number {
 }
 
 /**
- * Reference-compatible JSONL conversation history: an append-only message log
+ * JSONL conversation history: an append-only message log
  * per session plus a session index, both read through this interface.
  */
 export class ConversationHistory {

@@ -136,10 +136,7 @@ Separate tool calls remain ordered through the existing Agent loop.
 The parameter framework, module ownership, new tools, removal of replaced
 code and dependencies, tests, and documentation form one replacement PR.
 
-## Sources
+## API and library documentation
 
-- [Web tool definitions](https://github.com/nicobailon/pi-web-access/blob/8e812826269624406458531f9231b679547f5a3a/mcp-tool-definitions.ts).
-- [Search and fetch orchestration](https://github.com/nicobailon/pi-web-access/blob/8e812826269624406458531f9231b679547f5a3a/web-tool-core.ts).
-- [Content extraction](https://github.com/nicobailon/pi-web-access/blob/8e812826269624406458531f9231b679547f5a3a/extract.ts).
 - [SerpApi Google Search API](https://serpapi.com/search-api).
 - [Brave Web Search API](https://api-dashboard.search.brave.com/api-reference/web/search/get).

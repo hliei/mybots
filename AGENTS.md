@@ -4,6 +4,10 @@
 
 Write workspace files in English. Follow the user's language in conversation.
 
+Before naming files or identifiers, writing comments or documentation, or
+preparing commit messages and PR descriptions, read the repository-language
+rules in `docs/agents/domain.md`.
+
 ## Development and testing
 
 Before changing application code, dependencies, or development tooling, read

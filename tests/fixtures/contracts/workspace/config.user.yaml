@@ -1,6 +1,6 @@
 llm:
   provider: deepseek
-  model: reference-model
+  model: fixture-model
   api_key: fixture-key-not-a-credential
   api_base: https://example.invalid/v1
   temperature: 0.4

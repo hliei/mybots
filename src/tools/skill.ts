@@ -4,7 +4,7 @@ import type { Tool } from "./toolbox.ts";
 
 const skillToolName = "skill";
 
-/** Builds the reference `skill` tool for the Skills discovered at registration. */
+/** Builds the `skill` tool for the Skills discovered at registration. */
 export function createSkillTool(loader: SkillLoader, skills: Skill[]): Tool {
   const definitions = skills
     .map((skill) => `  <skill name="${skill.name}">${skill.description}</skill>`)

@@ -72,7 +72,7 @@ it("accepts long options and starts each CLI launch with fresh context", async (
   ]);
 });
 
-it("uses reference defaults and exits on EOF while ignoring blank input", async () => {
+it("uses the default workspace and Agent and exits on EOF while ignoring blank input", async () => {
   fixture = await chatFixture();
   await fixture.workspace(join(fixture.root, "default_workspace"));
   const cwd = join(fixture.root, "app");

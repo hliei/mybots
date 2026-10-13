@@ -21,7 +21,7 @@ Always mention the temperature unit.
 
 const builtinToolNames = ["read", "write", "edit", "bash"];
 
-it("registers the reference skill tool from discovered Skill metadata", async () => {
+it("registers the skill tool from discovered Skill metadata", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace(fixture.root, "", "allow_skills: true\n");
   await fixture.writeSkill("weather", weatherSkill, workspace);
@@ -129,7 +129,7 @@ it.each(["empty", "missing"])(
   },
 );
 
-it("returns the reference error when the model requests an unavailable Skill", async () => {
+it("returns a not-found error when the model requests an unavailable Skill", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace(fixture.root, "", "allow_skills: true\n");
   await fixture.writeSkill("weather", weatherSkill, workspace);
