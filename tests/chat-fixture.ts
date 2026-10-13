@@ -35,7 +35,7 @@ export async function chatFixture() {
   const root = await mkdtemp(join(tmpdir(), "mybots-chat-"));
   const requests: ModelRequest[] = [];
   const transports: { path: string | undefined; authorization: string | undefined }[] = [];
-  const responses: { status: number; body: unknown }[] = [];
+  const responses: { status: number; body: unknown; headers?: Record<string, string> }[] = [];
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(chunk);
@@ -51,7 +51,7 @@ export async function chatFixture() {
         ],
       },
     };
-    response.writeHead(next.status, { "Content-Type": "application/json" });
+    response.writeHead(next.status, { "Content-Type": "application/json", ...next.headers });
     response.end(JSON.stringify(await next.body));
   });
   server.listen(0, "127.0.0.1");
@@ -115,4 +115,12 @@ export function toolReply(
       },
     ],
   };
+}
+
+export function unavailableResponses() {
+  return Array.from({ length: 3 }, () => ({
+    status: 503,
+    body: { error: { message: "Unavailable" } },
+    headers: { "retry-after-ms": "1" },
+  }));
 }

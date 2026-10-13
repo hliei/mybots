@@ -73,17 +73,16 @@ The active context and its usage sample remain as previously committed; raw
 history retains attempted user input and any tool work already recorded. A usable
 summary whose retained tail still exceeds the budget is also rejected atomically.
 
-The summary and retention boundary remain in memory for the current Agent
-session. Original JSONL records are neither truncated nor rewritten. A new CLI
-launch starts a new session; persisted summary checkpoints and automatic retries
-after context-overflow errors are outside the initial session lifecycle.
+The summary and stable retention boundary are appended to the session log only
+after validation, before installing the active context. Persistence failure
+preserves committed context. Original JSONL records are neither truncated nor
+rewritten. A new CLI launch starts a new session; automatic retries after
+context-overflow errors remain outside the session lifecycle.
 
-Planned recovery in [ADR 0004](0004-persisted-active-context.md) extends this
-initial lifecycle with successful compaction records in the append-only session
-log. It reconstructs context from the saved summary and stable retention boundary,
-without a separate full-context snapshot or regenerating that summary. The
-compaction algorithm and its validation remain applicable; log-based recovery
-has not yet been implemented.
+Recovery in [ADR 0004](0004-persisted-active-context.md) reconstructs context from
+the saved summary and stable retention boundary, without a separate full-context
+snapshot or regenerating that summary. The compaction algorithm and its
+validation remain applicable.
 
 This separates context management from the
 [conversation-history contract](0001-agent-runtime-and-data-contracts.md) and

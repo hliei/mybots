@@ -21,7 +21,7 @@ export class DeepSeek {
     this.client = new OpenAI({
       apiKey: settings.api_key,
       baseURL: settings.api_base ?? "https://api.deepseek.com",
-      maxRetries: 0,
+      maxRetries: 2,
       timeout: 60_000,
     });
   }
