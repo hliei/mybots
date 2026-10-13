@@ -163,7 +163,22 @@ it("writes JSONL records with a controlled clock", async () => {
       ],
     });
 
-    expect(await readFile(join(root, "sessions", "session.jsonl"), "utf8")).toBe(
+    const records = (await readFile(join(root, "sessions", "session.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(records[0]).toEqual({
+      type: "session",
+      id: "session",
+      agent_id: "helper",
+      created_at: "2026-10-01T09:15:00.000000",
+    });
+    expect(
+      records
+        .slice(1)
+        .map(({ id: _id, ...message }) => `${JSON.stringify(message)}\n`)
+        .join(""),
+    ).toBe(
       '{"timestamp":"2026-10-01T09:15:01.000000","role":"user","content":"Read the README","tool_calls":null,"tool_call_id":null}\n' +
         '{"timestamp":"2026-10-01T09:15:03.000000","role":"assistant","content":"","tool_calls":[{"id":"read-call-1","type":"function","function":{"name":"read","arguments":"{\\"path\\": \\"README.md\\"}"}}],"tool_call_id":null,"reasoning_content":"Check the file."}\n',
     );
@@ -259,6 +274,7 @@ it("reads literal JSONL records without fabricating reasoning", async () => {
       timestamp: "2026-10-01T09:15:05.000000",
       role: "assistant",
       content: "",
+      writer_extension: { streamed: false },
       tool_calls: [
         {
           id: "read-call-1",
