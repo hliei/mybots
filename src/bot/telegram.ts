@@ -2,7 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { DeliveryChunk, DeliveryTransport } from "../core/delivery.ts";
 import { chunkContent } from "../core/delivery.ts";
 import type { EventRuntime, RuntimeResult } from "../core/runtime.ts";
-import type { TelegramApi, TelegramUpdate } from "./telegram-api.ts";
+import type { TelegramApi, TelegramPollResult, TelegramUpdate } from "./telegram-api.ts";
 
 /** Telegram's text-message length limit, in Unicode code points. */
 export const TELEGRAM_CHUNK_LIMIT = 4096;
@@ -40,6 +40,7 @@ export interface TelegramChannelOptions {
  */
 export class TelegramChannel {
   private readonly controller = new AbortController();
+  private readonly observations = new Set<Promise<void>>();
   private runTask: Promise<void> | undefined;
   private readonly options: TelegramChannelOptions;
 
@@ -59,7 +60,13 @@ export class TelegramChannel {
       source: telegramSource(update),
       content: update.text,
     });
-    await this.deliverObservation(update.chatId, result);
+    const observation = this.deliverObservation(update.chatId, result);
+    this.observations.add(observation);
+    try {
+      await observation;
+    } finally {
+      this.observations.delete(observation);
+    }
     return result;
   }
 
@@ -68,6 +75,7 @@ export class TelegramChannel {
    * Generated replies carry a `reply_id` and are owned by durable delivery.
    */
   private async deliverObservation(chatId: string, result: RuntimeResult): Promise<void> {
+    this.controller.signal.throwIfAborted();
     if (result.type !== "OutboundEvent" || result.reply_id !== undefined) return;
     const content = result.error !== null ? `Error: ${result.error}` : result.content;
     if (!content) return;
@@ -91,6 +99,7 @@ export class TelegramChannel {
   async stop(): Promise<void> {
     this.controller.abort();
     await this.runTask?.catch(() => {});
+    await Promise.allSettled([...this.observations]);
   }
 
   private report(error: unknown): void {
@@ -101,9 +110,9 @@ export class TelegramChannel {
   private async poll(): Promise<void> {
     let offset = 0;
     while (!this.controller.signal.aborted) {
-      let updates: TelegramUpdate[];
+      let batch: TelegramPollResult;
       try {
-        updates = await this.options.api.getUpdates(offset, this.controller.signal);
+        batch = await this.options.api.getUpdates(offset, this.controller.signal);
       } catch (error) {
         if (this.controller.signal.aborted) break;
         this.report(error);
@@ -116,9 +125,9 @@ export class TelegramChannel {
         }
         continue;
       }
-      for (const update of updates) {
+      offset = Math.max(offset, batch.nextOffset);
+      for (const update of batch.updates) {
         if (this.controller.signal.aborted) break;
-        offset = Math.max(offset, update.updateId + 1);
         // Submissions stay ordered because the runtime serializes routing and
         // per-session work; polling must not wait for a turn to finish.
         void this.dispatch(update).catch((error: unknown) => this.report(error));

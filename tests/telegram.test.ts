@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { runBot } from "../src/bot/startup.ts";
 import { TelegramChannel, telegramTransport } from "../src/bot/telegram.ts";
-import type { TelegramApi, TelegramUpdate } from "../src/bot/telegram-api.ts";
+import type { TelegramApi, TelegramPollResult, TelegramUpdate } from "../src/bot/telegram-api.ts";
 import { createTelegramApi, normalizeTelegramUpdate } from "../src/bot/telegram-api.ts";
 import { EventRuntime } from "../src/core/runtime.ts";
 import { chatFixture } from "./chat-fixture.ts";
@@ -41,8 +41,8 @@ function recordingApi(options: { failSends?: boolean } = {}) {
     async getMe() {
       return { id: "1", username: "test_bot" };
     },
-    async getUpdates() {
-      return [];
+    async getUpdates(offset) {
+      return { updates: [], nextOffset: offset };
     },
     async sendMessage(chatId, text, sendSignal) {
       sendSignals.push(sendSignal);
@@ -121,16 +121,17 @@ it("talks to the Bot API with documented methods and string destinations", async
   });
   const controller = new AbortController();
   expect(await api.getMe(controller.signal)).toEqual({ id: "7", username: "test_bot" });
-  expect(await api.getUpdates(3, controller.signal)).toEqual([
-    { updateId: 1, userId: "42", chatId: "-100", text: "Hi" },
-  ]);
+  expect(await api.getUpdates(0, controller.signal)).toEqual({
+    updates: [{ updateId: 1, userId: "42", chatId: "-100", text: "Hi" }],
+    nextOffset: 3,
+  });
   await api.sendMessage("-1001234567890", "Reply", controller.signal);
   expect(calls.map((call) => call.url)).toEqual([
     "https://telegram.test/botoffline-token/getMe",
     "https://telegram.test/botoffline-token/getUpdates",
     "https://telegram.test/botoffline-token/sendMessage",
   ]);
-  expect(calls[1].body).toEqual({ offset: 3, timeout: 30, allowed_updates: ["message"] });
+  expect(calls[1].body).toEqual({ offset: 0, timeout: 30, allowed_updates: ["message"] });
   expect(calls[2].body).toEqual({ chat_id: "-1001234567890", text: "Reply" });
 });
 
@@ -259,8 +260,8 @@ it("retries failed Telegram sends through the shared delivery path", async () =>
     async getMe() {
       return { id: "1" };
     },
-    async getUpdates() {
-      return [];
+    async getUpdates(offset) {
+      return { updates: [], nextOffset: offset };
     },
     async sendMessage(chatId, text) {
       if (failures-- > 0) throw new Error("Telegram unavailable");
@@ -320,9 +321,9 @@ it("starts polling, dispatches updates, and aborts requests on stop", async () =
       signals.push(pollSignal);
       if (offset === 0) {
         started.resolve();
-        return [update()];
+        return { updates: [update()], nextOffset: 2 };
       }
-      return await new Promise<TelegramUpdate[]>((_resolve, reject) => {
+      return await new Promise<TelegramPollResult>((_resolve, reject) => {
         const abort = () => reject(pollSignal.reason ?? new Error("aborted"));
         if (pollSignal.aborted) abort();
         else pollSignal.addEventListener("abort", abort, { once: true });
@@ -397,9 +398,9 @@ it("runs the bot lifecycle and shuts polling and the runtime down on abort", asy
       if (!delivered) {
         delivered = true;
         started.resolve();
-        return [update()];
+        return { updates: [update()], nextOffset: 2 };
       }
-      return await new Promise<TelegramUpdate[]>((_resolve, reject) => {
+      return await new Promise<TelegramPollResult>((_resolve, reject) => {
         const abort = () => reject(pollSignal.reason ?? new Error("aborted"));
         if (pollSignal.aborted) abort();
         else pollSignal.addEventListener("abort", abort, { once: true });
@@ -418,4 +419,67 @@ it("runs the bot lifecycle and shuts polling and the runtime down on abort", asy
   expect(await running).toBe(0);
   expect(signals.every((pollSignal) => pollSignal.aborted)).toBe(true);
   expect(log.mock.calls.flat().join("\n")).toContain("Telegram bot @test_bot is running");
+});
+
+it("advances polling past a full batch of ignored updates to reach later text", async () => {
+  fixture = await chatFixture();
+  runtime = await EventRuntime.open({ workspace: await fixture.workspace() });
+  const offsets: number[] = [];
+  const controller = new AbortController();
+  const api = createTelegramApi({
+    token: "offline-token",
+    fetch: async (_url, init) => {
+      const { offset } = JSON.parse(String(init?.body));
+      offsets.push(offset);
+      if (offsets.length === 3) controller.abort();
+      const result =
+        offset < 100
+          ? Array.from({ length: 100 }, (_, update_id) => ({ update_id, message: { photo: [] } }))
+          : [{ update_id: 100, message: { text: "Hello", from: { id: 42 }, chat: { id: -100 } } }];
+      return new Response(JSON.stringify({ ok: true, result }));
+    },
+  });
+  const channel = new TelegramChannel({ api, runtime, allowedUserIds: [] });
+  try {
+    await channel.start(controller.signal);
+    await runtime.stop();
+    expect(offsets).toEqual([0, 100, 101]);
+    expect(fixture.requests).toHaveLength(1);
+  } finally {
+    await channel.stop();
+  }
+});
+
+it("awaits observation send cancellation cleanup before stopping", async () => {
+  fixture = await chatFixture();
+  runtime = await EventRuntime.open({ workspace: await fixture.workspace() });
+  const started = Promise.withResolvers<void>();
+  const cancelled = Promise.withResolvers<void>();
+  const cleanup = Promise.withResolvers<void>();
+  const { api } = recordingApi();
+  api.sendMessage = async (_chatId, _text, sendSignal) => {
+    started.resolve();
+    await new Promise<void>((resolve) =>
+      sendSignal.addEventListener("abort", () => resolve(), { once: true }),
+    );
+    cancelled.resolve();
+    await cleanup.promise;
+    sendSignal.throwIfAborted();
+  };
+  const channel = new TelegramChannel({ api, runtime, allowedUserIds: [] });
+  const dispatch = channel.dispatch(update({ text: "/help" })).catch(() => {});
+  await started.promise;
+  let stopped = false;
+  const stopping = channel.stop().then(() => {
+    stopped = true;
+  });
+  await cancelled.promise;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  try {
+    expect(stopped).toBe(false);
+  } finally {
+    cleanup.resolve();
+    await Promise.all([dispatch, stopping]);
+  }
+  expect(stopped).toBe(true);
 });

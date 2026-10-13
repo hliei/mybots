@@ -17,6 +17,11 @@ export interface TelegramUpdate {
   text: string;
 }
 
+export interface TelegramPollResult {
+  updates: TelegramUpdate[];
+  nextOffset: number;
+}
+
 export interface TelegramBotIdentity {
   id: string;
   username?: string;
@@ -24,7 +29,7 @@ export interface TelegramBotIdentity {
 
 export interface TelegramApi {
   getMe(signal: AbortSignal): Promise<TelegramBotIdentity>;
-  getUpdates(offset: number, signal: AbortSignal): Promise<TelegramUpdate[]>;
+  getUpdates(offset: number, signal: AbortSignal): Promise<TelegramPollResult>;
   sendMessage(chatId: string, text: string, signal: AbortSignal): Promise<void>;
 }
 
@@ -136,10 +141,19 @@ export function createTelegramApi(options: TelegramApiOptions): TelegramApi {
       );
       if (!Array.isArray(result))
         throw new Error("Telegram getUpdates returned an invalid response.");
-      return result.flatMap((update) => {
-        const normalized = normalizeTelegramUpdate(update);
-        return normalized ? [normalized] : [];
-      });
+      let nextOffset = offset;
+      for (const update of result) {
+        const id = record(update)?.update_id;
+        if (typeof id === "number" && Number.isSafeInteger(id) && id >= 0)
+          nextOffset = Math.max(nextOffset, id + 1);
+      }
+      return {
+        nextOffset,
+        updates: result.flatMap((update) => {
+          const normalized = normalizeTelegramUpdate(update);
+          return normalized ? [normalized] : [];
+        }),
+      };
     },
     async sendMessage(chatId, text, signal) {
       await call("sendMessage", { chat_id: chatId, text }, signal);
