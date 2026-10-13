@@ -159,6 +159,12 @@ it("saves each CLI launch as a separate session a reader can open", async () => 
       role: "assistant",
       content: "Hello!",
       reasoning_content: "Full reasoning.",
+      completion: {
+        turnId: expect.any(String),
+        replyId: expect.any(String),
+        payload: "Hello!",
+        destination: "platform-cli:cli-user",
+      },
       tool_calls: null,
       tool_call_id: null,
     },
@@ -635,3 +641,20 @@ it.each(["brave", "serpapi"] as const)(
     }
   },
 );
+
+it("acknowledges its printed reply and does not replay old pending CLI sessions", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace();
+  const old = await fixture.openAgent({ workspace });
+  await old.chat("Old question");
+  const result = await run(["-w", workspace], "New question\nquit\n");
+  expect(result).toMatchObject({ status: 0, stderr: "" });
+  expect(result.stdout.match(/helper: Hello!/g)).toHaveLength(1);
+  const history = await ConversationHistory.open(join(workspace, ".history"));
+  const sessions = await history.listSessions();
+  const latest = sessions.find((session) => session.id !== old.sessionId);
+  expect(latest).toBeDefined();
+  expect(await history.getPendingReplies(latest?.id ?? "")).toEqual([]);
+  expect(await history.getPendingReplies(old.sessionId)).toHaveLength(1);
+  expect(fixture.requests).toHaveLength(2);
+});

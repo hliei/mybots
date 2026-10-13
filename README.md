@@ -120,6 +120,17 @@ already made by tools remain in place. The shared Agent interface rejects
 overlapping `chat()` calls in the same session; the CLI submits turns sequentially.
 Automatic context compaction and manual `/compact` are available.
 
+Final answers are durably committed as one assistant log record with completion
+metadata (turn ID, stable reply ID, payload and destination). Pending replies and
+confirmed chunk counts are recovered from that log; files under
+`event_path/pending/<sessionId>/<replyId>.json` are repairable projections.
+Progress and acknowledgement records never enter model context or message counts.
+Invalid completion metadata raises a session error; incomplete trailing records
+and legacy assistant messages do not create pending replies. The CLI acknowledges
+its reply after the standard output write completes, and each new launch creates
+a separate session without replaying replies from earlier CLI sessions.
+Network delivery and retry handling are not yet implemented.
+
 ### Slash commands
 
 The CLI recognizes `/help` (alias `/?`), `/session`, `/skills`, and `/context` as
