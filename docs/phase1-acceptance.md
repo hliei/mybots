@@ -3,8 +3,8 @@
 Phase 1 includes the shared Agent, CLI conversations and inspection commands,
 DeepSeek thinking/tool continuation, local tools, Skills, append-only JSONL
 history, manual/automatic compaction, explicit-provider search and HTTP content
-fetching. The bot entry point remains a startup placeholder. Later-phase
-channels, routing, scheduling and long-term memory remain outside this acceptance.
+fetching. The bot entry point was outside this Phase 1 acceptance; later-phase
+channels, routing, scheduling and long-term memory also remain outside it.
 
 Real-service acceptance completed on October 13, 2026: all four live cases
 passed with DeepSeek and SerpApi. Brave remains covered by offline tests only.

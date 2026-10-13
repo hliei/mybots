@@ -119,7 +119,8 @@ compaction and interruption state records. Existing message fields remain
 compatible, and message-only history views exclude compaction/state records.
 Programmatic recovery restores saved context and repairs interrupted tools;
 final-message completion commits, pending projections, chunk progress and
-acknowledgements are implemented. Network delivery and retries remain planned.
+acknowledgements are implemented. Network delivery and request retries are
+implemented for the shared runtime.
 
 ## API and library documentation
 

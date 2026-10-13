@@ -17,12 +17,15 @@ export interface DeliveryTransport {
 
 export interface DeliveryOptions {
   transports: DeliveryTransport[];
+  /** When set, other platforms remain pending for their explicit senders. */
+  ownedPlatforms?: DeliveryTransport["platform"][];
   random?: () => number;
   /** Controlled clocks must cancel and settle their waits when the signal aborts. */
   wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
 }
 
-function chunks(content: string, limit: number): string[] {
+/** Split text at paragraph boundaries, falling back to Unicode code-point runs. */
+export function chunkContent(content: string, limit: number): string[] {
   if (Array.from(content).length <= limit) return [content];
   const result: string[] = [];
   let current = "";
@@ -67,6 +70,13 @@ export class ReplyDelivery {
         if (this.paused.has(sessionId) || this.signal.aborted) return;
         for (const reply of await this.history.getPendingReplies(sessionId)) {
           if (this.signal.aborted) return;
+          if (
+            this.options.ownedPlatforms &&
+            !this.options.ownedPlatforms.some((platform) =>
+              reply.destination.startsWith(`platform-${platform}:`),
+            )
+          )
+            continue;
           const transport = this.options.transports.find((candidate) =>
             reply.destination.startsWith(`platform-${candidate.platform}:`),
           );
@@ -103,7 +113,7 @@ export class ReplyDelivery {
   }
 
   private async deliver(reply: PendingReply, transport: DeliveryTransport): Promise<void> {
-    const parts = chunks(reply.payload, transport.limit);
+    const parts = chunkContent(reply.payload, transport.limit);
     if (reply.confirmedChunks > parts.length)
       throw new Error("Saved progress exceeds the delivery chunk count.");
     for (let attempt = 1; attempt <= 5; attempt++) {

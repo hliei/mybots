@@ -504,3 +504,30 @@ it("does not start recovered sends when runtime resource initialization fails", 
   await runtime.getPendingReplies(result.session_id);
   expect(sent).toEqual([]);
 });
+
+it("leaves replies for other platform senders pending across restart without delivery failures", async () => {
+  fixture = await chatFixture();
+  const workspace = await fixture.workspace();
+  const delivery = {
+    ownedPlatforms: ["telegram" as const],
+    transports: [{ platform: "telegram" as const, limit: 4096, async send() {} }],
+  };
+  runtime = await EventRuntime.open({ workspace, delivery });
+  const reply = await runtime.submit({
+    source: "platform-ws:explicit",
+    content: "Observed elsewhere",
+  });
+  await runtime.stop();
+  if (reply.type !== "OutboundEvent") throw new Error("Expected a completed reply.");
+  expect(runtime.deliveryFailures).toEqual([]);
+  expect(await runtime.getPendingReplies(reply.session_id)).toEqual([
+    expect.objectContaining({ replyId: reply.reply_id, payload: "Hello!" }),
+  ]);
+  expect((await runtime.getPendingReplies(reply.session_id))[0]).not.toHaveProperty("failure");
+
+  runtime = await EventRuntime.open({ workspace, delivery });
+  await runtime.stop();
+  expect(runtime.deliveryFailures).toEqual([]);
+  expect((await runtime.getPendingReplies(reply.session_id))[0]).not.toHaveProperty("failure");
+  expect(fixture.requests).toHaveLength(1);
+});

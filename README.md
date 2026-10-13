@@ -6,8 +6,9 @@ bot, with a shared agent core.
 The CLI supports non-streaming, multi-turn conversations, local tool execution,
 Skill loading, and optional web search and HTTP content fetching with DeepSeek
 through a shared queued event runtime. Each launch creates
-a fresh session. The bot server serves the local WebSocket interface when
-`api.enabled` is set; otherwise it reports the disabled interface and exits.
+a fresh session. The bot entry point embeds one shared runtime for its configured
+Telegram channel and local WebSocket interface; either can run independently.
+Telegram replies return to the originating chat.
 
 ## Setup
 
@@ -139,8 +140,8 @@ and legacy assistant messages do not create pending replies. The CLI acknowledge
 its reply after the standard output write completes, and each new launch creates
 a separate session without replaying replies from earlier CLI sessions.
 Optional runtime transports provide ordered, recoverable delivery with finite
-retries. The local WebSocket interface is the explicit sender for WebSocket
-replies; live Telegram adapters remain planned.
+retries; the bot entry point supplies a Telegram transport and the local
+WebSocket interface explicitly sends and acknowledges WebSocket replies.
 
 ### Slash commands
 
@@ -476,7 +477,8 @@ directory are serialized within the process.
 `EventRuntime.open({ workspace, agent, delivery? })` explicitly starts a runtime and its
 configuration watcher. Importing runtime modules opens no resources. CLI and bot
 entry points embed independent runtimes; simultaneous workspace modification by
-both processes is outside the supported contract.
+both processes is outside the supported contract. The bot entry point runs the
+configured Telegram channel and local WebSocket interface in one runtime.
 
 The shared facade provides:
 
@@ -530,7 +532,7 @@ replaying unfinished tools. New runtime sessions record their source in the log
 metadata and index; histories without that field remain readable and acquire no
 retroactive replies.
 
-`delivery: { transports, random?, wait? }` enables generated-reply delivery.
+`delivery: { transports, ownedPlatforms?, random?, wait? }` enables generated-reply delivery.
 Each transport supplies `platform` (`telegram` or `ws`), a positive integer
 `limit` in Unicode code points, and `send(chunk, signal)`. Chunks carry `sessionId`,
 `replyId`, `destination` and `content`; the adapter resolves recipient details.
@@ -549,7 +551,10 @@ only that session's delivery until restart. `deliveryFailures` reports failures;
 Agent execution and other sessions continue. A platform acceptance before local
 progress persistence can duplicate that chunk on retry or restart. Terminal
 replies remain scoped to their original CLI launch. Without `delivery` the facade
-keeps replies pending for explicit senders.
+keeps replies pending for explicit senders. Setting `ownedPlatforms` limits the
+worker to those platforms; other replies remain pending without recording a
+missing-adapter failure. The bot worker owns only Telegram replies; the WebSocket
+interface handles WebSocket replies.
 
 ### Local WebSocket interface
 
@@ -593,6 +598,7 @@ pending in the session log.
 - [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)
 - [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/)
 - [DeepSeek model limits](https://api-docs.deepseek.com/quick_start/pricing/)
+- [Telegram Bot API](https://core.telegram.org/bots/api)
 - [Token-budgeted context compaction](docs/adr/0002-token-budgeted-context-compaction.md)
 - [Brave Web Search API](https://api-dashboard.search.brave.com/app/documentation/web-search)
 - [Readability main-content extraction](https://github.com/mozilla/readability)
@@ -603,6 +609,57 @@ Manual compaction retains whole user turns, while automatic compaction can
 summarize a long turn's prefix. Token estimates use UTF-8 bytes with a framing
 margin, and saved summaries can be restored from the append-only session log.
 Manual and automatic compaction both support incremental summary updates.
+
+## Telegram bot
+
+The bot entry point embeds the same shared runtime as the CLI and runs a
+long-polling Telegram channel when it is enabled. Copy the example Workspace and
+enable the channel in the merged configuration:
+
+```yaml
+channels:
+  enabled: true
+  telegram:
+    enabled: true
+    bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+    allowed_user_ids: ["123456789"] # Empty allows every user.
+```
+
+```sh
+npm run dev:bot -- --workspace ./workspace
+# or, after npm run build:
+npm run start:bot -- --workspace ./workspace
+```
+
+Without `--workspace` / `-w` the default Workspace is `../default_workspace`.
+`--help` prints usage without loading configuration. Starting with both Telegram
+and the WebSocket interface disabled prints a message and exits with status 0,
+so the entry point can be checked without credentials or network access.
+Enabling `api.enabled` starts WebSocket independently of Telegram. Channel enablement, `bot_token`
+and `allowed_user_ids` are restart-only settings; edit them and restart the
+process.
+
+The Telegram Bot API is called directly over HTTPS; its request and response
+shapes stay in `src/bot/telegram-api.ts`, so no Telegram SDK dependency is added.
+User and chat identifiers are carried as digit strings and sent back as strings,
+so routing, allowlist checks and delivery never depend on JavaScript numeric
+precision. A numeric identifier that cannot be represented exactly at the JSON
+boundary is rejected instead of silently rounded.
+
+Each user/chat pair maps to its own Agent session, so a user's group and private
+conversations stay separate, and a new source binding is saved in
+`config.runtime.yaml` before the first turn. Text messages become normal runtime
+inputs: follow-ups queue in reception order, tools and Skills work, and generated
+replies travel through the durable chunked delivery path (4,096 code-point
+chunks) with finite retries. A failed send keeps its pending reply and resumes on
+a later restart. Command results and turn errors are ephemeral observations, like
+the CLI, and are sent without a durable record. Messages from users outside a
+nonempty allowlist are ignored; an empty allowlist allows everyone, matching the
+configured behavior. Ctrl+C stops polling and awaits runtime cleanup.
+
+Ordinary tests drive controlled Telegram updates and sends against the real
+runtime; they never contact Telegram. Real send/receive acceptance is separate
+and uses a user-controlled test destination.
 
 ## Checks and tests
 
@@ -696,9 +753,12 @@ src/
 │   │   └── search-request.ts # Bounded search HTTP requests
 │   └── toolbox.ts         # Tool schemas, argument validation, and dispatch
 ├── websocket/
-│   ├── interface.ts        # Local listener, client registry, broadcast, and shutdown
-│   └── protocol.ts         # Input-frame validation and event/error serialization
-└── bot/startup.ts          # Bot entry: Workspace, shared runtime, and WebSocket interface
+│   ├── interface.ts       # Local listener, client registry, broadcast, and shutdown
+│   └── protocol.ts        # Input-frame validation and event/error serialization
+└── bot/
+    ├── startup.ts         # Bot arguments, shared runtime ownership, and shutdown
+    ├── telegram.ts        # Telegram channel lifecycle and reply transport
+    └── telegram-api.ts    # Telegram Bot API request/response boundary
 ```
 
 The Agent supplies the available tool schemas to the provider. The provider

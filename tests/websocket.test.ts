@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { type AddressInfo, connect } from "node:net";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { runBot } from "../src/bot/startup.ts";
+import type { TelegramApi, TelegramPollResult } from "../src/bot/telegram-api.ts";
 import { ConversationHistory } from "../src/core/history.ts";
 import { EventRuntime } from "../src/core/runtime.ts";
 import { type WebSocketAddress, WebSocketInterface } from "../src/websocket/interface.ts";
@@ -542,10 +543,11 @@ it("closes incomplete HTTP connections during shutdown", async () => {
   const address = await server.start();
   const socket = connect(address.port, address.host);
   await once(socket, "connect");
-  await new Promise<void>((resolve) =>
-    socket.write("GET /ws HTTP/1.1\r\nHost: localhost\r\n", () => resolve()),
+  const response = once(socket, "data");
+  socket.write(
+    "GET /other HTTP/1.1\r\nHost: localhost\r\n\r\nGET /ws HTTP/1.1\r\nHost: localhost\r\n",
   );
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect((await response)[0].toString()).toContain("404");
   // A connected TCP peer with unfinished headers never reaches the HTTP handler.
   const stopping = server.stop();
   const timeout = AbortSignal.timeout(250);
@@ -584,4 +586,88 @@ it("reports a busy bind port through bot startup without an unhandled server err
   expect(code).toBe(1);
   expect(stderr).toContain("Error: listen EADDRINUSE");
   expect(stderr).not.toContain("Unhandled 'error' event");
+});
+
+it("runs Telegram and WebSocket together through one bot runtime and stops both", async () => {
+  fixture = await chatFixture();
+  const port = await freePort();
+  const workspace = await fixture.workspace(
+    fixture.root,
+    `api:\n  enabled: true\n  host: 127.0.0.1\n  port: ${port}\nchannels:\n  enabled: true\n  telegram:\n    enabled: true\n    bot_token: offline-token\n    allowed_user_ids: []\n`,
+  );
+  const updates = Promise.withResolvers<TelegramPollResult>();
+  const sends: { chatId: string; text: string }[] = [];
+  const signals: AbortSignal[] = [];
+  const api: TelegramApi = {
+    async getMe() {
+      return { id: "1" };
+    },
+    async getUpdates(offset, signal) {
+      signals.push(signal);
+      if (offset === 0) return updates.promise;
+      return new Promise<TelegramPollResult>((_resolve, reject) => {
+        const abort = () => reject(signal.reason);
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      });
+    },
+    async sendMessage(chatId, text) {
+      sends.push({ chatId, text });
+    },
+  };
+  vi.spyOn(console, "log").mockImplementation(() => {});
+  const controller = new AbortController();
+  const listening = Promise.withResolvers<WebSocketAddress>();
+  const bot = runBot(["--workspace", workspace], {
+    createApi: () => api,
+    signal: controller.signal,
+    onListening: (bound) => listening.resolve(bound),
+  });
+  try {
+    const client = await openClient(await listening.promise);
+    client.send({ source: "web", content: "WebSocket input" });
+    const webReply = await client.waitFor(
+      (message) => message.type === "OutboundEvent",
+      "WebSocket reply",
+    );
+    updates.resolve({
+      updates: [{ updateId: 1, userId: "42", chatId: "-100", text: "Telegram input" }],
+      nextOffset: 2,
+    });
+    const telegramInput = await client.waitFor(
+      (message) =>
+        message.type === "InboundEvent" && message.source === "platform-telegram:42:-100",
+      "Telegram observation",
+    );
+    await client.waitFor(
+      (message) =>
+        message.type === "OutboundEvent" && message.session_id === telegramInput.session_id,
+      "Telegram reply observation",
+    );
+    expect(webReply.session_id).not.toBe(telegramInput.session_id);
+    await vi.waitFor(() => expect(sends).toEqual([{ chatId: "-100", text: "Hello!" }]));
+    const history = await ConversationHistory.open(join(workspace, ".history"));
+    await vi.waitFor(async () => {
+      expect(await history.getPendingReplies(webReply.session_id as string)).toEqual([]);
+      expect(await history.getPendingReplies(telegramInput.session_id as string)).toEqual([]);
+    });
+    expect(fixture.requests).toHaveLength(2);
+    const log = await readFile(
+      join(workspace, ".history", "sessions", `${webReply.session_id}.jsonl`),
+      "utf8",
+    );
+    expect(
+      log
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line).type),
+    ).not.toContain("reply_failed");
+  } finally {
+    controller.abort();
+    updates.resolve({ updates: [], nextOffset: 0 });
+    expect(await bot).toBe(0);
+  }
+  expect(signals.length).toBeGreaterThan(0);
+  expect(signals.every((signal) => signal.aborted)).toBe(true);
+  await expect(tryConnect({ host: "127.0.0.1", port, path: "/ws" })).rejects.toThrow();
 });

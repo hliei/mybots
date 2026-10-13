@@ -3,11 +3,18 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { chatFixture } from "./chat-fixture.ts";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const temporaryRoot = mkdtempSync(join(tmpdir(), "mybots-startup-"));
 const missingWorkspace = join(temporaryRoot, "missing");
+
+let fixture: Awaited<ReturnType<typeof chatFixture>> | undefined;
+afterEach(async () => {
+  await fixture?.close();
+  fixture = undefined;
+});
 
 afterAll(() => rmSync(temporaryRoot, { recursive: true, force: true }));
 
@@ -27,6 +34,7 @@ describe("bot startup", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Usage: npm run start:bot");
     expect(result.stdout).toContain("/ws");
+    expect(result.stdout).toContain("Telegram");
     expect(result.stderr).toBe("");
   });
 
@@ -37,6 +45,15 @@ describe("bot startup", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("Invalid configuration");
+  });
+
+  it("reports disabled interfaces without credentials or network", async () => {
+    fixture = await chatFixture();
+    const result = run("--workspace", await fixture.workspace());
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("disabled");
+    expect(result.stderr).toBe("");
   });
 
   it("rejects unsupported arguments with a failing exit status", () => {
@@ -55,7 +72,7 @@ it("imports runtime, CLI, and WebSocket modules without reading configuration or
     [
       "--input-type=module",
       "-e",
-      'await import("./src/core/agent.ts"); await import("./src/core/events.ts"); await import("./src/core/runtime.ts"); await import("./src/cli.ts"); await import("./src/websocket/interface.ts"); await import("./src/websocket/protocol.ts"); await import("./src/bot/startup.ts");',
+      'await import("./src/core/agent.ts"); await import("./src/core/events.ts"); await import("./src/core/runtime.ts"); await import("./src/cli.ts"); await import("./src/websocket/interface.ts"); await import("./src/websocket/protocol.ts"); await import("./src/bot/startup.ts"); await import("./src/bot/telegram.ts"); await import("./src/bot/telegram-api.ts");',
     ],
     { cwd: projectRoot, encoding: "utf8", timeout: 5000 },
   );
