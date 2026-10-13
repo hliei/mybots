@@ -1,7 +1,7 @@
 import { once } from "node:events";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import { type AddressInfo, connect } from "node:net";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -512,3 +512,55 @@ async function freePort(): Promise<number> {
   );
   return port;
 }
+
+it("rejects new connections as soon as shutdown starts", async () => {
+  fixture = await chatFixture();
+  runtime = await EventRuntime.open({ workspace: await fixture.workspace() });
+  server = new WebSocketInterface({ runtime, host: "127.0.0.1", port: 0, sendTimeoutMs: 100 });
+  const address = await server.start();
+  const stalled = await openClient(address);
+  stalled.socket.pause();
+  const stopping = server.stop();
+  let newcomer: WebSocket | undefined;
+  try {
+    await expect(
+      tryConnect(address).then((socket) => {
+        newcomer = socket;
+      }),
+    ).rejects.toThrow();
+  } finally {
+    newcomer?.terminate();
+    await stopping;
+  }
+});
+
+it("closes incomplete HTTP connections during shutdown", async () => {
+  fixture = await chatFixture();
+  runtime = await EventRuntime.open({ workspace: await fixture.workspace() });
+  server = new WebSocketInterface({ runtime, host: "127.0.0.1", port: 0, sendTimeoutMs: 10 });
+  const address = await server.start();
+  const socket = connect(address.port, address.host);
+  await once(socket, "connect");
+  await new Promise<void>((resolve) =>
+    socket.write("GET /ws HTTP/1.1\r\nHost: localhost\r\n", () => resolve()),
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  // A connected TCP peer with unfinished headers never reaches the HTTP handler.
+  const stopping = server.stop();
+  const timeout = AbortSignal.timeout(250);
+  try {
+    await expect(
+      Promise.race([
+        stopping,
+        new Promise<void>((_resolve, reject) =>
+          timeout.addEventListener("abort", () => reject(new Error("Shutdown timed out")), {
+            once: true,
+          }),
+        ),
+      ]),
+    ).resolves.toBeUndefined();
+  } finally {
+    socket.destroy();
+    await stopping;
+  }
+});

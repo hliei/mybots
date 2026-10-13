@@ -568,7 +568,7 @@ empty `source` or `content`, an invalid `agent_id`, or a rejected input returns
 `{"type":"error","message":"..."}` to the originating connection without closing
 it. Unknown fields are ignored.
 
-Every connected client receives reference-compatible `InboundEvent` and
+Every connected client receives `InboundEvent` and
 `OutboundEvent` envelopes for all sessions, including their `type`, `session_id`,
 `source`, `content`, `timestamp`, and inbound `retry_count` or outbound `error`.
 Generated answers also carry `reply_id`. An outbound reply is broadcast only

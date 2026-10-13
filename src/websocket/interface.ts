@@ -125,14 +125,15 @@ export class WebSocketInterface {
     this.boundAddress = undefined;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    const webSocketClosed = new Promise<void>((resolve) => webSocketServer.close(() => resolve()));
+    const serverClosed = new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    server.closeAllConnections();
     const clients = [...this.clients];
     this.clients.clear();
     await Promise.all(clients.map((client) => this.closeClient(client)));
-    await new Promise<void>((resolve) => webSocketServer.close(() => resolve()));
-    server.closeIdleConnections();
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
+    await Promise.all([webSocketClosed, serverClosed]);
   }
 
   private handleRequest(request: IncomingMessage, response: ServerResponse): void {

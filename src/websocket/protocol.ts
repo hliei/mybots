@@ -48,7 +48,7 @@ export function websocketSource(source: string): string {
   return `platform-ws:${source}`;
 }
 
-/** Serialize an inbound/outbound event as a reference-compatible envelope. */
+/** Serialize an inbound/outbound event as an inbound/outbound envelope. */
 export function serializeEvent(event: RuntimeEvent): string {
   return JSON.stringify(event);
 }
