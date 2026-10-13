@@ -331,6 +331,29 @@ it("drops a disconnected peer without disturbing other clients or sessions", asy
   expect(server.clientCount).toBe(1);
 });
 
+it("drops a saturated peer without delaying another client's reply", async () => {
+  fixture = await chatFixture();
+  const payload = "x".repeat(8_000_000);
+  fixture.responses.push({
+    status: 200,
+    body: { choices: [{ message: { role: "assistant", content: payload } }] },
+  });
+  runtime = await EventRuntime.open({ workspace: await fixture.workspace() });
+  server = new WebSocketInterface({ runtime, host: "127.0.0.1", port: 0, sendTimeoutMs: 100 });
+  const address = await server.start();
+  const slow = await openClient(address);
+  const fast = await openClient(address);
+  slow.socket.pause();
+
+  fast.send({ source: "alice", content: "Big" });
+  const outbound = await fast.waitFor((message) => message.type === "OutboundEvent", "reply");
+  expect((outbound.content as string).length).toBe(8_000_000);
+  await vi.waitFor(() => {
+    expect(server?.clientCount).toBe(1);
+  });
+  expect(runtime.subscriberFailures).toEqual([]);
+});
+
 it("closes the listener and clients and cancels in-flight work on shutdown", async () => {
   fixture = await chatFixture();
   runtime = await EventRuntime.open({ workspace: await fixture.workspace() });

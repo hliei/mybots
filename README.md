@@ -585,7 +585,8 @@ acknowledgement, because the interface delivers no historical replies and every
 connected client already observes outbound events in per-session order. There is
 no client acknowledgement or replay protocol, so a reconnect observes new events
 rather than historical replies. Stopping closes the listener and clients,
-cancels in-flight broadcasts, and leaves unconfirmed replies recoverable.
+cancels in-flight broadcasts, and leaves unconfirmed replies recorded as
+pending in the session log.
 
 ### API and library documentation
 
