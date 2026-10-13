@@ -17,6 +17,8 @@ export interface DeliveryTransport {
 
 export interface DeliveryOptions {
   transports: DeliveryTransport[];
+  /** When set, other platforms remain pending for their explicit senders. */
+  ownedPlatforms?: DeliveryTransport["platform"][];
   random?: () => number;
   /** Controlled clocks must cancel and settle their waits when the signal aborts. */
   wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
@@ -68,6 +70,13 @@ export class ReplyDelivery {
         if (this.paused.has(sessionId) || this.signal.aborted) return;
         for (const reply of await this.history.getPendingReplies(sessionId)) {
           if (this.signal.aborted) return;
+          if (
+            this.options.ownedPlatforms &&
+            !this.options.ownedPlatforms.some((platform) =>
+              reply.destination.startsWith(`platform-${platform}:`),
+            )
+          )
+            continue;
           const transport = this.options.transports.find((candidate) =>
             reply.destination.startsWith(`platform-${candidate.platform}:`),
           );

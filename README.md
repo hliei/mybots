@@ -6,9 +6,9 @@ bot, with a shared agent core.
 The CLI supports non-streaming, multi-turn conversations, local tool execution,
 Skill loading, and optional web search and HTTP content fetching with DeepSeek
 through a shared queued event runtime. Each launch creates
-a fresh session. The bot entry point embeds the same runtime and runs a
-long-polling Telegram channel when it is enabled, returning replies to the
-originating chat.
+a fresh session. The bot entry point embeds one shared runtime for its configured
+Telegram channel and local WebSocket interface; either can run independently.
+Telegram replies return to the originating chat.
 
 ## Setup
 
@@ -140,8 +140,8 @@ and legacy assistant messages do not create pending replies. The CLI acknowledge
 its reply after the standard output write completes, and each new launch creates
 a separate session without replaying replies from earlier CLI sessions.
 Optional runtime transports provide ordered, recoverable delivery with finite
-retries; the Telegram bot entry point supplies a Telegram transport, and a
-WebSocket adapter remains planned.
+retries; the bot entry point supplies a Telegram transport and the local
+WebSocket interface explicitly sends and acknowledges WebSocket replies.
 
 ### Slash commands
 
@@ -478,7 +478,7 @@ directory are serialized within the process.
 configuration watcher. Importing runtime modules opens no resources. CLI and bot
 entry points embed independent runtimes; simultaneous workspace modification by
 both processes is outside the supported contract. The bot entry point runs the
-configured Telegram channel; the WebSocket entry point remains planned.
+configured Telegram channel and local WebSocket interface in one runtime.
 
 The shared facade provides:
 
@@ -532,7 +532,7 @@ replaying unfinished tools. New runtime sessions record their source in the log
 metadata and index; histories without that field remain readable and acquire no
 retroactive replies.
 
-`delivery: { transports, random?, wait? }` enables generated-reply delivery.
+`delivery: { transports, ownedPlatforms?, random?, wait? }` enables generated-reply delivery.
 Each transport supplies `platform` (`telegram` or `ws`), a positive integer
 `limit` in Unicode code points, and `send(chunk, signal)`. Chunks carry `sessionId`,
 `replyId`, `destination` and `content`; the adapter resolves recipient details.
@@ -551,7 +551,47 @@ only that session's delivery until restart. `deliveryFailures` reports failures;
 Agent execution and other sessions continue. A platform acceptance before local
 progress persistence can duplicate that chunk on retry or restart. Terminal
 replies remain scoped to their original CLI launch. Without `delivery` the facade
-keeps replies pending for explicit senders.
+keeps replies pending for explicit senders. Setting `ownedPlatforms` limits the
+worker to those platforms; other replies remain pending without recording a
+missing-adapter failure. The bot worker owns only Telegram replies; the WebSocket
+interface handles WebSocket replies.
+
+### Local WebSocket interface
+
+`api.enabled: true` serves the local WebSocket interface at `/ws` on
+`api.host:api.port` (default `127.0.0.1:8000`). It starts independently of
+Telegram and requires no external service; `api` settings require restart.
+`npm run dev:bot -- --workspace ./workspace` starts the listener in that
+process, and importing the module opens no listener.
+
+A client sends a JSON text frame `{"source": "<client>", "content": "<text>",
+"agent_id": "<id>"?}`. `source` is the client identifier and becomes
+`platform-ws:<client>`; reconnecting with the same identifier continues its
+source-to-session binding. `agent_id` selects the Agent for a new binding and is
+rejected when it conflicts with an existing session. Malformed JSON, a missing or
+empty `source` or `content`, an invalid `agent_id`, or a rejected input returns
+`{"type":"error","message":"..."}` to the originating connection without closing
+it. Unknown fields are ignored.
+
+Every connected client receives `InboundEvent` and
+`OutboundEvent` envelopes for all sessions, including their `type`, `session_id`,
+`source`, `content`, `timestamp`, and inbound `retry_count` or outbound `error`.
+Generated answers also carry `reply_id`. An outbound reply is broadcast only
+after its completion record is committed. Connected clients are observers: a
+slow, failed, or disconnected peer is dropped without blocking the event
+dispatcher or another session's execution.
+
+The interface is the explicit sender for WebSocket replies. It acknowledges a
+pending `platform-ws:` reply only after at least one connected client accepted
+the outbound envelope; a reply with no recipient, or one destined for another
+platform, remains pending. Acknowledgement is per committed reply: an older
+unconfirmed reply stays pending and does not gate a later broadcast
+acknowledgement, because the interface delivers no historical replies and every
+connected client already observes outbound events in per-session order. There is
+no client acknowledgement or replay protocol, so a reconnect observes new events
+rather than historical replies. Stopping closes the listener and clients,
+cancels in-flight broadcasts, and leaves unconfirmed replies recorded as
+pending in the session log.
 
 ### API and library documentation
 
@@ -592,9 +632,10 @@ npm run start:bot -- --workspace ./workspace
 ```
 
 Without `--workspace` / `-w` the default Workspace is `../default_workspace`.
-`--help` prints usage without loading configuration. Starting with Telegram
-disabled prints a message and exits with status 0, so the entry point can be
-checked without credentials or network access. Channel enablement, `bot_token`
+`--help` prints usage without loading configuration. Starting with both Telegram
+and the WebSocket interface disabled prints a message and exits with status 0,
+so the entry point can be checked without credentials or network access.
+Enabling `api.enabled` starts WebSocket independently of Telegram. Channel enablement, `bot_token`
 and `allowed_user_ids` are restart-only settings; edit them and restart the
 process.
 
@@ -669,7 +710,8 @@ npm run start:bot -- --workspace ./workspace
 ```
 
 Builds contain application code under `dist/`; tests and tool configuration
-are not emitted. Start commands use the existing build. For offline help:
+are not emitted. Start commands use the existing build. The bot server serves
+`/ws` when `api.enabled` is true. For offline help:
 
 ```sh
 npm run start:cli -- --help
@@ -710,8 +752,11 @@ src/
 │   │   ├── serpapi.ts     # Internal SerpApi Google adapter
 │   │   └── search-request.ts # Bounded search HTTP requests
 │   └── toolbox.ts         # Tool schemas, argument validation, and dispatch
+├── websocket/
+│   ├── interface.ts       # Local listener, client registry, broadcast, and shutdown
+│   └── protocol.ts        # Input-frame validation and event/error serialization
 └── bot/
-    ├── startup.ts         # Bot arguments, runtime ownership, and shutdown
+    ├── startup.ts         # Bot arguments, shared runtime ownership, and shutdown
     ├── telegram.ts        # Telegram channel lifecycle and reply transport
     └── telegram-api.ts    # Telegram Bot API request/response boundary
 ```

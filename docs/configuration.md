@@ -37,8 +37,9 @@ content is read when the Skill loads.
 All relative directories resolve against the selected Workspace. Configuration
 validation itself opens no model or messaging connections. These fields prepare
 connection/routing consumers; this configuration module does not start those
-consumers. The bot entry point consumes the channel settings to start Telegram
-polling, while imports and `--help` start nothing.
+consumers. The bot entry point serves `/ws` when `api.enabled` is true and starts
+Telegram polling when the channel is enabled; either interface runs independently.
+Imports and `--help` start nothing.
 
 Telegram user and chat identifiers are configured and carried as digit strings.
 An empty `channels.telegram.allowed_user_ids` allows every user; a nonempty list
