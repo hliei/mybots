@@ -146,9 +146,11 @@ or non-reducing summaries are rejected. Failure and cancellation keep active
 context intact. Chat and compaction cannot mutate the same Agent concurrently.
 
 A successful compaction clears usage from the old context; the next chat request
-uses the rebuilt context. Original JSONL history is unchanged, and neither the
-command nor generated summary is recorded as conversation history. Compaction
-state remains in memory for this launch. Repeated manual and automatic compaction
+uses the rebuilt context. Original JSONL messages remain intact. The log appends
+a compaction record with the exact summary and a stable retention boundary only
+after summary and budget validation; active context changes only after persistence
+succeeds. Commands and compaction records are excluded from message-only history.
+Repeated manual and automatic compaction
 update the previous summary with only newly removed content, without rereading
 raw history.
 
@@ -377,7 +379,10 @@ Each CLI launch creates a new Agent session and records it under `history_path`
   updated first.
 - `sessions/<session_id>.jsonl` appends one record per message with `timestamp`,
   `role`, `content`, `tool_calls`, and `tool_call_id`, plus `reasoning_content` on
-  assistant messages that have it.
+  assistant messages that have it. New logs start with session metadata, and new
+  messages and compaction/state records receive stable `id` fields. Compaction
+  records contain `type: "compaction"`, `summary`, and `firstKeptEntryId`.
+  Message counts exclude metadata, compaction, and state records.
 
 User input is saved before requesting a model response, including failed or
 cancelled turns. Assistant responses are saved before tool execution, and tool
@@ -386,6 +391,30 @@ failed inputs remain in saved history even when excluded from active context.
 Conversation history preserves original reasoning content and never fabricates
 reasoning a record lacks. Records without reasoning content remain readable.
 There is no history-listing or resume command.
+
+Programmatic callers can resume a session with
+`Agent.open({ workspace, sessionId })`. Recovery loads that session's Agent and
+reconstructs active context from the latest valid saved summary, retained original
+messages, and later messages without requesting another summary. Failed attempted
+inputs remain in recovered context. CLI launches continue creating new sessions.
+
+Legacy logs are recognized through valid index metadata and message records;
+their recovery IDs use physical line numbers, including malformed and blank lines,
+without rewriting the file. New logs can be recognized by their own metadata and
+restore a missing index entry. Recovery diagnostics are available through
+`agent.recoveryDiagnostics`. Invalid JSON/messages are skipped, and invalid
+compactions fall back to an earlier valid compaction or complete recognized
+message history. Invalid optional token statistics do not discard a valid summary.
+The compaction's own ID explicitly marks an empty retained prefix. Boundaries
+must otherwise resolve uniquely to an earlier message without splitting a tool
+exchange. Nonempty unrecognizable files fail and remain preserved. Unterminated
+fragments remain intact; later appends start after a newline separator.
+
+Recovery appends unknown-outcome tool results for unresolved calls and a
+`turn_interrupted` state record before accepting another turn. Original call IDs,
+reasoning, arguments, saved results, and message extensions are preserved. Repeated
+recovery adds no duplicate repairs and never executes tools or restarts a saved
+request. Writes to the same history directory are serialized within the process.
 
 ### API and library documentation
 
@@ -400,8 +429,8 @@ There is no history-listing or resume command.
 
 Manual compaction retains whole user turns, while automatic compaction can
 summarize a long turn's prefix. Token estimates use UTF-8 bytes with a framing
-margin, and summary state stays in memory for the current session. Manual and
-automatic compaction both support incremental summary updates.
+margin, and saved summaries can be restored from the append-only session log.
+Manual and automatic compaction both support incremental summary updates.
 
 ## Checks and tests
 

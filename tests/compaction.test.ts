@@ -90,7 +90,9 @@ it("compacts older visible tool work while preserving the complete recent turn, 
   expect(serialized).toContain("truncated");
   expect(serialized).not.toContain("Secret older reasoning");
   expect(serialized).not.toContain("Recent objective");
-  expect(await readFile(log, "utf8")).toBe(before);
+  const saved = await readFile(log, "utf8");
+  expect(saved.startsWith(before)).toBe(true);
+  expect(JSON.parse(saved.slice(before.length))).toMatchObject({ type: "compaction" });
   const reader = await ConversationHistory.open(join(workspace, ".history"));
   expect(await reader.getMessages(agent.sessionId)).toHaveLength(8);
   await agent.chat("Continue");
