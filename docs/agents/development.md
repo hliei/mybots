@@ -73,7 +73,8 @@ keep it outside `test`, `test:watch`, and `verify`.
    changes, run `check` and fix reported problems.
 3. Before delivering application or tooling changes, run `verify`. For tooling
    setup, also exercise development startup and test watching. Use the same
-   verification script in CI once CI is configured.
+   verification script in CI; `.github/workflows/ci.yml` also runs
+   `bash tests/workflow.sh` in isolated temporary repositories.
 4. For documentation-only changes, check content, relative links, and agreement
    with the actual tooling state. Follow
    [Git workflow](git-workflow.md#validation-and-delivery) for other checks.

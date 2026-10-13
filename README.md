@@ -500,6 +500,11 @@ exceptions and separate validation evidence.
 of both compiled entry points. It does not start a long-running service or
 contact a model or messaging platform.
 
+GitHub Actions runs `npm run verify` and `bash tests/workflow.sh` for pull
+requests targeting `main`, pushes to `main`, and manual runs. CI reads the Node.js
+version from `.nvmrc` and installs dependencies with `npm ci --ignore-scripts`.
+Git workflow tests install Husky in isolated temporary repositories.
+
 ## Build and run
 
 ```sh
