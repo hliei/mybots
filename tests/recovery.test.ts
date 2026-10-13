@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { Agent } from "../src/core/agent.ts";
 import { ConversationHistory } from "../src/core/history.ts";
-import { chatFixture, toolReply } from "./chat-fixture.ts";
+import { chatFixture, toolReply, unavailableResponses } from "./chat-fixture.ts";
 
 let fixture: Awaited<ReturnType<typeof chatFixture>> | undefined;
 afterEach(async () => {
@@ -565,10 +565,10 @@ it("keeps attempted input after a failed request without automatically restartin
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
   const first = await Agent.open({ workspace });
-  fixture.responses.push({ status: 503, body: { error: { message: "Unavailable" } } });
+  fixture.responses.push(...unavailableResponses());
   await expect(first.chat("Saved attempted input")).rejects.toThrow("HTTP 503");
   const resumed = await Agent.open({ workspace, sessionId: first.sessionId });
-  expect(fixture.requests).toHaveLength(1);
+  expect(fixture.requests).toHaveLength(3);
   await resumed.chat("New input");
   expect(
     fixture.requests
