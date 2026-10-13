@@ -1,0 +1,11 @@
+llm:
+  provider: deepseek
+  model: reference-model
+  api_key: fixture-key-not-a-credential
+  api_base: https://example.invalid/v1
+  temperature: 0.4
+  max_tokens: 1024
+default_agent: helper
+agents_path: agents
+skills_path: skills
+history_path: .history
