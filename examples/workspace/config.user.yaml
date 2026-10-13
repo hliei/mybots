@@ -16,3 +16,20 @@ llm:
 #   provider: brave # or serpapi
 #   api_key: YOUR_SEARCH_API_KEY
 # fetch_content: {} # Direct HTTP HTML/Markdown/plain text; no JavaScript rendering.
+
+# Connection configuration is validated here; connections are provided by the bot runtime.
+# All directories and connection settings require restart.
+logging_path: .logs
+event_path: .event
+channels:
+  enabled: false
+  telegram:
+    enabled: false
+    bot_token: ""
+    allowed_user_ids: [] # Numeric user IDs as strings, e.g. ["123456789"].
+api:
+  enabled: false
+  host: 127.0.0.1
+  port: 8000
+sources: {} # Runtime source-to-session bindings: source: {session_id: ID}.
+default_delivery_source: null
