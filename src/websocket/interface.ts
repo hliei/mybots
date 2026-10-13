@@ -96,8 +96,10 @@ export class WebSocketInterface {
         };
         const onListening = () => {
           server.removeListener("error", onError);
+          webSocketServer.removeListener("error", onError);
           resolve();
         };
+        webSocketServer.once("error", onError);
         server.once("error", onError);
         server.once("listening", onListening);
         server.listen(this.port, this.host);

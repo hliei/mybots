@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -563,4 +564,24 @@ it("closes incomplete HTTP connections during shutdown", async () => {
     socket.destroy();
     await stopping;
   }
+});
+
+it("reports a busy bind port through bot startup without an unhandled server error", async () => {
+  fixture = await chatFixture();
+  const port = (fixture.server.address() as AddressInfo).port;
+  const workspace = await fixture.workspace(
+    fixture.root,
+    `api:\n  enabled: true\n  host: 127.0.0.1\n  port: ${port}\n`,
+  );
+  const child = spawn(process.execPath, ["src/server.ts", "--workspace", workspace], {
+    timeout: 5000,
+  });
+  let stderr = "";
+  child.stderr.on("data", (data) => {
+    stderr += data.toString();
+  });
+  const [code] = await once(child, "close");
+  expect(code).toBe(1);
+  expect(stderr).toContain("Error: listen EADDRINUSE");
+  expect(stderr).not.toContain("Unhandled 'error' event");
 });
