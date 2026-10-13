@@ -114,6 +114,11 @@ index is rewritten, and message records are append-only.
 Full conversation history remains saved while [context compaction](0002-token-budgeted-context-compaction.md)
 rebuilds the active context used for subsequent model requests.
 
+[ADR 0004](0004-persisted-active-context.md) records the planned extension of this
+message log with compaction and turn/delivery state records. Existing message
+fields remain compatible, and message-only history views exclude state records.
+That extension and its log-based recovery are not yet implemented.
+
 ## API and library documentation
 
 - [DeepSeek thinking-mode request requirements](https://api-docs.deepseek.com/guides/thinking_mode/).
