@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { Agent } from "../src/core/agent.ts";
 import { ConversationHistory } from "../src/core/history.ts";
 import { chatFixture } from "./chat-fixture.ts";
 
@@ -31,7 +30,7 @@ const helpText = [
 
 it("lists available commands through /help and its aliases regardless of case", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   expect(await agent.runCommand("/help")).toBe(helpText);
   expect(await agent.runCommand("/?")).toBe(helpText);
   expect(await agent.runCommand("/HELP")).toBe(helpText);
@@ -39,7 +38,7 @@ it("lists available commands through /help and its aliases regardless of case", 
 
 it("leaves unknown slash input, a lone slash, and ordinary input to chat", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   expect(await agent.runCommand("/unknown")).toBeUndefined();
   expect(await agent.runCommand("/")).toBeUndefined();
   expect(await agent.runCommand("//")).toBeUndefined();
@@ -49,7 +48,7 @@ it("leaves unknown slash input, a lone slash, and ordinary input to chat", async
 it("reports the current session without creating or switching sessions", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   const sessionId = agent.sessionId;
   const created = await agent.runCommand("/session");
   expect(created).toContain(`**Session ID:** \`${sessionId}\``);
@@ -69,10 +68,10 @@ it("lists discovered Skill IDs and descriptions and reports an empty collection"
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
   await fixture.writeSkill("weather", weatherSkill, workspace);
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   expect(await agent.runCommand("/skills")).toBe("**Skills:**\n- `weather`: Look up the weather");
 
-  const empty = await Agent.open({
+  const empty = await fixture.openAgent({
     workspace: await fixture.workspace(join(fixture.root, "empty")),
   });
   expect(await empty.runCommand("/skills")).toBe("No skills configured.");
@@ -82,7 +81,7 @@ it("shows one Skill's instructions and a not-found error for an unknown ID", asy
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
   await fixture.writeSkill("weather", weatherSkill, workspace);
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   expect(await agent.runCommand("/skills weather")).toBe(
     "**Skill:** `weather`\n" +
       "**Name:** Weather\n" +
@@ -100,7 +99,7 @@ it("inspects Skills without loading them into context or recording messages", as
   fixture = await chatFixture();
   const workspace = await fixture.workspace(fixture.root, "", "allow_skills: true\n");
   await fixture.writeSkill("weather", weatherSkill, workspace);
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.runCommand("/help");
   await agent.runCommand("/session");
   await agent.runCommand("/skills weather");

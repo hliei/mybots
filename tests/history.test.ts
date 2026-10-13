@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
-import { Agent } from "../src/core/agent.ts";
 import { ConversationHistory } from "../src/core/history.ts";
 import { chatFixture, toolReply } from "./chat-fixture.ts";
 
@@ -28,7 +27,7 @@ function fixedClock(times: Date[]): () => Date {
 it("saves a completed turn that a new reader instance can read", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await agent.chat("Remember Alice");
 
   const history = await ConversationHistory.open(join(workspace, ".history"));
@@ -88,7 +87,7 @@ it("records tool-call rounds and results in order with reasoning", async () => {
       },
     },
   );
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   expect(await agent.chat("Save a note")).toBe("Done.");
 
   const history = await ConversationHistory.open(join(workspace, ".history"));
@@ -356,7 +355,7 @@ it("records user input even when the first model request fails", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
   fixture.responses.push({ status: 503, body: { error: { message: "Unavailable" } } });
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   await expect(agent.chat("Keep this failed turn")).rejects.toThrow("HTTP 503");
   const reader = await ConversationHistory.open(join(workspace, ".history"));
   expect(await reader.getMessages(agent.sessionId)).toEqual([
@@ -396,7 +395,7 @@ it("persists Skill loading and continuation from the .agents workspace layout", 
     status: 200,
     body: toolReply([{ name: "skill", id: "history-skill", args: { skill_name: "summary" } }]),
   });
-  const agent = await Agent.open({ workspace });
+  const agent = await fixture.openAgent({ workspace });
   expect(await agent.chat("Summarize this")).toBe("Hello!");
   const reader = await ConversationHistory.open(join(workspace, ".history"));
   const messages = await reader.getMessages(agent.sessionId);

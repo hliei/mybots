@@ -1,6 +1,5 @@
 import { gzipSync } from "node:zlib";
 import { afterEach, expect, it } from "vitest";
-import { Agent } from "../src/core/agent.ts";
 import { ConversationHistory } from "../src/core/history.ts";
 import { chatFixture, toolReply } from "./chat-fixture.ts";
 import { searchFixture } from "./search-fixture.ts";
@@ -17,7 +16,9 @@ afterEach(async () => {
 it("searches Brave and continues the Agent answer with JSON sources and original reasoning", async () => {
   model = await chatFixture();
   search = await searchFixture();
-  const agent = await Agent.open({ workspace: await model.workspace(undefined, search.settings) });
+  const agent = await model.openAgent({
+    workspace: await model.workspace(undefined, search.settings),
+  });
   model.responses.push({
     status: 200,
     body: toolReply(
@@ -87,7 +88,7 @@ it.each([
     model = await chatFixture();
     search = await searchFixture();
     search.responses.push({ status: 200, body });
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, search.settings),
     });
     model.responses.push({
@@ -107,7 +108,7 @@ it.each([429, 503])(
     model = await chatFixture();
     search = await searchFixture();
     search.responses.push({ status, body: { error: "Unavailable" } });
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, search.settings),
     });
     model.responses.push({
@@ -137,7 +138,7 @@ it.each([undefined, "web_search: null\n"])(
   "omits the tool without web_search configuration",
   async (settings) => {
     model = await chatFixture();
-    const agent = await Agent.open({ workspace: await model.workspace(undefined, settings) });
+    const agent = await model.openAgent({ workspace: await model.workspace(undefined, settings) });
     await agent.chat("Hello");
     expect(model.requests[0].tools.map((tool) => tool.function.name)).not.toContain("web_search");
   },
@@ -152,7 +153,7 @@ it.each([
 ])("rejects invalid search configuration before calling any service", async (settings) => {
   model = await chatFixture();
   await expect(
-    Agent.open({ workspace: await model.workspace(undefined, settings) }),
+    model.openAgent({ workspace: await model.workspace(undefined, settings) }),
   ).rejects.toThrow();
   expect(model.requests).toHaveLength(0);
 });
@@ -169,7 +170,9 @@ it.each([
   model = await chatFixture();
   search = await searchFixture();
   search.responses.push({ status: 200, body });
-  const agent = await Agent.open({ workspace: await model.workspace(undefined, search.settings) });
+  const agent = await model.openAgent({
+    workspace: await model.workspace(undefined, search.settings),
+  });
   model.responses.push({
     status: 200,
     body: toolReply([{ name: "web_search", id: "bad", args: { query: "news" } }]),
@@ -187,7 +190,7 @@ it("supplies connection failures to the model", async () => {
   const settings = search.settings;
   await search.close();
   search = undefined;
-  const agent = await Agent.open({ workspace: await model.workspace(undefined, settings) });
+  const agent = await model.openAgent({ workspace: await model.workspace(undefined, settings) });
   model.responses.push({
     status: 200,
     body: toolReply([{ name: "web_search", id: "offline", args: { query: "news" } }]),
@@ -211,7 +214,7 @@ it.each(["brave", "serpapi"] as const)(
       response.writeHead(200, { "Content-Type": "application/json" });
       response.write('{"web":');
     });
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, search.settings),
     });
     model.responses.push({
@@ -243,7 +246,9 @@ it("cancels a pending search, closes its connection, and saves the associated to
     closed = new Promise<void>((resolve) => response.once("close", resolve));
     controller.abort();
   });
-  const agent = await Agent.open({ workspace: await model.workspace(undefined, search.settings) });
+  const agent = await model.openAgent({
+    workspace: await model.workspace(undefined, search.settings),
+  });
   model.responses.push({
     status: 200,
     body: toolReply([{ name: "web_search", id: "cancelled", args: { query: "news" } }]),
@@ -270,7 +275,9 @@ it("searches SerpApi Google with workspace credentials and normalized sources", 
       ],
     },
   });
-  const agent = await Agent.open({ workspace: await model.workspace(undefined, search.settings) });
+  const agent = await model.openAgent({
+    workspace: await model.workspace(undefined, search.settings),
+  });
   model.responses.push({
     status: 200,
     body: toolReply([{ name: "web_search", id: "google", args: { query: "  中文 & docs  " } }]),
@@ -343,7 +350,7 @@ it.each([
               })),
             },
     });
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, search.settings),
     });
     model.responses.push({
@@ -409,7 +416,7 @@ it.each(["brave", "serpapi"] as const)(
               },
       },
     );
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, search.settings),
     });
     model.responses.push({
@@ -461,7 +468,7 @@ it.each(["brave", "serpapi"] as const)(
       response.write(gzipSync(JSON.stringify(payload)));
       response.end();
     });
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, search.settings),
     });
     model.responses.push({
@@ -507,7 +514,7 @@ it.each(["brave", "serpapi"] as const)(
       maximum = Math.max(maximum, pending.size);
       waiting.get(query)?.();
     });
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, search.settings),
     });
     const queries = ["one", "two", "three", "four", "five"];
@@ -554,7 +561,7 @@ it.each(["brave", "serpapi"] as const)(
       response.write('{"partial":');
       if (arrived.length === 3) controller.abort(new Error("User cancelled search."));
     });
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, search.settings),
     });
     model.responses.push({
@@ -620,7 +627,7 @@ it.each([
               })),
             },
     });
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, search.settings),
     });
     model.responses.push({
@@ -681,7 +688,7 @@ it.each([
     model = await chatFixture();
     search = await searchFixture("serpapi");
     search.responses.push({ status: 200, body });
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, search.settings),
     });
     model.responses.push({
@@ -708,7 +715,9 @@ it.each(["brave", "serpapi"] as const)("returns a %s invalid JSON item error", a
   search = await searchFixture(provider);
   search.server.removeAllListeners("request");
   search.server.on("request", (_request, response) => response.end("{not JSON"));
-  const agent = await Agent.open({ workspace: await model.workspace(undefined, search.settings) });
+  const agent = await model.openAgent({
+    workspace: await model.workspace(undefined, search.settings),
+  });
   model.responses.push({
     status: 200,
     body: toolReply([{ name: "web_search", id: "json", args: { query: "news" } }]),
@@ -754,7 +763,7 @@ it.each(["brave", "serpapi"] as const)(
             })),
           };
     search.responses.push({ status: 200, body }, { status: 200, body });
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, search.settings),
     });
     model.responses.push({
@@ -803,7 +812,7 @@ it.each(["brave", "serpapi"] as const)(
       response.write(payload);
       response.end();
     });
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, search.settings),
     });
     model.responses.push({
@@ -831,7 +840,7 @@ it.each(["brave", "serpapi"] as const)(
       response.writeHead(503, { "Content-Type": "application/json" });
       response.write('{"error":');
     });
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, search.settings),
     });
     model.responses.push({
@@ -878,7 +887,7 @@ it.each(["brave", "serpapi"] as const)(
             })),
           };
     search.responses.push({ status: 200, body }, { status: 200, body });
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, search.settings),
     });
     model.responses.push({

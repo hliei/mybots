@@ -1,5 +1,4 @@
 import { afterEach, expect, it } from "vitest";
-import { Agent } from "../src/core/agent.ts";
 import { ConversationHistory } from "../src/core/history.ts";
 import { chatFixture, toolReply } from "./chat-fixture.ts";
 import { pageFixture } from "./page-fixture.ts";
@@ -20,7 +19,7 @@ afterEach(async () => {
 it("accepts a one-item query array and preserves its text through the Agent", async () => {
   model = await chatFixture();
   search = await searchFixture();
-  const agent = await Agent.open({
+  const agent = await model.openAgent({
     workspace: await model.workspace(
       undefined,
       `web_search:\n  provider: brave\n  api_key: test\n  api_base: ${search.endpoint}\n`,
@@ -63,7 +62,7 @@ it.each([
 ])("rejects invalid content arguments before page requests: %j", async (args, error) => {
   model = await chatFixture();
   pages = await pageFixture();
-  const agent = await Agent.open({
+  const agent = await model.openAgent({
     workspace: await model.workspace(undefined, "fetch_content: {}\n"),
   });
   const localArgs = {
@@ -84,7 +83,7 @@ it.each([
 
 it("advertises exclusive web inputs with optional bounded arguments to the model", async () => {
   model = await chatFixture();
-  const agent = await Agent.open({
+  const agent = await model.openAgent({
     workspace: await model.workspace(
       undefined,
       "web_search:\n  provider: brave\n  api_key: test\nfetch_content: {}\n",
@@ -139,7 +138,7 @@ it.each([0, 21, 1.5, "5", null])(
   async (numResults) => {
     model = await chatFixture();
     search = await searchFixture();
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(
         undefined,
         `web_search:\n  provider: brave\n  api_key: test\n  api_base: ${search.endpoint}\n`,
@@ -170,7 +169,7 @@ it.each([
 ])("rejects malformed query arrays before HTTP: %j", async (args) => {
   model = await chatFixture();
   search = await searchFixture();
-  const agent = await Agent.open({
+  const agent = await model.openAgent({
     workspace: await model.workspace(
       undefined,
       `web_search:\n  provider: brave\n  api_key: test\n  api_base: ${search.endpoint}\n`,
@@ -202,7 +201,7 @@ it.each([
 ])("rejects invalid search contracts before HTTP: %j", async (args, error) => {
   model = await chatFixture();
   search = await searchFixture();
-  const agent = await Agent.open({
+  const agent = await model.openAgent({
     workspace: await model.workspace(
       undefined,
       `web_search:\n  provider: brave\n  api_key: test\n  api_base: ${search.endpoint}\n`,
@@ -236,7 +235,7 @@ it.each(["brave", "serpapi"] as const)(
           ? { web: { results: [{ title: "Source", url, description: "Read this source." }] } }
           : { organic_results: [{ title: "Source", link: url, snippet: "Read this source." }] },
     });
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, `${search.settings}fetch_content: {}\n`),
     });
     model.responses.push(
@@ -370,7 +369,7 @@ it.each([
       "guide",
       "---\nname: Guide\ndescription: A reading guide\n---\nRead carefully.",
     );
-    const agent = await Agent.open({
+    const agent = await model.openAgent({
       workspace: await model.workspace(undefined, settings, "allow_skills: true\n"),
     });
     await agent.chat("Hello");

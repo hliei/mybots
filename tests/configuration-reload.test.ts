@@ -425,3 +425,16 @@ it("replaces non-mapping values, disables web tools and observes repeated user-f
   await expect.poll(() => configuration.lastError).toContain("Invalid YAML");
   expect(configuration.config.llm.model).toBe("second-replacement");
 });
+
+it.each(["null\n", "~\n"])(
+  "retains runtime overrides after an invalid null document: %s",
+  async (source) => {
+    fixture = await chatFixture();
+    const workspace = await fixture.workspace();
+    const configuration = await openConfiguration(workspace);
+    await configuration.updateRuntime({ llm: { model: "valid-runtime-model" } });
+    await writeFile(join(workspace, "config.runtime.yaml"), source);
+    expect(await configuration.reload()).toBe(false);
+    expect(configuration.config.llm.model).toBe("valid-runtime-model");
+  },
+);

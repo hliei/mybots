@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { Agent } from "../src/core/agent.ts";
 import { chatFixture, toolReply } from "./chat-fixture.ts";
 
 it("exchanges Workspace, Agent, and Skill data contracts through the Agent", async () => {
@@ -13,7 +12,7 @@ it("exchanges Workspace, Agent, and Skill data contracts through the Agent", asy
     await cp(fileURLToPath(new URL("./fixtures/contracts/workspace", import.meta.url)), workspace, {
       recursive: true,
     });
-    const agent = await Agent.open({ workspace });
+    const agent = await fixture.openAgent({ workspace });
     expect(agent.config).toMatchObject({
       default_agent: "helper",
       agents_path: join(workspace, "agents"),
@@ -49,7 +48,7 @@ it("exchanges Workspace, Agent, and Skill data contracts through the Agent", asy
       status: 200,
       body: toolReply([{ name: "skill", id: "skill-call-1", args: { skill_name: "brief" } }]),
     });
-    const connected = await Agent.open({ workspace });
+    const connected = await fixture.openAgent({ workspace });
     expect(await connected.chat("Load brief")).toBe("Hello!");
     expect(fixture.requests[1].messages.at(-1)).toEqual({
       role: "tool",

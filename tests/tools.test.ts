@@ -2,7 +2,6 @@ import { watch } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { Agent } from "../src/core/agent.ts";
 import { chatFixture, toolReply } from "./chat-fixture.ts";
 
 let fixture: Awaited<ReturnType<typeof chatFixture>> | undefined;
@@ -14,7 +13,7 @@ afterEach(async () => {
 
 it("reads full local text and continues with the matching tool result and reasoning", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   const path = join(fixture.root, "note.txt");
   await writeFile(path, "First line\nSecond line\n");
   fixture.responses.push({
@@ -60,7 +59,7 @@ it("reads full local text and continues with the matching tool result and reason
 
 it("writes a file and supplies its acknowledgement to the model", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   const path = join(fixture.root, "written.txt");
   fixture.responses.push({
     status: 200,
@@ -77,7 +76,7 @@ it("writes a file and supplies its acknowledgement to the model", async () => {
 
 it("edits every match and returns a matching result before the final reply", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   const path = join(fixture.root, "edit.txt");
   await writeFile(path, "red blue red");
   fixture.responses.push({
@@ -96,7 +95,7 @@ it("edits every match and returns a matching result before the final reply", asy
 
 it("uses literal replacement text, including empty old_text boundaries", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   const path = join(fixture.root, "literal.txt");
   await writeFile(path, "a😀");
   fixture.responses.push({
@@ -111,7 +110,7 @@ it("uses literal replacement text, including empty old_text boundaries", async (
 
 it("runs a shell command and separates stdout and stderr with an extra newline", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   fixture.responses.push({
     status: 200,
     body: toolReply([
@@ -132,7 +131,7 @@ it.each([
   ["true", "Command completed with no output"],
 ])("reports shell output and empty results: %s", async (command, expected) => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   fixture.responses.push({
     status: 200,
     body: toolReply([{ name: "bash", id: "shell-result", args: { command } }]),
@@ -143,7 +142,7 @@ it.each([
 
 it("preserves call order while creating, editing and reading a file in one response", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   const path = join(fixture.root, "ordered.txt");
   fixture.responses.push({
     status: 200,
@@ -176,7 +175,7 @@ it.each([true, false])(
   "retains all reasoning through multiple tool rounds and the next user turn (thinking %s)",
   async (thinking) => {
     fixture = await chatFixture();
-    const agent = await Agent.open({
+    const agent = await fixture.openAgent({
       workspace: await fixture.workspace(fixture.root, `  thinking: ${thinking}\n`),
     });
     const path = join(fixture.root, "rounds.txt");
@@ -222,7 +221,7 @@ it.each([true, false])(
 
 it("returns missing-file and missing-text errors without changing existing content", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   const path = join(fixture.root, "untouched.txt");
   const missing = join(fixture.root, "missing.txt");
   await writeFile(path, "Original");
@@ -243,7 +242,7 @@ it("returns missing-file and missing-text errors without changing existing conte
 
 it("does not create parent directories when writing fails", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   const path = join(fixture.root, "absent", "file.txt");
   fixture.responses.push({
     status: 200,
@@ -256,7 +255,7 @@ it("does not create parent directories when writing fails", async () => {
 
 it("retains completed tool exchanges when the continuation request fails", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   const path = join(fixture.root, "completed.txt");
   fixture.responses.push(
     {
@@ -283,7 +282,7 @@ it("retains completed tool exchanges when the continuation request fails", async
 
 it("returns malformed arguments and unknown tools as observable tool results", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   fixture.responses.push({
     status: 200,
     body: {
@@ -321,7 +320,7 @@ it("returns malformed arguments and unknown tools as observable tool results", a
 
 it("overwrites an existing file and reports directory reads as tool errors", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   const path = join(fixture.root, "existing.txt");
   await writeFile(path, "Old");
   fixture.responses.push({
@@ -340,7 +339,7 @@ it("overwrites an existing file and reports directory reads as tool errors", asy
 
 it("cancels a running shell, awaits termination, and preserves its error result", async () => {
   fixture = await chatFixture();
-  const agent = await Agent.open({ workspace: await fixture.workspace() });
+  const agent = await fixture.openAgent({ workspace: await fixture.workspace() });
   const marker = join(fixture.root, "started");
   const markerQuoted = `'${marker.replaceAll("'", "'\\''")}'`;
   const controller = new AbortController();

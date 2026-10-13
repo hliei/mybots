@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { parse } from "yaml";
+import { parseDocument } from "yaml";
 
 export interface ModelSettings {
   provider: string;
@@ -137,11 +137,13 @@ function modelSettings(raw: Record<string, unknown>): ModelSettings {
 export function parseSettingsSource(source: string, field: string): Record<string, unknown> {
   let value: unknown;
   try {
-    value = parse(source);
+    const document = parseDocument(source);
+    if (document.errors.length) throw document.errors[0];
+    value = document.contents === null ? {} : document.toJS();
   } catch {
     throw new Error(`Invalid YAML in ${field}.`);
   }
-  return mapping(value ?? {}, field);
+  return mapping(value, field);
 }
 
 function webSearchSettings(value: unknown): WebSearchSettings | undefined {

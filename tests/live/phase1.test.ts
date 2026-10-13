@@ -42,6 +42,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  await agent?.close();
   if (root) await rm(root, { recursive: true, force: true });
 });
 
