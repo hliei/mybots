@@ -109,7 +109,7 @@ it("uses literal replacement text, including empty old_text boundaries", async (
   expect(await readFile(path, "utf8")).toBe("$&a$&😀$&");
 });
 
-it("runs a shell command and sends stdout and stderr with reference formatting", async () => {
+it("runs a shell command and separates stdout and stderr with an extra newline", async () => {
   fixture = await chatFixture();
   const agent = await Agent.open({ workspace: await fixture.workspace() });
   fixture.responses.push({

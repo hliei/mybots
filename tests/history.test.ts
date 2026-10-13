@@ -14,7 +14,7 @@ afterEach(async () => {
   await current?.close();
 });
 
-const referenceFixtures = fileURLToPath(new URL("./fixtures/reference", import.meta.url));
+const contractFixtures = fileURLToPath(new URL("./fixtures/contracts", import.meta.url));
 
 async function temporaryDirectory(): Promise<string> {
   return mkdtemp(join(tmpdir(), "mybots-history-"));
@@ -136,7 +136,7 @@ it("records tool-call rounds and results in order with reasoning", async () => {
   expect((await history.getSession(agent.sessionId))?.message_count).toBe(4);
 });
 
-it("writes reference-compatible records with a controlled clock", async () => {
+it("writes JSONL records with a controlled clock", async () => {
   const root = await temporaryDirectory();
   try {
     const history = await ConversationHistory.open(root, {
@@ -156,7 +156,7 @@ it("writes reference-compatible records with a controlled clock", async () => {
       reasoning_content: "Check the file.",
       tool_calls: [
         {
-          id: "ref-call-1",
+          id: "read-call-1",
           type: "function",
           function: { name: "read", arguments: '{"path": "README.md"}' },
         },
@@ -165,16 +165,16 @@ it("writes reference-compatible records with a controlled clock", async () => {
 
     expect(await readFile(join(root, "sessions", "session.jsonl"), "utf8")).toBe(
       '{"timestamp":"2026-10-01T09:15:01.000000","role":"user","content":"Read the README","tool_calls":null,"tool_call_id":null}\n' +
-        '{"timestamp":"2026-10-01T09:15:03.000000","role":"assistant","content":"","tool_calls":[{"id":"ref-call-1","type":"function","function":{"name":"read","arguments":"{\\"path\\": \\"README.md\\"}"}}],"tool_call_id":null,"reasoning_content":"Check the file."}\n',
+        '{"timestamp":"2026-10-01T09:15:03.000000","role":"assistant","content":"","tool_calls":[{"id":"read-call-1","type":"function","function":{"name":"read","arguments":"{\\"path\\": \\"README.md\\"}"}}],"tool_call_id":null,"reasoning_content":"Check the file."}\n',
     );
     expect(await readFile(join(root, "index.jsonl"), "utf8")).toBe(
       '{"id":"session","agent_id":"helper","title":"Read the README","message_count":2,"created_at":"2026-10-01T09:15:00.000000","updated_at":"2026-10-01T09:15:04.000000"}\n',
     );
 
-    const reference = await ConversationHistory.open(referenceFixtures);
-    const [referenceAssistant] = (await reference.getMessages("ref-session")).slice(1, 2);
+    const fixtureHistory = await ConversationHistory.open(contractFixtures);
+    const [fixtureAssistant] = (await fixtureHistory.getMessages("tool-session")).slice(1, 2);
     expect((await history.getMessages("session"))[1].tool_calls).toEqual(
-      referenceAssistant.tool_calls,
+      fixtureAssistant.tool_calls,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -227,11 +227,11 @@ it("derives index metadata from the recorded conversation", async () => {
   }
 });
 
-it("reads independent reference records without fabricating reasoning", async () => {
-  const history = await ConversationHistory.open(referenceFixtures);
+it("reads literal JSONL records without fabricating reasoning", async () => {
+  const history = await ConversationHistory.open(contractFixtures);
   expect(await history.listSessions()).toEqual([
     {
-      id: "ref-session",
+      id: "tool-session",
       agent_id: "helper",
       title: "Read the README",
       message_count: 4,
@@ -247,7 +247,7 @@ it("reads independent reference records without fabricating reasoning", async ()
       updated_at: "2026-09-30T08:00:00",
     },
   ]);
-  expect(await history.getMessages("ref-session")).toEqual([
+  expect(await history.getMessages("tool-session")).toEqual([
     {
       timestamp: "2026-10-01T09:15:00.123456",
       role: "user",
@@ -261,7 +261,7 @@ it("reads independent reference records without fabricating reasoning", async ()
       content: "",
       tool_calls: [
         {
-          id: "ref-call-1",
+          id: "read-call-1",
           type: "function",
           function: { name: "read", arguments: '{"path": "README.md"}' },
         },
@@ -273,7 +273,7 @@ it("reads independent reference records without fabricating reasoning", async ()
       role: "tool",
       content: "# Mybots",
       tool_calls: null,
-      tool_call_id: "ref-call-1",
+      tool_call_id: "read-call-1",
     },
     {
       timestamp: "2026-10-01T09:16:10.000000",
@@ -329,24 +329,24 @@ it("skips unreadable records instead of failing the conversation", async () => {
 it("keeps unknown index fields from another writer when recording a message", async () => {
   const root = await temporaryDirectory();
   try {
-    const fixtures = join(root, "reference");
-    await cp(referenceFixtures, fixtures, { recursive: true });
+    const fixtures = join(root, "contracts");
+    await cp(contractFixtures, fixtures, { recursive: true });
     const history = await ConversationHistory.open(fixtures, {
       now: fixedClock([new Date(2026, 9, 1, 10, 0, 0, 0), new Date(2026, 9, 1, 10, 0, 1, 0)]),
     });
-    await history.saveMessage("ref-session", { role: "user", content: "More" });
+    await history.saveMessage("tool-session", { role: "user", content: "More" });
 
     const [updated] = (await readFile(join(fixtures, "index.jsonl"), "utf8"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
     expect(updated).toMatchObject({
-      id: "ref-session",
+      id: "tool-session",
       message_count: 5,
       updated_at: "2026-10-01T10:00:01.000000",
-      reference_extension: { source: "python-reference" },
+      writer_extension: { source: "external-writer" },
     });
-    expect(await history.getMessages("ref-session")).toHaveLength(5);
+    expect(await history.getMessages("tool-session")).toHaveLength(5);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -368,7 +368,7 @@ it("records user input even when the first model request fails", async () => {
   });
 });
 
-it("counts Unicode code points when deriving the reference session title", async () => {
+it("counts Unicode code points when deriving the session title", async () => {
   const root = await temporaryDirectory();
   try {
     const history = await ConversationHistory.open(root);

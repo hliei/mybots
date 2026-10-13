@@ -19,9 +19,7 @@ description: Look up the weather
 Always mention the temperature unit.
 `;
 
-// The exact command text below is transcribed from the reference command
-// handlers (`06-web-tools/src/mybot/core/commands/handlers.py`, revision
-// 37ae5dd) rather than derived from this implementation.
+// Literal expected command output, independent of the command registry.
 const helpText = [
   "**Available Commands:**",
   "/help, /? - Show available commands",
@@ -60,14 +58,14 @@ it("reports the current session without creating or switching sessions", async (
   expect(created).toContain("**Messages:** 0");
 
   await agent.chat("Hello");
-  // The reference counts `session.state.messages`, which excludes the system prompt.
+  // The message count excludes the system prompt.
   expect(await agent.runCommand("/session")).toContain("**Messages:** 2");
   expect(agent.sessionId).toBe(sessionId);
   const history = await ConversationHistory.open(join(workspace, ".history"));
   expect(await history.listSessions()).toHaveLength(1);
 });
 
-it("lists discovered Skills in reference form and reports an empty collection", async () => {
+it("lists discovered Skill IDs and descriptions and reports an empty collection", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
   await fixture.writeSkill("weather", weatherSkill, workspace);
@@ -80,7 +78,7 @@ it("lists discovered Skills in reference form and reports an empty collection", 
   expect(await empty.runCommand("/skills")).toBe("No skills configured.");
 });
 
-it("shows one Skill's instructions and the reference error for an unknown ID", async () => {
+it("shows one Skill's instructions and a not-found error for an unknown ID", async () => {
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
   await fixture.writeSkill("weather", weatherSkill, workspace);

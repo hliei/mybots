@@ -24,9 +24,9 @@ Agent definitions contain `name`, `description`, `llm` overrides, and
 
 Agent definitions default to `.agents/bots/<id>/AGENT.md` and Skills default to
 `.agents/skills/<id>/SKILL.md`, relative to the Workspace. Explicit `agents_path`
-and `skills_path` override these defaults. This layout intentionally differs from
-the reference's default `bots/` and `skills/` directories; the configuration fields
-and definition formats remain compatible.
+and `skills_path` override these defaults, including explicit `agents/`, `bots/`,
+and `skills/` directories. Configuration fields and definition formats are
+independent of the selected directory layout.
 
 The initial model provider is DeepSeek through Chat Completions. The boolean
 `llm.thinking` defaults to `true` and supports Agent-level overrides. Assistant
@@ -38,15 +38,14 @@ It contains `provider` (defaults to `brave`) and a required string `api_key`.
 The optional `api_base` extension selects a complete HTTP(S) endpoint for local
 controlled services; otherwise requests use Brave's web-search endpoint.
 Requests ask for ten results, use a 30-second overall deadline, and support
-Agent cancellation. Node.js fetch replaces httpx, so the deadline includes
-response-body consumption rather than applying separately to network operations;
-transport-error wording is Node.js-specific. HTTP errors and empty results are
-returned through the tool loop for model continuation.
+Agent cancellation. The Node.js fetch deadline includes response-body
+consumption; transport errors retain native Node.js wording. HTTP errors and
+empty results are returned through the tool loop for model continuation.
 
-Web reading uses Playwright-controlled Chromium and Turndown in Node.js, with
-no Python requirement. Optional `webread` configuration retains the reference's
-`provider: crawl4ai` selector (also the default for an empty mapping). Omitted or
-null settings disable the tool. The browser must be installed separately through
+Web reading uses Playwright-controlled Chromium and Turndown in Node.js.
+Optional `webread` configuration accepts the legacy `provider: crawl4ai`
+selector (also the default for an empty mapping). Omitted or null settings
+disable the tool. The browser must be installed separately through
 Playwright's CLI. Each read launches a fresh headless browser and closes it on
 success, failure, or cancellation. A 30-second deadline bounds launch and browser
 operations; cancellation during launch is handled when launch settles.
@@ -58,13 +57,12 @@ with computed display:none or visibility:hidden. Links and image sources resolve
 against the document base URL. Service workers are blocked. Fresh browser sessions
 do not inherit login cookies; iframe documents and shadow DOM are not traversed.
 
-This replaces Crawl4AI's extraction and formatting: body navigation is retained
-rather than applying its content-cleaning heuristics, and Turndown uses ATX
-headings, fenced code, and dash lists. Escaping, whitespace, tables, and other
-Markdown details can differ. Content added after the snapshot is not guaranteed,
+The snapshot retains body navigation, and Turndown uses ATX headings, fenced
+code, and dash lists. Escaping, whitespace, tables, and other Markdown details
+follow the converter's rules. Content added after the snapshot is not guaranteed,
 and continuous network activity can time out. HTTP status codes of 400 or greater
 are failures; transport errors retain Playwright wording. Shared result fields
-and tool success/error formatting remain compatible.
+and tool success/error formatting follow the declared result contracts.
 
 The web-tool data shapes are:
 
@@ -91,8 +89,7 @@ Definitions without both string fields are skipped; requesting an ID that is not
 among the discovered Skills returns an error result instead of reading the file
 system. The CLI lists and inspects discovered Skills through its inspection
 commands without registering the tool or loading instructions into context;
-this reads the Agent's `SkillLoader` directly, correcting the reference command's
-attempt to read a non-existent session attribute.
+this reads the Agent's `SkillLoader` directly.
 
 ## Conversation history
 
@@ -108,20 +105,17 @@ updated as messages are recorded.
 - Tool calls contain `id`, `type`, and `function`; function data contains `name`
   and JSON-string `arguments`. Results retain the corresponding call ID.
 
-Records without reasoning content remain readable. The Python reference ignores
-reasoning content and drops it when rewriting records, so common-field exchange
-is compatible while Mybots preserves reasoning losslessly. Missing reasoning is
-never fabricated; histories lacking the original reasoning cannot guarantee
+Records without reasoning content remain readable. Original reasoning content
+is preserved losslessly when present. Missing reasoning is never fabricated;
+histories lacking the original reasoning cannot guarantee
 thinking-mode tool continuation. Unknown extension fields are retained when the
 index is rewritten, and message records are append-only.
 
 Full conversation history remains saved while [context compaction](0002-token-budgeted-context-compaction.md)
 rebuilds the active context used for subsequent model requests.
 
-## Sources
+## API and library documentation
 
-- [Workspace and Agent configuration](https://github.com/czl9707/build-your-own-openclaw/blob/37ae5dd255a0451609e67ad6d6a51fa5de80523c/06-web-tools/src/mybot/utils/config.py).
-- [Session and message schemas](https://github.com/czl9707/build-your-own-openclaw/blob/37ae5dd255a0451609e67ad6d6a51fa5de80523c/06-web-tools/src/mybot/core/history.py).
 - [DeepSeek thinking-mode request requirements](https://api-docs.deepseek.com/guides/thinking_mode/).
 - [Playwright browser installation](https://playwright.dev/docs/browsers).
 - [Playwright navigation](https://playwright.dev/docs/api/class-page#page-goto).

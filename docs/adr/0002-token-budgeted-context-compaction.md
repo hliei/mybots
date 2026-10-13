@@ -22,9 +22,9 @@ reducing a model request does not erase the recorded conversation.
   Use conservative margins when exact token counts are unavailable.
 
 Current estimates use UTF-8 serialized JSON bytes divided by three plus eight
-framing tokens per message or tool definition. This is a conservative margin
-relative to pi's character-based estimate, not an exact tokenizer. A valid
-provider usage sample has nonnegative integer input and output counts, positive
+framing tokens per message or tool definition. This provides a conservative
+budget estimate rather than an exact token count. A valid provider usage sample
+has nonnegative integer input and output counts, positive
 input, and a total equal to their sum; subsequent messages are estimated.
 Usage metadata stays outside persisted conversation messages.
 
@@ -87,9 +87,6 @@ active-context state without calling the model or recording messages. `/compact`
 reports success, insufficient content or request budget, unusable summaries,
 failure, and cancellation. Failed attempts keep the existing usage sample.
 
-## Sources
+## API and library documentation
 
 - [DeepSeek model limits](https://api-docs.deepseek.com/quick_start/pricing/).
-- [Token budgets, cut points, and incremental summaries in pi](https://github.com/earendil-works/pi/blob/4270522473e677ddba7b093caa0064a3df51d459/packages/coding-agent/src/core/compaction/compaction.ts).
-- [Summary serialization in pi](https://github.com/earendil-works/pi/blob/4270522473e677ddba7b093caa0064a3df51d459/packages/coding-agent/src/core/compaction/utils.ts).
-- [Summary and message reconstruction in pi](https://github.com/earendil-works/pi/blob/4270522473e677ddba7b093caa0064a3df51d459/packages/coding-agent/src/core/messages.ts).

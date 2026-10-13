@@ -57,7 +57,7 @@ npm run dev:cli -- --workspace ./workspace chat --agent helper
 npm run dev:cli -- -w ./workspace -a helper
 ```
 
-Without `--workspace` / `-w`, the reference default is `../default_workspace`,
+Without `--workspace` / `-w`, the default Workspace is `../default_workspace`,
 relative to the process working directory. Without `--agent` / `-a`, the CLI
 uses `default_agent` from `config.user.yaml`. Enter one message per line. Replies
 print after the complete response arrives. Blank lines are ignored; `quit`,
@@ -184,8 +184,8 @@ For example, start the CLI from the directory containing your files and ask:
 "Read notes.txt, replace every TODO with DONE, and show the updated content."
 File writes and commands run with the CLI process's permissions.
 
-Shell output matches the reference: stdout and stderr are separated by an extra
-newline when both exist; a nonzero exit returns its output, and no output returns
+Shell output separates stdout and stderr with an extra newline when both exist;
+a nonzero exit returns its output, and no output returns
 `Command completed with no output`. Commands have a 60-second timeout. Ctrl+C
 cancels a running command and waits for termination; on POSIX systems the shell
 and descendants in its process group receive SIGTERM, then SIGKILL after a
@@ -383,26 +383,24 @@ User input is saved before requesting a model response, including failed or
 cancelled turns. Assistant responses are saved before tool execution, and tool
 results are saved as they arrive. Active context retains completed tool groups;
 failed inputs remain in saved history even when excluded from active context.
-The reference Python implementation ignores reasoning content and drops it when
-rewriting records; Mybots preserves the original value and never fabricates
-reasoning a record lacks. Records written by the reference remain readable.
+Conversation history preserves original reasoning content and never fabricates
+reasoning a record lacks. Records without reasoning content remain readable.
 There is no history-listing or resume command.
 
-### API sources
+### API and library documentation
 
 - [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)
 - [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/)
 - [DeepSeek model limits](https://api-docs.deepseek.com/quick_start/pricing/)
-- [Compaction design and pi sources](docs/adr/0002-token-budgeted-context-compaction.md)
+- [Token-budgeted context compaction](docs/adr/0002-token-budgeted-context-compaction.md)
 - [Brave Web Search API](https://api-dashboard.search.brave.com/app/documentation/web-search)
 - [Readability main-content extraction](https://github.com/mozilla/readability)
 - [jsdom HTML parsing](https://github.com/jsdom/jsdom)
 - [Turndown HTML-to-Markdown conversion](https://github.com/mixmark-io/turndown)
 
-Compaction deviations from the fixed pi sources: manual compaction retains whole
-user turns, while automatic compaction can summarize a long turn's prefix;
-token estimates use UTF-8 bytes with a framing margin rather than characters;
-and summary state stays in memory instead of persisted checkpoints. Manual and
+Manual compaction retains whole user turns, while automatic compaction can
+summarize a long turn's prefix. Token estimates use UTF-8 bytes with a framing
+margin, and summary state stays in memory for the current session. Manual and
 automatic compaction both support incremental summary updates.
 
 ## Checks and tests

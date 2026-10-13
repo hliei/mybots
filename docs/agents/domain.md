@@ -14,11 +14,15 @@ creates them lazily when terms or decisions get resolved.
 
 ## Write technical decisions
 
-Repository documentation describes the chosen architecture, data contracts,
-algorithms, and reasons directly. When adopting an external design, spell out
-its relevant behavior so the document stands on its own. Keep source attribution
-in a separate Sources section, and distinguish planned decisions from implemented
-behavior. Comparison goals and interview history belong in local planning.
+Repository files use technical names and describe the chosen architecture, data
+contracts, algorithms, behavior, and reasons directly. Apply this vocabulary to
+paths, identifiers, comments, tests, fixtures, documentation, commit messages,
+and PR titles and descriptions. Describe contracts, algorithms, compatibility,
+and validation in terms of this project's behavior. Track design
+provenance, source attribution, comparisons, and interview history in ignored
+`.scratch/` planning. Links to official API and library documentation may stay
+in repository documentation. Distinguish planned decisions from implemented
+behavior.
 
 ## File structure
 

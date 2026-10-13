@@ -21,7 +21,7 @@ export interface Command {
 }
 
 /**
- * Resolves slash commands the way the reference does: the command name is
+ * Resolves slash commands: the command name is
  * case-insensitive, arguments keep their case, and input that is not a
  * registered command falls through to ordinary chat.
  */
@@ -97,8 +97,7 @@ const sessionCommand: Command = {
 /**
  * Lists discovered Skills or shows one Skill's instructions. Reading a Skill
  * never registers the skill tool, loads instructions into active context, or
- * changes `allow_skills`; it only returns text to the caller. This corrects the
- * reference, whose command read a non-existent session attribute.
+ * changes `allow_skills`; it only returns text to the caller.
  */
 const skillsCommand: Command = {
   name: "skills",
