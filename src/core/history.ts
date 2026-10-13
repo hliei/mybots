@@ -15,6 +15,7 @@ export interface Completion {
 export interface PendingReply extends Completion {
   sessionId: string;
   confirmedChunks: number;
+  failure?: { attempts: number; error: string };
 }
 
 function completion(value: unknown): Completion | undefined {
@@ -65,12 +66,25 @@ function deliveryProjection(entries: LogEntry[], sessionId: string): PendingRepl
       turns.add(saved.turnId);
       replies.set(saved.replyId, { ...saved, sessionId, confirmedChunks: 0 });
     }
-    if (raw.type === "reply_progress" || raw.type === "reply_acknowledged") {
+    if (
+      raw.type === "reply_progress" ||
+      raw.type === "reply_acknowledged" ||
+      raw.type === "reply_failed"
+    ) {
       const reply = typeof raw.replyId === "string" ? replies.get(raw.replyId) : undefined;
       if (!reply)
         throw new Error(`Invalid delivery state in session ${sessionId}, line ${entry.line}`);
       if (raw.type === "reply_acknowledged") acknowledged.add(reply.replyId);
-      else {
+      else if (raw.type === "reply_failed") {
+        if (
+          !Number.isSafeInteger(raw.attempts) ||
+          (raw.attempts as number) < 0 ||
+          typeof raw.error !== "string" ||
+          acknowledged.has(reply.replyId)
+        )
+          throw new Error(`Invalid delivery failure in session ${sessionId}, line ${entry.line}`);
+        reply.failure = { attempts: raw.attempts as number, error: raw.error };
+      } else {
         if (
           !Number.isSafeInteger(raw.confirmedChunks) ||
           (raw.confirmedChunks as number) < reply.confirmedChunks ||
@@ -652,6 +666,15 @@ export class ConversationHistory {
 
   async acknowledgeReply(sessionId: string, replyId: string): Promise<void> {
     await this.saveDeliveryState(sessionId, { type: "reply_acknowledged", replyId });
+  }
+
+  async failReply(
+    sessionId: string,
+    replyId: string,
+    attempts: number,
+    error: string,
+  ): Promise<void> {
+    await this.saveDeliveryState(sessionId, { type: "reply_failed", replyId, attempts, error });
   }
 
   private async saveDeliveryState(

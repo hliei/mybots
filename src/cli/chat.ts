@@ -62,7 +62,7 @@ export async function runCli(args: string[]): Promise<number> {
     process.stdout.on("error", onOutputError);
     console.log(`Chat with ${session.agent_name}. Type /help for commands, or quit to end.`);
     runtime.subscribe(async (event, signal) => {
-      if (event.type !== "OutboundEvent") return;
+      if (event.type !== "OutboundEvent" || event.session_id !== session.session_id) return;
       if (event.error !== null) console.error(`Error: ${event.error}`);
       else {
         const text = event.reply_id ? `${session.agent_id}: ${event.content}` : event.content;

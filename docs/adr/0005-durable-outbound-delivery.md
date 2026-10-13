@@ -1,7 +1,7 @@
 # Durable outbound delivery
 
 Status: accepted
-Implementation: completion commits, pending projections, chunk progress and acknowledgements delivered; network delivery and retries planned
+Implementation: completion commits, ordered delivery workers, finite retries, chunk progress and acknowledgements delivered; live channel adapters planned
 
 Generated replies awaiting delivery will be persisted, retried after delivery
 failure, and recovered after restart. A pending reply is cleared only after
@@ -32,6 +32,26 @@ The Agent commits completion before returning its answer. Senders use
 accepted, so delivery resumes at that zero-based boundary. The CLI confirms only
 its current session's reply after the standard output write completes. Each CLI
 launch creates a new session and does not replay older CLI deliveries.
+
+The runtime optionally accepts delivery transports for Telegram and WebSocket.
+Adapters own recipient lookup, a stable maximum chunk size in Unicode code points,
+and asynchronous sends that settle only after cancellation cleanup. Terminal
+delivery stays with the current CLI subscriber and is never recovered into a
+later launch's output. Without delivery transports the runtime leaves generated
+replies pending for an explicit sender.
+
+Each session owns an independent delivery queue. Startup reads existing sessions
+and configured bindings and schedules pending deliveries before new replies.
+Five total attempts use four waits of 5 seconds, 25 seconds, 2 minutes and
+10 minutes, each with uniform integer jitter within plus or minus 20 percent.
+Retries re-read committed chunk progress. Paragraph boundaries are preferred;
+oversized paragraphs are split by Unicode code points. Transport limits must stay
+stable across restarts so confirmed counts refer to the same chunk boundaries.
+Exhaustion or a missing adapter appends `reply_failed` with attempt count and error,
+retains pending replies and pauses that session until the next runtime instance.
+These records do not enter model context. `deliveryFailures` exposes delivery and
+persistence errors independently of Agent outcomes. Shutdown owns workers, sends
+and waits through its signal, awaits them, and retains committed progress.
 
 Pending projections live at `event_path/pending/<sessionId>/<replyId>.json`.
 Recovery validates completion metadata and state references before repairing

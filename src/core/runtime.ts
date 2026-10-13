@@ -1,8 +1,10 @@
 import { WorkspaceConfiguration } from "../config/reload.ts";
 import { Agent } from "./agent.ts";
+import type { DeliveryOptions } from "./delivery.ts";
+import { ReplyDelivery } from "./delivery.ts";
 import type { InboundEvent, OutboundEvent, RuntimeEvent } from "./events.ts";
 import { parseEvent } from "./events.ts";
-import type { PendingReply } from "./history.ts";
+import { ConversationHistory, type PendingReply } from "./history.ts";
 
 type Subscriber = (event: RuntimeEvent, signal: AbortSignal) => Promise<void>;
 
@@ -27,10 +29,18 @@ export class EventRuntime {
   private stopping = false;
   private stopTask: Promise<void> | undefined;
   private readonly configuration: WorkspaceConfiguration;
+  private readonly history: ConversationHistory;
+  private readonly delivery: ReplyDelivery | undefined;
   readonly subscriberFailures: { event: RuntimeEvent; error: unknown }[] = [];
 
-  private constructor(configuration: WorkspaceConfiguration) {
+  private constructor(
+    configuration: WorkspaceConfiguration,
+    history: ConversationHistory,
+    delivery?: DeliveryOptions,
+  ) {
     this.configuration = configuration;
+    this.history = history;
+    if (delivery) this.delivery = new ReplyDelivery(history, delivery, this.controller.signal);
   }
 
   subscribe(handler: Subscriber): () => void {
@@ -57,11 +67,15 @@ export class EventRuntime {
   }
 
   getPendingReplies(sessionId: string): Promise<PendingReply[]> {
-    return this.agent(sessionId).getPendingReplies();
+    return this.history.getPendingReplies(sessionId);
   }
 
   acknowledgeReply(sessionId: string, replyId: string): Promise<void> {
-    return this.track(this.agent(sessionId).acknowledgeReply(replyId));
+    return this.track(this.history.acknowledgeReply(sessionId, replyId));
+  }
+
+  get deliveryFailures() {
+    return this.delivery?.failures ?? [];
   }
 
   private agent(sessionId: string): Agent {
@@ -79,13 +93,28 @@ export class EventRuntime {
     return task;
   }
 
-  static async open(options: { workspace?: string; agent?: string } = {}): Promise<EventRuntime> {
+  static async open(
+    options: { workspace?: string; agent?: string; delivery?: DeliveryOptions } = {},
+  ): Promise<EventRuntime> {
     const configuration = await WorkspaceConfiguration.open(
       options.workspace ?? "../default_workspace",
       options.agent,
     );
+    const config = configuration.activeConfig;
+    const history = await ConversationHistory.open(config.history_path, {
+      eventPath: config.event_path,
+    });
+    const runtime = new EventRuntime(configuration, history, options.delivery);
+    const sessions = runtime.delivery
+      ? new Set([
+          ...(await history.listSessions()).map((session) => session.id),
+          ...Object.values(config.sources).map((binding) => binding.session_id),
+        ])
+      : [];
     configuration.startWatching();
-    return new EventRuntime(configuration);
+    if (runtime.delivery)
+      for (const sessionId of sessions) runtime.track(runtime.delivery.schedule(sessionId));
+    return runtime;
   }
 
   async openSession(options: { agent?: string; sessionId?: string } = {}): Promise<RuntimeSession> {
@@ -248,6 +277,7 @@ export class EventRuntime {
       ...(replyId ? { reply_id: replyId } : {}),
     };
     this.publish(parseEvent(outbound));
+    if (this.delivery) this.track(this.delivery.schedule(event.session_id));
     return outbound;
   }
 

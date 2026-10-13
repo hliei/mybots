@@ -138,7 +138,8 @@ Invalid completion metadata raises a session error; incomplete trailing records
 and legacy assistant messages do not create pending replies. The CLI acknowledges
 its reply after the standard output write completes, and each new launch creates
 a separate session without replaying replies from earlier CLI sessions.
-Network delivery and retry handling are not yet implemented.
+Optional runtime transports provide ordered, recoverable delivery with finite
+retries; live Telegram and WebSocket adapters remain planned.
 
 ### Slash commands
 
@@ -471,7 +472,7 @@ directory are serialized within the process.
 
 ### Event runtime
 
-`EventRuntime.open({ workspace, agent })` explicitly starts a runtime and its
+`EventRuntime.open({ workspace, agent, delivery? })` explicitly starts a runtime and its
 configuration watcher. Importing runtime modules opens no resources. CLI and bot
 entry points embed independent runtimes; simultaneous workspace modification by
 both processes is outside the supported contract. Telegram and WebSocket entry
@@ -503,7 +504,8 @@ The shared facade provides:
   `subscriberFailures` and leave generated replies pending.
 - `getPendingReplies(sessionId)` and `acknowledgeReply(sessionId, replyId)`:
   inspect committed deliveries and acknowledge a successful send. The CLI waits
-  for standard output to complete before acknowledging.
+  for standard output to complete before acknowledging. Recovered deliveries can
+  be inspected without opening an Agent or starting a model request.
 - `stop({ graceMs? })`: reject new sessions/input/subscriptions, allow a finite
   grace period (default 1,000 ms), abort remaining requests, retry waits and
   subscribers, and await all owned tasks before closing the watcher. Subscribers
@@ -526,7 +528,28 @@ apply only to new bindings. Restarted runtimes reuse saved bindings and rebuild
 context from the session log, including saved compaction summaries, without
 replaying unfinished tools. New runtime sessions record their source in the log
 metadata and index; histories without that field remain readable and acquire no
-retroactive replies. Network delivery remains planned.
+retroactive replies.
+
+`delivery: { transports, random?, wait? }` enables generated-reply delivery.
+Each transport supplies `platform` (`telegram` or `ws`), a positive integer
+`limit` in Unicode code points, and `send(chunk, signal)`. Chunks carry `sessionId`,
+`replyId`, `destination` and `content`; the adapter resolves recipient details.
+Use Telegram's 4,096-code-point limit; each adapter's limit must remain stable
+across recovery. The optional random source and cancellation-aware wait function
+allow controlled clocks in offline tests. Sends must settle after their transport
+work is cleaned up when the signal aborts.
+
+Delivery recovers saved pending replies at startup and preserves completion order
+per session. Paragraph splitting falls back to code-point splitting for oversized
+paragraphs. Every confirmed chunk is persisted before sending the next; the final
+acknowledgement follows all chunks. Five attempts use 5-second, 25-second,
+2-minute and 10-minute waits with uniform integer jitter within plus or minus
+20 percent. Missing adapters and exhaustion persist failure details and pause
+only that session's delivery until restart. `deliveryFailures` reports failures;
+Agent execution and other sessions continue. A platform acceptance before local
+progress persistence can duplicate that chunk on retry or restart. Terminal
+replies remain scoped to their original CLI launch. Without `delivery` the facade
+keeps replies pending for explicit senders.
 
 ### API and library documentation
 
