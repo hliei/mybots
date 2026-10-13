@@ -82,16 +82,109 @@ it.each([
   },
 );
 
-it("rejects and preserves a nonempty unrecognizable session", async () => {
-  const { workspace, log } = await savedSession([
-    "not json",
-    { type: "compaction", summary: "orphan" },
-  ]);
+it.each([
+  ["invalid records", ["not json", { type: "compaction", summary: "orphan" }]],
+  ["whitespace-only bytes", ["   ", "\t"]],
+])("rejects and preserves a nonempty unrecognizable session with %s", async (_name, lines) => {
+  const { workspace, log } = await savedSession(lines);
   const before = await readFile(log, "utf8");
   await expect(Agent.open({ workspace, sessionId: "saved" })).rejects.toThrow(
     "Unrecognizable session log",
   );
   expect(await readFile(log, "utf8")).toBe(before);
+});
+
+it("projects interruption repairs next to their original exchange even after later turns", async () => {
+  const call = (name: string) => ({
+    id: "reused-call",
+    type: "function",
+    function: { name, arguments: "{}" },
+  });
+  const { workspace, log } = await savedSession([
+    user("First turn", "first"),
+    {
+      timestamp: "t",
+      id: "first-call",
+      role: "assistant",
+      content: "",
+      tool_calls: [call("read")],
+    },
+    user("Second turn", "second"),
+    {
+      timestamp: "t",
+      id: "second-call",
+      role: "assistant",
+      content: "",
+      tool_calls: [call("write")],
+    },
+    {
+      timestamp: "t",
+      role: "tool",
+      tool_call_id: "reused-call",
+      content: "Confirmed second result",
+    },
+    { timestamp: "t", role: "assistant", content: "Second answer" },
+  ]);
+  const before = await readFile(log, "utf8");
+  const resumed = await Agent.open({ workspace, sessionId: "saved" });
+  const repaired = await readFile(log, "utf8");
+  expect(repaired.startsWith(before)).toBe(true);
+  await Agent.open({ workspace, sessionId: "saved" });
+  expect(await readFile(log, "utf8")).toBe(repaired);
+  await resumed.chat("Next");
+  expect(fixture?.requests.at(-1)?.messages.slice(1)).toEqual([
+    { role: "user", content: "First turn" },
+    { role: "assistant", content: "", tool_calls: [call("read")] },
+    {
+      role: "tool",
+      tool_call_id: "reused-call",
+      content: "Tool execution interrupted; outcome unknown.",
+    },
+    { role: "user", content: "Second turn" },
+    { role: "assistant", content: "", tool_calls: [call("write")] },
+    { role: "tool", content: "Confirmed second result", tool_call_id: "reused-call" },
+    { role: "assistant", content: "Second answer" },
+    { role: "user", content: "Next" },
+  ]);
+});
+
+it("can compact a repaired earlier exchange and recover the retained later turn", async () => {
+  const { workspace } = await savedSession([
+    user(`Older ${"o".repeat(90000)}`, "older"),
+    {
+      timestamp: "t",
+      id: "call-entry",
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        { id: "missing", type: "function", function: { name: "read", arguments: "{}" } },
+      ],
+    },
+    user(`Recent ${"r".repeat(90000)}`, "recent"),
+    { timestamp: "t", role: "assistant", content: "Recent answer" },
+  ]);
+  const first = await Agent.open({ workspace, sessionId: "saved" });
+  fixture?.responses.push({
+    status: 200,
+    body: {
+      choices: [{ finish_reason: "stop", message: { content: "Earlier tool outcome unknown." } }],
+    },
+  });
+  expect(await first.runCommand("/compact")).toContain("Compacted");
+  const second = await Agent.open({ workspace, sessionId: "saved" });
+  expect(second.recoveryDiagnostics.join("\n")).not.toContain("invalid compaction");
+  await second.chat("Next");
+  expect(
+    fixture?.requests
+      .at(-1)
+      ?.messages.slice(1)
+      .map((message) => message.content),
+  ).toEqual([
+    expect.stringContaining("Earlier tool outcome unknown."),
+    `Recent ${"r".repeat(90000)}`,
+    "Recent answer",
+    "Next",
+  ]);
 });
 
 it("keeps physical legacy IDs stable across malformed lines and unterminated appends", async () => {
@@ -174,7 +267,8 @@ it("recognizes new sessions by log metadata and preserves stable IDs without the
   fixture = await chatFixture();
   const workspace = await fixture.workspace();
   const original = await Agent.open({ workspace });
-  await original.chat("Remember this");
+  const input = `${"a".repeat(49)}😀b`;
+  await original.chat(input);
   const root = join(workspace, ".history");
   const log = join(root, "sessions", `${original.sessionId}.jsonl`);
   const before = await readFile(log, "utf8");
@@ -193,9 +287,10 @@ it("recognizes new sessions by log metadata and preserves stable IDs without the
       .at(-1)
       ?.messages.slice(1)
       .map((message) => message.content),
-  ).toEqual(["Remember this", "Hello!", "Next"]);
+  ).toEqual([input, "Hello!", "Next"]);
   const reader = await ConversationHistory.open(root);
   expect((await reader.getSession(original.sessionId))?.message_count).toBe(4);
+  expect((await reader.getSession(original.sessionId))?.title).toBe(`${"a".repeat(49)}😀...`);
 });
 
 it("serializes session writes across independent readers without losing index updates", async () => {

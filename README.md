@@ -414,7 +414,10 @@ Recovery appends unknown-outcome tool results for unresolved calls and a
 `turn_interrupted` state record before accepting another turn. Original call IDs,
 reasoning, arguments, saved results, and message extensions are preserved. Repeated
 recovery adds no duplicate repairs and never executes tools or restarts a saved
-request. Writes to the same history directory are serialized within the process.
+request. Each repair identifies its original assistant entry so active context
+places it within that tool exchange, even if later turns were already saved.
+Repair metadata is excluded from model messages. Writes to the same history
+directory are serialized within the process.
 
 ### API and library documentation
 

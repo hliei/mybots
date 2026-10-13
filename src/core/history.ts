@@ -22,6 +22,7 @@ export interface HistoryMessage {
   tool_calls: ToolCall[] | null;
   tool_call_id: string | null;
   reasoning_content?: string;
+  interrupted_tool_call?: { assistantEntryId: string; outcome: "unknown" };
 }
 
 interface IndexEntry {
@@ -42,16 +43,31 @@ interface LogEntry {
   line: number;
 }
 
-function pendingCalls(entries: readonly LogEntry[]): Map<string, ToolCall> {
-  const pending = new Map<string, ToolCall>();
-  for (const { message } of entries) {
-    if (message?.role === "assistant") {
-      for (const call of message.tool_calls ?? []) pending.set(call.id, call);
-    } else if (message?.role === "tool" && message.tool_call_id) {
-      pending.delete(message.tool_call_id);
-    }
-  }
-  return pending;
+function toolExchanges(entries: readonly LogEntry[]) {
+  const originals = entries.filter(
+    (entry) => entry.message && !entry.message.interrupted_tool_call,
+  );
+  return originals.flatMap((assistant, index) => {
+    const calls =
+      assistant.message?.role === "assistant" ? assistant.message.tool_calls : undefined;
+    if (!calls?.length) return [];
+    const results: LogEntry[] = [];
+    for (let next = index + 1; originals[next]?.message?.role === "tool"; next++)
+      results.push(originals[next]);
+    const repairs = entries.filter(
+      (entry) => entry.message?.interrupted_tool_call?.assistantEntryId === assistant.id,
+    );
+    return [{ assistant, calls, results, repairs }];
+  });
+}
+
+function pendingCalls(entries: readonly LogEntry[]) {
+  return toolExchanges(entries).flatMap(({ assistant, calls, results, repairs }) => {
+    const saved = new Set([...results, ...repairs].map((entry) => entry.message?.tool_call_id));
+    return calls
+      .filter((call) => !saved.has(call.id))
+      .map((call) => ({ assistantEntryId: assistant.id, call }));
+  });
 }
 
 function projectContext(entries: LogEntry[], diagnostics: string[]): RecoveredContext {
@@ -78,7 +94,10 @@ function projectContext(entries: LogEntry[], diagnostics: string[]): RecoveredCo
           kept < index &&
           (entries[kept].message?.role === "user" ||
             entries[kept].message?.role === "assistant"))) &&
-      pendingCalls(entries.slice(0, empty ? index : kept)).size === 0;
+      pendingCalls([
+        ...entries.slice(0, empty ? index : kept),
+        ...entries.slice(0, index).filter((entry) => entry.message?.interrupted_tool_call),
+      ]).length === 0;
     if (!valid) {
       diagnostics.push(
         `Line ${line}: invalid compaction summary, identity, or retention boundary.`,
@@ -97,9 +116,15 @@ function projectContext(entries: LogEntry[], diagnostics: string[]): RecoveredCo
     summary = summaryMessage(raw.summary as string);
     break;
   }
+  const retained = entries.slice(start);
+  const insertions = new Map<LogEntry, LogEntry[]>();
+  for (const { assistant, results, repairs } of toolExchanges(retained)) {
+    insertions.set(results.at(-1) ?? assistant, repairs);
+  }
   return {
-    messages: entries
-      .slice(start)
+    messages: retained
+      .filter((entry) => entry.message && !entry.message.interrupted_tool_call)
+      .flatMap((entry) => [entry, ...(insertions.get(entry) ?? [])])
       .flatMap(({ id, message }) => (message ? [{ id, message: toMessage(message) }] : [])),
     summary,
     diagnostics,
@@ -107,7 +132,13 @@ function projectContext(entries: LogEntry[], diagnostics: string[]): RecoveredCo
 }
 
 function toMessage(record: HistoryMessage): Message {
-  const { timestamp: _timestamp, tool_calls, tool_call_id, ...fields } = record;
+  const {
+    timestamp: _timestamp,
+    interrupted_tool_call: _interruption,
+    tool_calls,
+    tool_call_id,
+    ...fields
+  } = record;
   const { role, content } = fields;
   if (role === "assistant") {
     return { ...fields, role, content, ...(tool_calls !== null ? { tool_calls } : {}) };
@@ -120,6 +151,13 @@ const roles = ["user", "assistant", "system", "tool"] as const;
 const titleLength = 50;
 // One process may open several history readers for the same Workspace.
 const writes = new Map<string, Promise<void>>();
+
+function sessionTitle(content: string): string {
+  const characters = Array.from(content);
+  return characters.length > titleLength
+    ? `${characters.slice(0, titleLength).join("")}...`
+    : content;
+}
 
 function nowIso(now: Date): string {
   const pad = (value: number, width = 2) => String(value).padStart(width, "0");
@@ -147,6 +185,21 @@ async function nonBlankLines(path: string): Promise<string[]> {
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
+}
+
+function sessionMetadata(value: unknown) {
+  const raw = asRecord(value);
+  if (
+    raw?.type !== "session" ||
+    typeof raw.id !== "string" ||
+    !raw.id ||
+    typeof raw.agent_id !== "string" ||
+    !raw.agent_id ||
+    typeof raw.created_at !== "string" ||
+    !raw.created_at
+  )
+    return undefined;
+  return { id: raw.id, agent_id: raw.agent_id, created_at: raw.created_at };
 }
 
 function parse(line: string): unknown {
@@ -233,6 +286,15 @@ function historyMessage(value: unknown): HistoryMessage | undefined {
   ) {
     return undefined;
   }
+  const interruption = asRecord(raw.interrupted_tool_call);
+  if (
+    raw.interrupted_tool_call !== undefined &&
+    (raw.role !== "tool" ||
+      typeof interruption?.assistantEntryId !== "string" ||
+      !interruption.assistantEntryId ||
+      interruption.outcome !== "unknown")
+  )
+    return undefined;
   const { id: _id, reasoning_content: _reasoning, ...fields } = raw;
   return {
     ...fields,
@@ -243,6 +305,14 @@ function historyMessage(value: unknown): HistoryMessage | undefined {
     tool_call_id: typeof raw.tool_call_id === "string" ? raw.tool_call_id : null,
     ...(typeof raw.reasoning_content === "string"
       ? { reasoning_content: raw.reasoning_content }
+      : {}),
+    ...(interruption
+      ? {
+          interrupted_tool_call: {
+            assistantEntryId: interruption.assistantEntryId as string,
+            outcome: "unknown" as const,
+          },
+        }
       : {}),
   };
 }
@@ -321,11 +391,7 @@ export class ConversationHistory {
       entry.record.message_count = (await this.getMessages(sessionId)).length;
       entry.record.updated_at = nowIso(this.now());
       if (entry.record.title === null && record.role === "user") {
-        const characters = Array.from(record.content);
-        entry.record.title =
-          characters.length > titleLength
-            ? `${characters.slice(0, titleLength).join("")}...`
-            : record.content;
+        entry.record.title = sessionTitle(record.content);
       }
       await this.writeIndex(entries);
       return id;
@@ -360,24 +426,19 @@ export class ConversationHistory {
     const records = (await nonBlankLines(this.sessionPath(sessionId))).map((line) =>
       asRecord(parse(line)),
     );
-    const metadata = records.find(
-      (raw) =>
-        raw?.type === "session" &&
-        raw.id === sessionId &&
-        typeof raw.agent_id === "string" &&
-        typeof raw.created_at === "string",
-    );
+    const metadata = records.map(sessionMetadata).find((record) => record?.id === sessionId);
     if (!metadata) return undefined;
     const messages = records.flatMap((raw) => {
       const message = historyMessage(raw);
       return message ? [message] : [];
     });
+    const firstUser = messages.find((message) => message.role === "user");
     return {
       id: sessionId,
-      agent_id: metadata.agent_id as string,
-      created_at: metadata.created_at as string,
-      updated_at: messages.at(-1)?.timestamp ?? (metadata.created_at as string),
-      title: messages.find((message) => message.role === "user")?.content ?? null,
+      agent_id: metadata.agent_id,
+      created_at: metadata.created_at,
+      updated_at: messages.at(-1)?.timestamp ?? metadata.created_at,
+      title: firstUser ? sessionTitle(firstUser.content) : null,
       message_count: messages.length,
     };
   }
@@ -385,7 +446,7 @@ export class ConversationHistory {
   async recoverContext(sessionId: string): Promise<RecoveredContext> {
     return this.mutate(async () => {
       const { entries, diagnostics } = await this.readLog(sessionId);
-      const missing = [...pendingCalls(entries).values()];
+      const missing = pendingCalls(entries);
       const lastMessage = entries.findLastIndex((entry) => entry.message);
       const last = entries[lastMessage]?.message;
       const closed = entries
@@ -393,7 +454,7 @@ export class ConversationHistory {
         .some(({ raw }) => raw?.type === "turn_interrupted");
       const unfinished = last && (last.role !== "assistant" || last.tool_calls?.length);
       if (missing.length || (unfinished && !closed)) {
-        for (const call of missing) {
+        for (const { call, assistantEntryId } of missing) {
           const id = randomUUID();
           const record = toHistoryMessage(
             {
@@ -403,6 +464,7 @@ export class ConversationHistory {
             },
             nowIso(this.now()),
           );
+          record.interrupted_tool_call = { assistantEntryId, outcome: "unknown" };
           await this.appendRecord(sessionId, { id, ...record });
           entries.push({ id, raw: { id, ...record }, message: record, line: entries.length + 1 });
         }
@@ -411,7 +473,7 @@ export class ConversationHistory {
           type: "turn_interrupted",
           id,
           timestamp: nowIso(this.now()),
-          tool_call_ids: missing.map((call) => call.id),
+          tool_call_ids: missing.map(({ call }) => call.id),
         });
         diagnostics.push(
           "Interrupted turn closed without executing tools or restarting the request.",
@@ -467,14 +529,11 @@ export class ConversationHistory {
       ];
     });
     const session = await this.getSession(sessionId);
-    const metadata = entries.some(
-      ({ raw }) =>
-        raw?.type === "session" &&
-        raw.id === sessionId &&
-        raw.agent_id === session?.agent_id &&
-        typeof raw.created_at === "string",
-    );
-    if (source.trim() && !metadata && !(session && entries.some((entry) => entry.message))) {
+    const metadata = entries.some(({ raw }) => {
+      const record = sessionMetadata(raw);
+      return record?.id === sessionId && record.agent_id === session?.agent_id;
+    });
+    if (source.length > 0 && !metadata && !(session && entries.some((entry) => entry.message))) {
       throw new Error(`Unrecognizable session log: ${sessionId}`);
     }
     return { source, entries, diagnostics };
