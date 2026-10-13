@@ -41,9 +41,13 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function telegramId(value: unknown): string | undefined {
-  if (typeof value === "string") return /^-?\d+$/u.test(value) ? value : undefined;
-  if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
+function digits(value: unknown, signed: boolean): string | undefined {
+  const pattern = signed ? /^-?\d+$/u : /^\d+$/u;
+  if (typeof value === "string") return pattern.test(value) ? value : undefined;
+  if (typeof value === "number" && Number.isSafeInteger(value)) {
+    const text = String(value);
+    return pattern.test(text) ? text : undefined;
+  }
   return undefined;
 }
 
@@ -53,8 +57,8 @@ function failure(error: unknown): string {
 
 /**
  * Normalize one raw `getUpdates` entry. Non-text messages, bot/channel senders
- * without a user, and malformed identifiers yield `undefined` and are skipped
- * with a diagnostic by the caller.
+ * without a user, and malformed identifiers yield `undefined` and are ignored.
+ * Telegram user IDs are positive; chat IDs may be negative.
  */
 export function normalizeTelegramUpdate(value: unknown): TelegramUpdate | undefined {
   const update = record(value);
@@ -73,8 +77,8 @@ export function normalizeTelegramUpdate(value: unknown): TelegramUpdate | undefi
     !message.text.trim()
   )
     return undefined;
-  const userId = telegramId(from.id);
-  const chatId = telegramId(chat.id);
+  const userId = digits(from.id, false);
+  const chatId = digits(chat.id, true);
   if (userId === undefined || chatId === undefined) return undefined;
   return { updateId: update.update_id, userId, chatId, text: message.text };
 }
@@ -120,7 +124,7 @@ export function createTelegramApi(options: TelegramApiOptions): TelegramApi {
   return {
     async getMe(signal) {
       const result = record(await call("getMe", {}, signal));
-      const id = telegramId(result?.id);
+      const id = digits(result?.id, false);
       if (!id) throw new Error("Telegram getMe returned an invalid bot identity.");
       return { id, ...(typeof result?.username === "string" ? { username: result.username } : {}) };
     },

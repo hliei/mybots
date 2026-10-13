@@ -1,7 +1,7 @@
 # Durable outbound delivery
 
 Status: accepted
-Implementation: completion commits, ordered delivery workers, finite retries, chunk progress and acknowledgements delivered; live channel adapters planned
+Implementation: completion commits, ordered delivery workers, finite retries, chunk progress and acknowledgements delivered; Telegram transport delivered and WebSocket adapter planned
 
 Generated replies awaiting delivery will be persisted, retried after delivery
 failure, and recovered after restart. A pending reply is cleared only after

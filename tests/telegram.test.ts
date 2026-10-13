@@ -73,7 +73,16 @@ it("normalizes Telegram text updates and keeps identifiers as digit strings", ()
     }),
   ).toBeUndefined();
   expect(
-    normalizeTelegramUpdate({ update_id: 8, message: { text: "Hi", chat: { id: "-100" } } }),
+    normalizeTelegramUpdate({
+      update_id: 11,
+      message: { text: "Hi", from: { id: -1 }, chat: { id: "-100" } },
+    }),
+  ).toBeUndefined();
+  expect(
+    normalizeTelegramUpdate({
+      update_id: 8,
+      message: { text: "Hi", chat: { id: "-100" } },
+    }),
   ).toBeUndefined();
   expect(
     normalizeTelegramUpdate({

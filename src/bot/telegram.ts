@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import type { DeliveryChunk, DeliveryTransport } from "../core/delivery.ts";
 import { chunkContent } from "../core/delivery.ts";
 import type { EventRuntime, RuntimeResult } from "../core/runtime.ts";
@@ -30,25 +31,6 @@ export interface TelegramChannelOptions {
   allowedUserIds: string[];
   pollRetryMs?: number;
   onError?: (error: unknown) => void;
-}
-
-function waitFor(milliseconds: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, milliseconds);
-    const abort = () => {
-      cleanup();
-      reject(signal.reason ?? new Error("Telegram polling was cancelled."));
-    };
-    function cleanup(): void {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", abort);
-    }
-    if (signal.aborted) abort();
-    else signal.addEventListener("abort", abort, { once: true });
-  });
 }
 
 /**
@@ -126,7 +108,9 @@ export class TelegramChannel {
         if (this.controller.signal.aborted) break;
         this.report(error);
         try {
-          await waitFor(this.options.pollRetryMs ?? 1000, this.controller.signal);
+          await delay(this.options.pollRetryMs ?? 1000, undefined, {
+            signal: this.controller.signal,
+          });
         } catch {
           break;
         }
