@@ -20,3 +20,7 @@
 
 # Agent runner build output.
 /container/agent-runner/dist/
+
+# Host state and shared Agent material.
+/data/
+/groups/

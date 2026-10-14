@@ -94,6 +94,14 @@ export class PiProvider implements AgentProvider {
             emit({ type: "text", text: event.assistantMessageEvent.delta });
           } else if (event.type === "tool_execution_start") {
             emit({ type: "progress", message: event.toolName });
+            const args = event.args as { timeout?: unknown };
+            emit({
+              type: "tool",
+              name: event.toolName,
+              timeoutMs: typeof args?.timeout === "number" ? args.timeout * 1000 : undefined,
+            });
+          } else if (event.type === "tool_execution_end") {
+            emit({ type: "tool", name: null });
           }
         });
         // prompt resolves after SDK retries and persistence; individual message/agent ends

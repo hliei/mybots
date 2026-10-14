@@ -92,3 +92,29 @@ root `verify` also runs its compiled provider through the bounded offline demo
 in `scripts/check-startup.mjs`. Run `npm run demo:pi` for visible tool/reopening
 evidence. These checks establish the Node.js package boundary; Docker mounts,
 gateway proxy/TLS, paid providers and real messaging require separate acceptance.
+
+## Directional mailbox execution
+
+`tests/mailbox.test.ts`, `tests/mailbox-runner.test.ts`, `tests/gateway.test.ts`
+and `tests/container-driver.test.ts` cover persisted ordering/correlation,
+completion before output, the accepted final-reply crash gap, provider failure,
+cancellation, tool state, constrained gateway contributions and immutable
+provisioning. They use temporary state, real SQLite and a controlled management
+HTTP service. The compiled startup smoke also verifies that the isolated runner
+refuses loading the Bun SQLite entry under the unsupported host runtime without
+fallback. Ordinary mailbox tests use the Node entry; actual container tests use
+the Bun entry with the same persisted protocol and concurrency protection.
+
+`npm run test:infrastructure` uses `tests/infrastructure/vitest.config.ts`.
+Ordinary discovery explicitly excludes `tests/infrastructure/`. The opt-in suite
+runs actual Docker, the production Bun runner, OneCLI, mounted mailboxes and a
+controlled TLS streaming upstream. A mounted stress regression additionally
+checks both directions under concurrent reads and one thousand writer operations.
+It checks a tool round, credential injection,
+forbidden/read-only mount behavior and exact Pi continuation after container
+recreation. It owns temporary Compose resources and generated fixture keys;
+no personal or paid services are used. See [container runtime](../container-runtime.md)
+for pins, prerequisites and the fixture-only upstream trust exception.
+
+Infrastructure evidence and actual-service evidence are separate. A passing
+container check does not establish a live DeepSeek or Telegram deployment.
