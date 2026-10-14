@@ -1,5 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { copyFile, mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, realpath, rm, stat, unlink } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,10 +32,21 @@ const children: ChildProcessWithoutNullStreams[] = [];
 afterEach(async () => {
   for (const socket of sockets.splice(0)) socket.destroy();
   for (const child of children.splice(0)) {
-    const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
-    if (child.exitCode === null) {
-      child.kill("SIGKILL");
-      await closed;
+    if (child.exitCode === null && child.signalCode === null) {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const closed = new Promise<void>((resolve, reject) => {
+          child.once("close", () => resolve());
+          timeout = setTimeout(() => reject(new Error("Child cleanup timed out")), 2000);
+        });
+        child.kill("SIGKILL");
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.stderr.destroy();
+        await closed;
+      } finally {
+        clearTimeout(timeout);
+      }
     }
   }
   await channel?.close();
@@ -223,6 +234,34 @@ it("starts the host executable with valid settings and removes its socket and ow
     await expect(stat(join(root, "data", "host.lock"))).rejects.toMatchObject({ code: "ENOENT" });
     host = await Host.start({ root, configuration, driver: new MailboxDriver() });
     expect(host.sessions()).toHaveLength(0);
+  } finally {
+    clearTimeout(timeout);
+  }
+});
+
+it("stops the host even when removing the CLI socket fails during shutdown", async () => {
+  root = await realpath(await mkdtemp(join(tmpdir(), "mybots-cli-")));
+  await copyFile("examples/host/host.json", join(root, "host.json"));
+  const child = spawn(process.execPath, ["src/index.ts", "--root", root], { stdio: "pipe" });
+  children.push(child);
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.setEncoding("utf8").on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const exit = new Promise<number | null>((resolve) => child.once("close", resolve));
+  const timeout = setTimeout(() => child.kill("SIGKILL"), 3000);
+  try {
+    await vi.waitFor(() => expect(stdout).toContain("Mybots host listening"));
+    await unlink(join(root, "data", "cli.sock"));
+    await mkdir(join(root, "data", "cli.sock"));
+    child.kill("SIGTERM");
+    expect(await exit).toBe(1);
+    expect(stderr).toContain("Error:");
+    await expect(stat(join(root, "data", "host.lock"))).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     clearTimeout(timeout);
   }

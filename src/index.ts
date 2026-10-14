@@ -59,12 +59,13 @@ export async function runHost(args: string[]): Promise<number> {
     console.error(`Error: ${error instanceof Error ? error.message : "Host startup failed"}`);
     status = 1;
   } finally {
-    try {
-      await cli?.close();
-      await host?.stop();
-    } catch (error) {
-      console.error(`Error: ${error instanceof Error ? error.message : "Host shutdown failed"}`);
-      status = 1;
+    for (const cleanup of [() => cli?.close(), () => host?.stop()]) {
+      try {
+        await cleanup();
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : "Host shutdown failed"}`);
+        status = 1;
+      }
     }
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
