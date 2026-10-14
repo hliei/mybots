@@ -17,3 +17,6 @@
 
 # Local application state.
 /workspace/
+
+# Agent runner build output.
+/container/agent-runner/dist/
