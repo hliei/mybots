@@ -1,7 +1,8 @@
 # Shared Agent workspace with separate conversations
 
 Status: accepted
-Implementation: planned
+Implementation: persistent host/CLI affinity and shared workspace delivered;
+remaining channel adapters planned
 
 Personal entry points will use the same Agent identity and Agent workspace by
 default, with separate persistent Agent sessions per entry or chat. Returning

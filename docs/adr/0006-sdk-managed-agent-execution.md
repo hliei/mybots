@@ -1,7 +1,8 @@
 # SDK-managed Agent execution
 
 Status: accepted
-Implementation: planned; the delivered embedded runtime remains in use
+Implementation: Pi runner, isolated execution and persistent host/CLI delivered;
+bot channel cutover and remaining resources planned
 
 Agent execution will move into isolated session containers, with the host
 responsible for channel routing, operational message persistence, container

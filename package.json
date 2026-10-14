@@ -22,7 +22,10 @@
     "verify": "npm run check && npm test && npm run build && npm run check:startup",
     "prepare": "husky",
     "demo:pi": "npm run build --workspace @mybots/agent-runner && npm run demo --workspace @mybots/agent-runner",
-    "test:infrastructure": "docker build -t mybots-agent:mailbox -f container/Dockerfile . && vitest run --config tests/infrastructure/vitest.config.ts"
+    "test:infrastructure": "docker build -t mybots-agent:mailbox -f container/Dockerfile . && vitest run --config tests/infrastructure/vitest.config.ts",
+    "dev:host": "node src/index.ts",
+    "start:host": "node dist/index.js",
+    "demo:host": "npm run build && node scripts/host-cli-demo.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

@@ -1,14 +1,13 @@
 # mybots
 
-A TypeScript and Node.js project for an interactive CLI and a message-platform
-bot, with a shared agent core.
+A persistent owner-local host routes CLI conversations to isolated Pi Agent
+sessions. The host saves destination/session affinity in SQLite, and every
+terminal reconnect continues the same conversation. Agent sessions share their
+Agent's workspace while keeping separate Pi conversation files.
 
-The CLI supports non-streaming, multi-turn conversations, local tool execution,
-Skill loading, and optional web search and HTTP content fetching with DeepSeek
-through a shared queued event runtime. Each launch creates
-a fresh session. The bot entry point embeds one shared runtime for its configured
-Telegram channel and local WebSocket interface; either can run independently.
-Telegram replies return to the originating chat.
+The bot entry point still embeds its existing runtime for Telegram and WebSocket
+while those adapters are being moved to the host. Its configuration and storage
+are separate from the new host/CLI path.
 
 ## Setup
 
@@ -37,7 +36,9 @@ with dependency changes. To install or update dependencies locally, use
 ## Development
 
 ```sh
-npm run dev:cli -- --workspace ./workspace
+npm run dev:host -- --root ./workspace
+# In another terminal:
+npm run dev:cli -- --root ./workspace
 npm run dev:bot -- --workspace ./workspace
 ```
 
@@ -65,8 +66,8 @@ Use `data/sessions/<agent_group_id>/<session_id>/pi/` for session state and
 `groups/<folder>/` for shared materials. SDK built-in tools use the working
 directory; filesystem confinement will come from the container boundary.
 
-This slice establishes SDK execution and persistence. CLI/bot routing still uses
-the existing runtime until host/container integration is delivered. SDK resource
+This slice establishes SDK execution and persistence. CLI routing now uses the persistent host; bot routing still uses
+the embedded runtime until its channel integration is delivered. SDK resource
 selection, multi-input queries, host/channel integration and live DeepSeek
 acceptance are subsequent work.
 
@@ -84,37 +85,34 @@ makes no paid requests. Ordinary verification remains offline and excludes this
 suite. See [container execution](docs/container-runtime.md) for configuration,
 mount ownership, completion semantics and cleanup.
 
-## CLI conversation
-
-Copy the credential-free example into the ignored local Workspace:
+## Persistent host and CLI
 
 ```sh
-cp -R examples/workspace ./workspace
+mkdir -p workspace
+cp examples/host/host.json workspace/host.json
+npm run dev:host -- --root ./workspace
+# In another terminal:
+npm run dev:cli -- --root ./workspace
 ```
 
-Set `llm.api_key` in `workspace/config.user.yaml` to your DeepSeek API key, then:
+Configure the existing runner image, isolated Docker network and OneCLI gateway
+in `host.json`; real model credentials remain gateway-owned. The terminal connects
+to the owner-only `data/cli.sock`. Enter one message per line; `quit`, `exit`, `q`,
+EOF or Ctrl+C disconnect the client while Agent work stays on the host. A newer
+client replaces the old terminal on its first valid message. CLI reconnect and
+host restart reuse the saved conversation. Disconnected replies remain in the
+mailbox without guaranteed terminal replay.
 
-```sh
-npm run dev:cli -- --workspace ./workspace chat --agent helper
-# Short options; chat is optional:
-npm run dev:cli -- -w ./workspace -a helper
-```
+See [persistent host](docs/host-runtime.md) for configuration, public interfaces,
+SQLite entities, conversation ownership, failure and cleanup behavior. Run
+`npm run demo:host` for a controlled compiled input/reply/reconnect/restart demo;
+its mailbox driver fixture requires no Docker or model credentials.
 
-Without `--workspace` / `-w`, the default Workspace is `../default_workspace`,
-relative to the process working directory. Without `--agent` / `-a`, the CLI
-uses `default_agent` from the merged Workspace configuration. Enter one message
-per line. Replies print after the complete response arrives. Input received during
-a turn becomes a follow-up, executed in reception order with the preceding context.
-Slash commands use the same session queue. Blank lines are ignored; `quit`,
-`exit`, `q`, EOF, and Ctrl+C end the session. Normal exit stops input and gives
-accepted work one second to finish, then cancels remaining execution and output
-tasks and awaits cleanup. Ctrl+C cancels immediately and exits with status 130;
-normal exit uses 0, and startup or terminal delivery failures use 1. Individual
-turn failures are reported and allow continued input. Waiting input stays in
-memory and is lost on cancellation or abnormal exit; recovery never restarts it.
-Cancellation closes a blocked output pipe, leaves its reply pending, and omits
-the farewell when standard output can no longer be written.
-Type `/help` to list the available commands.
+## Embedded bot runtime
+
+The following configuration, commands, tools and JSONL/event-runtime contracts
+apply to the remaining embedded bot runtime and its programmatic APIs. They do
+not configure the persistent host or CLI, whose state is described above.
 
 Workspace settings preserve `llm`, `default_agent`, `agents_path`, `skills_path`,
 and `history_path`. Relative paths resolve against the Workspace. Optional
@@ -136,7 +134,7 @@ Every configured directory, API host/port/enablement and channel settings
 report its active resource settings. The configuration store exposes the latest
 valid settings separately from active settings and lists changes requiring
 restart. Both configuration files are watched at their parent directory, so
-atomic-save replacement is observed. CLI shutdown closes its watcher and drains
+atomic-save replacement is observed. Embedded runtime shutdown closes its watcher and drains
 queued configuration work. See [Configuration](docs/configuration.md) for fields,
 validation, runtime updates and ownership.
 
@@ -150,8 +148,7 @@ The model defaults to `deepseek-flash`, the endpoint to `https://api.deepseek.co
 temperature to `0.7`, max tokens to `2048`, and thinking to `true`. The API key is
 required. Set `llm.thinking: false` in Workspace or Agent settings to explicitly
 disable thinking. DeepSeek ignores temperature while thinking is enabled.
-Assistant messages retain full `reasoning_content` in session context; the CLI
-prints the final text only.
+Assistant messages retain full `reasoning_content` in session context; the bot sends the final text only.
 
 Each model request attempt has a 60-second timeout. The SDK retries connection
 and timeout failures and HTTP 408, 409, 429, and 5xx responses at most twice,
@@ -166,7 +163,7 @@ message. Inputs that fail before a model response do not enter session context.
 Completed tool-call/result groups
 are retained if a later model request fails or is cancelled; local changes
 already made by tools remain in place. The shared Agent interface rejects
-overlapping `chat()` calls in the same session; the CLI submits turns sequentially.
+overlapping `chat()` calls in the same session; the event runtime queues turns sequentially.
 Automatic context compaction and manual `/compact` are available.
 
 Final answers are durably committed as one assistant log record with completion
@@ -175,16 +172,13 @@ confirmed chunk counts are recovered from that log; files under
 `event_path/pending/<sessionId>/<replyId>.json` are repairable projections.
 Progress and acknowledgement records never enter model context or message counts.
 Invalid completion metadata raises a session error; incomplete trailing records
-and legacy assistant messages do not create pending replies. The CLI acknowledges
-its reply after the standard output write completes, and each new launch creates
-a separate session without replaying replies from earlier CLI sessions.
-Optional runtime transports provide ordered, recoverable delivery with finite
+and legacy assistant messages do not create pending replies. Optional runtime transports provide ordered, recoverable delivery with finite
 retries; the bot entry point supplies a Telegram transport and the local
 WebSocket interface explicitly sends and acknowledges WebSocket replies.
 
 ### Slash commands
 
-The CLI recognizes `/help` (alias `/?`), `/session`, `/skills`, and `/context` as
+The embedded command registry recognizes `/help` (alias `/?`), `/session`, `/skills`, and `/context` as
 inspection commands; `/compact` requests manual compaction. Command names are case-insensitive. Successful inspection commands
 neither call the model nor append conversation-history messages. Any other slash
 input, including a lone `/`, is sent to the model as ordinary chat.
@@ -253,7 +247,7 @@ request must fit the budget before the summary is committed. If summarization
 fails, is cancelled, has no usable removable prefix, or leaves an oversized tail,
 the chat stops with an error and preserves committed context and usage. Raw
 history still records the attempted user input and any completed tool work.
-The CLI reports the error and accepts further input; Ctrl+C exits. Oversized
+The embedded runtime reports the error and accepts further input. Oversized
 individual messages or tool exchanges may require smaller inputs or outputs.
 There is no automatic retry after a provider context-overflow error.
 
@@ -272,11 +266,11 @@ Relative tool paths and shell commands use the process working directory, which
 may differ from the selected Workspace. Multiple calls in one response execute
 in order; each result retains the corresponding call ID. Tool errors return to
 the model so it can continue. Complete reasoning from earlier assistant messages
-is carried forward in tool requests. The CLI displays the final model reply.
+is carried forward in tool requests. The bot sends the final model reply.
 
-For example, start the CLI from the directory containing your files and ask:
+For example, give an embedded Agent a working directory and ask:
 "Read notes.txt, replace every TODO with DONE, and show the updated content."
-File writes and commands run with the CLI process's permissions.
+Embedded file writes and commands use the host process's permissions; isolated session tools use the container workspace.
 
 Shell output separates stdout and stderr with an extra newline when both exist;
 a nonzero exit returns its output, and no output returns
@@ -343,7 +337,7 @@ prevents queued queries from starting, and follows the Agent cancellation path.
 There are no retries, provider fallback, pagination, source-body fetching,
 additional summaries, background jobs, or storage IDs.
 
-Ordinary Agent and CLI tests use local endpoints and fixture credentials. They
+Ordinary embedded Agent tests use local endpoints and fixture credentials. They
 do not establish live provider acceptance. The delivered contract is recorded in
 [ADR 0003](docs/adr/0003-web-search-and-content-fetching.md).
 
@@ -457,12 +451,12 @@ the Agent registers no `skill` tool. Requesting an ID that is not among the
 discovered Skills returns
 `Error: Skill '<id>' not found. It may have been removed or is unavailable.`
 Skills load only when the model requests them. `/skills` and `/skills <id>`
-inspect discovered Skills from the CLI without loading them into context; see
+inspect discovered Skills through the embedded command registry without loading them into context; see
 [Slash commands](#slash-commands).
 
 ### Conversation history
 
-Each CLI launch creates a new Agent session and records it under `history_path`
+New embedded Agent sessions are recorded under `history_path`
 (the Workspace default is `.history`):
 
 - `index.jsonl` holds one record per session with `id`, `agent_id`, `title`,
@@ -488,7 +482,7 @@ Programmatic callers can resume a session with
 `Agent.open({ workspace, sessionId })`. Recovery loads that session's Agent and
 reconstructs active context from the latest valid saved summary, retained original
 messages, and later messages without requesting another summary. Failed attempted
-inputs remain in recovered context. CLI launches continue creating new sessions.
+inputs remain in recovered context.
 
 Legacy logs are recognized through valid index metadata and message records;
 their recovery IDs use physical line numbers, including malformed and blank lines,
@@ -514,9 +508,8 @@ directory are serialized within the process.
 ### Event runtime
 
 `EventRuntime.open({ workspace, agent, delivery? })` explicitly starts a runtime and its
-configuration watcher. Importing runtime modules opens no resources. CLI and bot
-entry points embed independent runtimes; simultaneous workspace modification by
-both processes is outside the supported contract. The bot entry point runs the
+configuration watcher. Importing runtime modules opens no resources. The bot
+entry point embeds this runtime. The bot entry point runs the
 configured Telegram channel and local WebSocket interface in one runtime.
 
 The shared facade provides:
@@ -537,15 +530,14 @@ The shared facade provides:
   inputs may select an Agent explicitly; otherwise new bindings use the default
   Agent. Existing bindings retain their Agent and reject conflicting selection.
   Invalid sources, missing Agents, unusable sessions and conflicting source
-  ownership fail without replacing history. CLI sessions remain fresh per launch.
+  ownership fail without replacing history.
 - `subscribe(handler)`: observe inbound and outbound events, with an unsubscribe
   callback. Each handler receives its own event copy and the shutdown signal;
   its callbacks run sequentially per session. Slow callbacks do not block Agent
   execution, other observers, or other sessions. Failures are recorded in
   `subscriberFailures` and leave generated replies pending.
 - `getPendingReplies(sessionId)` and `acknowledgeReply(sessionId, replyId)`:
-  inspect committed deliveries and acknowledge a successful send. The CLI waits
-  for standard output to complete before acknowledging. Recovered deliveries can
+  inspect committed deliveries and acknowledge a successful send. Recovered deliveries can
   be inspected without opening an Agent or starting a model request.
 - `stop({ graceMs? })`: reject new sessions/input/subscriptions, allow a finite
   grace period (default 1,000 ms), abort remaining requests, retry waits and
@@ -589,7 +581,7 @@ acknowledgement follows all chunks. Five attempts use 5-second, 25-second,
 only that session's delivery until restart. `deliveryFailures` reports failures;
 Agent execution and other sessions continue. A platform acceptance before local
 progress persistence can duplicate that chunk on retry or restart. Terminal
-replies remain scoped to their original CLI launch. Without `delivery` the facade
+replies retain their original destination. Without `delivery` the facade
 keeps replies pending for explicit senders. Setting `ownedPlatforms` limits the
 worker to those platforms; other replies remain pending without recording a
 missing-adapter failure. The bot worker owns only Telegram replies; the WebSocket
@@ -651,7 +643,7 @@ Manual and automatic compaction both support incremental summary updates.
 
 ## Telegram bot
 
-The bot entry point embeds the same shared runtime as the CLI and runs a
+The bot entry point embeds the event runtime and runs a
 long-polling Telegram channel when it is enabled. Copy the example Workspace and
 enable the channel in the merged configuration:
 
@@ -692,7 +684,7 @@ inputs: follow-ups queue in reception order, tools and Skills work, and generate
 replies travel through the durable chunked delivery path (4,096 code-point
 chunks) with finite retries. A failed send keeps its pending reply and resumes on
 a later restart. Command results and turn errors are ephemeral observations, like
-the CLI, and are sent without a durable record. Messages from users outside a
+the embedded command registry, and are sent without a durable record. Messages from users outside a
 nonempty allowlist are ignored; an empty allowlist allows everyone, matching the
 configured behavior. Ctrl+C stops polling and awaits runtime cleanup.
 
@@ -739,7 +731,7 @@ local tools, saved history, search, HTTP continuation and real compaction. See
 exceptions and separate validation evidence.
 
 `verify` runs checks, ordinary tests, compilation, and offline startup checks
-of both compiled entry points. It does not start a long-running service or
+of the compiled host, CLI, bot and runner entry points. It does not start a long-running service or
 contact a model or messaging platform.
 
 GitHub Actions runs `npm run verify` and `bash tests/workflow.sh` for pull
@@ -751,7 +743,9 @@ Git workflow tests install Husky in isolated temporary repositories.
 
 ```sh
 npm run build
-npm run start:cli -- --workspace ./workspace
+npm run start:host -- --root ./workspace
+# In another terminal:
+npm run start:cli -- --root ./workspace
 npm run start:bot -- --workspace ./workspace
 ```
 
@@ -760,17 +754,26 @@ are not emitted. Start commands use the existing build. The bot server serves
 `/ws` when `api.enabled` is true. For offline help:
 
 ```sh
+npm run start:host -- --help
 npm run start:cli -- --help
 npm run start:bot -- --help
 ```
 
 ## Source layout
 
-Only executable entry points live directly under `src/`. Implementation files
-are grouped by their current responsibilities:
+Source modules separate host lifecycle, central entities, mailbox protocol,
+container drivers and channel clients from the remaining embedded bot runtime:
 
 ```text
 src/
+├── index.ts               # Persistent host entry point
+├── host.ts                # Routing, mailbox observation, session lifecycle and delivery
+├── db/                    # Central SQLite entities and schema migrations
+├── channels/cli.ts        # Owner-local Unix socket listener
+├── mailbox/               # Directional SQLite mailbox package
+├── drivers/               # Session-driver contract and Docker execution
+├── gateway-providers/     # OneCLI credential gateway boundary
+├── container-runner.ts    # Session material and immutable context
 ├── cli.ts                 # CLI entry point
 ├── server.ts              # Bot entry point
 ├── cli/chat.ts            # Arguments and terminal interaction
