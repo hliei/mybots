@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { ModelConfiguration } from "../drivers/types.ts";
 import type { HostConfiguration } from "../host.ts";
+import type { AgentResources } from "../mailbox/types.ts";
 import { schema } from "./migrations/001-initial.ts";
+import { resourceSchema } from "./migrations/002-agent-resources.ts";
 
 export interface SavedSession {
   id: string;
@@ -24,6 +26,7 @@ export interface SessionRoute {
   instance: string;
   model: ModelConfiguration;
   instructions?: string;
+  resources?: AgentResources;
 }
 
 export class HostStore {
@@ -38,7 +41,8 @@ export class HostStore {
         user_version: number;
       };
       if (user_version === 0) this.db.exec(schema);
-      else if (user_version !== 1) throw new Error("Unsupported host schema version");
+      if (user_version === 0 || user_version === 1) this.db.exec(resourceSchema);
+      else if (user_version !== 2) throw new Error("Unsupported host schema version");
       this.seed(configuration);
     } catch (error) {
       this.db.close();
@@ -64,13 +68,14 @@ export class HostStore {
         .run(agent.id, agent.name, agent.folder, now);
       this.db
         .prepare(
-          `INSERT INTO container_configs VALUES (?, 'pi', ?, ?, ?, ?) ON CONFLICT(agent_group_id) DO UPDATE SET model = excluded.model, model_config = excluded.model_config, instructions = excluded.instructions, updated_at = excluded.updated_at`,
+          `INSERT INTO container_configs (agent_group_id, provider, model, model_config, instructions, resources, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?) ON CONFLICT(agent_group_id) DO UPDATE SET model = excluded.model, model_config = excluded.model_config, instructions = excluded.instructions, resources = excluded.resources, updated_at = excluded.updated_at`,
         )
         .run(
           agent.id,
           `${agent.model.provider}/${agent.model.id}`,
           JSON.stringify(agent.model),
           agent.instructions ?? null,
+          agent.resources ? JSON.stringify(agent.resources) : null,
           now,
         );
       for (const destination of configuration.destinations) {
@@ -156,7 +161,7 @@ export class HostStore {
   route(session: SavedSession): SessionRoute {
     const row = this.db
       .prepare(
-        `SELECT a.folder, m.channel_type, m.platform_id, m.instance, c.model_config, c.instructions FROM agent_groups a JOIN container_configs c ON c.agent_group_id = a.id JOIN messaging_groups m ON m.id = ? WHERE a.id = ?`,
+        `SELECT a.folder, m.channel_type, m.platform_id, m.instance, c.model_config, c.instructions, c.resources FROM agent_groups a JOIN container_configs c ON c.agent_group_id = a.id JOIN messaging_groups m ON m.id = ? WHERE a.id = ?`,
       )
       .get(session.messaging_group_id, session.agent_group_id);
     if (!row) throw new Error("Session routing is unavailable");
@@ -168,6 +173,9 @@ export class HostStore {
       instance: row.instance as string,
       model: JSON.parse(row.model_config as string) as ModelConfiguration,
       instructions: (row.instructions as string | null) ?? undefined,
+      resources: row.resources
+        ? (JSON.parse(row.resources as string) as AgentResources)
+        : undefined,
     };
   }
 

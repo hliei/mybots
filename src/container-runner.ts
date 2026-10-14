@@ -1,8 +1,9 @@
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { ModelConfiguration, SessionMaterial } from "./drivers/types.ts";
+import { validateAgentResources } from "./mailbox/index.ts";
 import { initializeMailbox } from "./mailbox/node.ts";
-import type { SessionKey } from "./mailbox/types.ts";
+import type { AgentResources, SessionKey } from "./mailbox/types.ts";
 
 function legalName(value: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(value);
@@ -15,6 +16,7 @@ export async function provisionSession(input: {
   folder: string;
   model: ModelConfiguration;
   instructions?: string;
+  resources?: AgentResources;
 }): Promise<SessionMaterial> {
   if (![input.key.agentGroupId, input.key.sessionId, input.folder].every(legalName))
     throw new Error("Invalid Agent/session path identity");
@@ -64,6 +66,7 @@ export async function provisionSession(input: {
       maxTokens: input.model.maxTokens,
     },
     instructions: input.instructions,
+    resources: validateAgentResources(input.resources),
   })}\n`;
   await writeFile(contextFile, context, { mode: 0o444, flag: "wx" }).catch(async (error) => {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;

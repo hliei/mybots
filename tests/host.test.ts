@@ -405,3 +405,37 @@ it("discovers persisted output after a fresh host opens and keeps delivery separ
   ]);
   expect(driver.launches).toHaveLength(1);
 });
+
+it("materializes the selected Agent resources for every routed session after restart", async () => {
+  root = await realpath(await mkdtemp(join(tmpdir(), "mybots-host-resources-")));
+  const driver = new MailboxDriver();
+  const selected = {
+    ...configuration,
+    agent: { ...configuration.agent, resources: { skills: ["brief"], tools: ["read"] as const } },
+    destinations: [
+      ...configuration.destinations,
+      { id: "notes", channelType: "cli", platformId: "notes", instance: "cli" },
+    ],
+  };
+  host = await Host.start({ root, configuration: selected, driver });
+  const first = await host.accept({
+    destinationId: "terminal",
+    userId: "cli:local",
+    text: "First",
+  });
+  await vi.waitFor(async () =>
+    expect((await host?.inspect(first.sessionId))?.outputs).toHaveLength(1),
+  );
+  await host.stop();
+  host = await Host.start({ root, configuration: selected, driver });
+  const second = await host.accept({ destinationId: "notes", userId: "cli:local", text: "Second" });
+  await vi.waitFor(async () =>
+    expect((await host?.inspect(second.sessionId))?.outputs).toHaveLength(1),
+  );
+  for (const launch of driver.launches) {
+    const context = JSON.parse(await readFile(launch.material.contextFile, "utf8"));
+    expect(context.resources).toEqual({ skills: ["brief"], tools: ["read"] });
+    expect(context).not.toHaveProperty("owner");
+    expect(context).not.toHaveProperty("gateway");
+  }
+});

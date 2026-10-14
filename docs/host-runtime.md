@@ -26,8 +26,13 @@ or service. Missing/invalid configuration fails before opening the host.
 
 `owner` is a namespaced platform identity; the local example uses `cli:local`.
 `agent` selects the Agent's ID, name, shared folder, instructions and explicit
-model configuration. The execution harness is Pi; the model backend is specified
-separately by `model.provider` and `model.id`. The central store saves the model
+model configuration. Optional `agent.resources.skills` selects directory IDs under
+`groups/<folder>/skills/`; `agent.resources.tools` selects Pi built-ins (`read`,
+`write`, `edit`, `bash`, `grep`, `find`, `ls`). Omitted Skills select none; omitted
+tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
+The execution harness is Pi; the model backend is specified
+separately by `model.provider` and `model.id`. The central store uses schema version 2 with an additive resource-selection column.
+The central store saves the model
 selector as `provider/id` plus its endpoint and token limits. Endpoints must use
 HTTPS without URL credentials. Host configuration and gateway management material
 are outside runner mounts.
@@ -51,8 +56,10 @@ session starts; a driver failure is observable and leaves accepted input saved.
 Configuration is loaded at host startup and persisted to host entities. Existing
 destination IDs retain their channel/platform/instance meaning. Session context
 is immutable once provisioned: changing model/instructions for an existing
-session requires stopped execution and explicitly replacing its context; dynamic
-Agent resource updates are not included in this slice.
+session requires stopped execution and explicitly replacing its context. Configured
+resource selection follows the same rule. Shared instruction and Skill files are
+loaded on each new query at an idle boundary; existing queued follow-ups retain
+the active query's resource snapshot.
 
 ## Conversations and delivery
 
@@ -95,12 +102,19 @@ subsequent replies, without guaranteed replay of disconnected output.
 
 Blank terminal lines are ignored. `quit`, `exit`, `q` and EOF disconnect with
 status 0; Ctrl+C disconnects with 130. Startup, host-disconnect and terminal
-failures return 1. Slash input is sent as ordinary Agent text in this slice.
+failures return 1. `/reset` queues an owner-authorized conversation reset. It waits
+for the active query (including SDK compaction and cleanup), then creates and saves
+a fresh Pi conversation for the same routed host session. Later inputs cannot
+cross that FIFO boundary. The reset returns `Conversation reset.` through the
+ordinary reply/delivery path and makes no model request. Previous private logs,
+other sessions, mailbox records and shared working files are preserved; the saved
+continuation selects only the new conversation on reconnect or host restart.
+Other slash input remains ordinary Agent text.
 
 ## Public lifecycle and verification
 
 `Host.start({ root, configuration, driver })`, `accept`, `sessions`, `inspect`,
-`observe`, `attachChannel` and `stop` are the host boundary. The driver accepts
+`reset({ destinationId, userId })`, `observe`, `attachChannel` and `stop` are the host boundary. The driver accepts
 session material and an abort signal and returns an awaited stop/exit handle.
 `CliChannel.listen` and `close` own the local listener and its connected sockets.
 Importing these modules starts no services. Observers cannot prevent persistence;
@@ -127,3 +141,34 @@ opt-in infrastructure suite and actual-service acceptance remain separate.
 The bot entry point still uses its embedded runtime while its adapters are being
 moved to the host. It has separate configuration and storage; see the embedded
 runtime sections in [README](../README.md).
+
+## Shared instructions and Skills
+
+Put Agent instructions in `groups/<folder>/AGENTS.md`. Only that exact file is
+loaded; ancestor project instructions and host engineering Skills are excluded.
+The host's optional `agent.instructions` is appended through Pi's resource loader.
+Create each selected Skill as `groups/<folder>/skills/<id>/SKILL.md`, with Pi-native
+frontmatter (`name`, `description`) and its instructions. For example:
+
+```markdown
+---
+name: brief
+description: Produce a concise answer from saved working materials
+---
+Read the relevant shared materials, then answer concisely.
+```
+
+Select it in host configuration with
+`"resources": { "skills": ["brief"], "tools": ["read", "write", "edit", "bash"] }`.
+Selected Skill IDs must be unique path-safe names; tools must be unique supported
+built-in names. Selected Skill and instruction paths must be real workspace
+paths. Missing selected Skills fail the exchange before model traffic. Resource
+selection is not filesystem confinement: the actual container mounts protect
+host credentials and other session logs. Agent sessions deliberately share the
+writable working directory.
+
+Long conversations use Pi's default automatic compaction and SDK-owned history.
+Reopening the explicit `pi:` continuation restores the retained summary and
+messages. The host does not estimate tokens, reconstruct active context from its
+mailbox or copy conversation messages into shared files. Persist working materials
+explicitly when they should be accessible from another session.

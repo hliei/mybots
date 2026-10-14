@@ -33,7 +33,7 @@ export async function runCli(args: string[]): Promise<number> {
         "Connect to the owner-local host at PATH/data/cli.sock (PATH defaults to the current directory).",
       );
       console.log(
-        "Enter messages; quit, exit, q, EOF or Ctrl+C disconnect the terminal. Agent work stays on the host.",
+        "Enter messages; quit, exit, q, EOF or Ctrl+C disconnect the terminal. Agent work stays on the host. /reset starts a fresh conversation after current work.",
       );
       return 0;
     }

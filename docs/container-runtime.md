@@ -122,7 +122,7 @@ or add atomic completion.
 
 Stop a session with its handle's awaited `stop()` before re-provisioning or
 replacing immutable context. Re-provisioning identical context is idempotent;
-a changed model/instruction context fails explicitly. The caller owns session
+a changed model/instruction/resource-selection context fails explicitly. The caller owns session
 admission and the lifetime of the returned handle. `wait()` observes runtime
 termination; cancellation requests stop and removal. Stop failures are reported
 and must be resolved before reusing the session material.
@@ -155,3 +155,21 @@ be applied to a real model endpoint. The check makes no real provider calls and
 is excluded from ordinary `test`, `test:watch`, and `verify`. Passing it establishes
 container, mailbox, proxy and CA integration; DeepSeek and channel acceptance
 require separate explicitly requested live checks.
+
+## Agent resources and reset controls
+
+Immutable context carries optional non-secret `resources.skills` IDs and
+`resources.tools` built-in names. Pi loads only the shared Agent's `AGENTS.md`
+and explicitly selected `skills/<id>/SKILL.md` on a new query. It uses in-memory
+settings and credentials; host Skills, login files, private settings, extensions,
+themes and prompt templates are not discovered. No new host mounts are required.
+See [host resources](host-runtime.md#shared-instructions-and-skills) for formats.
+
+A `reset` input is a runner control rather than model text. Follow-up admission
+stops at that row, leaving it and all later input pending until SDK query cleanup
+(including compaction) finishes. The runner creates a new SDK SessionManager,
+records the owner's reset action through its public message API, stores the new
+continuation and acknowledges/replies through the usual independent records.
+The control message makes Pi persist its otherwise empty conversation; no model
+request or custom JSONL writer is used. Reset preserves earlier logs and shared
+files. Automatic compaction and context restoration remain owned by Pi.
