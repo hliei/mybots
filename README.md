@@ -689,8 +689,8 @@ This full live command also includes interactive Telegram acceptance. It require
 a configured test bot and explicit test user/chat IDs; missing settings fail the
 case. See [runtime acceptance](docs/runtime-acceptance.md) for focused DeepSeek,
 WebSocket and Telegram commands, restart checkpoints, and separate offline/live
-evidence. Actual Telegram acceptance is still outstanding until a test bot is
-configured and the real send/receive flow passes.
+evidence. Actual Telegram acceptance is still outstanding until the complete
+input/restart flow passes; configured single-turn send/receive has been verified.
 
 The source defaults to `./workspace`. Acceptance uses temporary Workspaces and
 real services, consumes model/search quota, and fails when required configuration

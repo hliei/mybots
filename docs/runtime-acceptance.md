@@ -142,8 +142,9 @@ documentation links and `git diff --check` passed. Temporary acceptance Workspac
 inspection found zero leftovers. Search/HTTP checks were not rerun in this
 delivery; their earlier live evidence remains in the separate acceptance record.
 
-Overall runtime acceptance is **incomplete pending actual Telegram send/receive
-and its restart checkpoint**. Delivered behavior and passing offline/model checks
+Overall runtime acceptance is **incomplete pending a successful complete Telegram
+input/restart run**. The configured-service checkpoints below establish real
+single-turn send/receive, with the restart checkpoint still outstanding. Delivered behavior and passing offline/model checks
 do not waive that requirement.
 
 Independent Standards and Spec reviews of the delivery found zero actionable
@@ -151,3 +152,35 @@ findings on each axis. The reviewers retained the missing actual Telegram flow
 as an explicit acceptance limitation. The earlier acceptance guide's current
 command and compaction description were updated to match persistence/restart;
 its dated historical execution evidence remains intact.
+
+## Configured Telegram checkpoints: October 14, 2026
+
+The user configured the token and explicitly requested continued Telegram
+acceptance. A real `getMe` succeeded. A user-sent setup message selected the
+explicit test user/chat; identifiers remain in ignored local data and are omitted
+here. No other local bot polling process was running. The source configuration
+was read without modification, and acceptance used temporary runtime data.
+
+The focused command used Node.js 24.21.0 and the source Workspace, with explicit
+test user/chat IDs supplied as environment variables from ignored local data:
+
+```sh
+npm run test:live -- tests/live/runtime.test.ts -t 'receives actual Telegram'
+```
+
+- First configured run: real Telegram input reached DeepSeek; the ACK reply was
+  accepted by Telegram and its durable acknowledgement cleared pending delivery.
+  The runtime restarted successfully. The case then reached its four-minute
+  deadline while waiting for an exact second input. Result: exit 1, 1 failed,
+  1 unrelated case filtered out, 240.72 seconds.
+- After the user requested a fresh attempt, the second run reached its deadline
+  while waiting for an exact first input. Result: exit 1, 1 failed, 1 unrelated
+  case filtered out, 240.74 seconds. This run adds no successful round trip.
+
+These are input-wait timeouts, with no Telegram API or model error reported in
+either run. The harness filters by the selected user/chat and exact challenge
+text, so the evidence establishes absence of a matching input, rather than
+proving no message was sent. Neither run passes the complete Telegram case.
+Both processes exited and cleanup left no temporary acceptance Workspaces.
+The earlier 482-test offline verification and focused DeepSeek/WebSocket passes
+remain separate evidence; they were not rerun for this documentation update.
