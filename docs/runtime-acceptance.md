@@ -71,8 +71,9 @@ For actual Telegram acceptance, create a bot through Telegram's
 chat with it. A Telegram account alone does not supply a bot token. Use a bot and
 chat you control, determine your numeric user/chat IDs, and stop other processes
 polling that bot. The acceptance harness reads the token but admits only the
-explicit test user/chat and exact challenge text; it does not start the production
-poller or process unrelated messages. Polling can advance past unrelated updates,
+explicit test user/chat and challenge text, ignoring outer whitespace and an
+optional final ASCII period. It does not start the production poller or process
+unrelated messages. Polling can advance past unrelated updates,
 so use a dedicated test bot.
 
 ```sh
@@ -184,3 +185,13 @@ proving no message was sent. Neither run passes the complete Telegram case.
 Both processes exited and cleanup left no temporary acceptance Workspaces.
 The earlier 482-test offline verification and focused DeepSeek/WebSocket passes
 remain separate evidence; they were not rerun for this documentation update.
+
+### Input-matching diagnosis
+
+The user supplied the unacknowledged first challenge text. It omitted the final
+ASCII period after `Reply ACK only`; the harness previously required exact text
+equality and silently ignored that input. The receive predicate now trims outer
+whitespace and permits the final period to be omitted, while retaining the same
+user/chat and challenge-marker checks. This changes acceptance input handling,
+not production Telegram routing. Ordinary verify after the change passed 482
+tests in 21 files, checks/types, build and both compiled startup checks.

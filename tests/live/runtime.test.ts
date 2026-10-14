@@ -153,7 +153,10 @@ it("receives actual Telegram input and delivers model replies across a runtime r
       const batch = await api.getUpdates(offset, signal);
       offset = batch.nextOffset;
       const update = batch.updates.find(
-        (item) => item.chatId === chatId && item.userId === userId && item.text === text,
+        (item) =>
+          item.chatId === chatId &&
+          item.userId === userId &&
+          item.text.trim().replace(/\.$/u, "") === text.trim().replace(/\.$/u, ""),
       );
       if (update) return update;
     }
