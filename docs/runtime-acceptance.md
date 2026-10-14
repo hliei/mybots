@@ -195,3 +195,9 @@ whitespace and permits the final period to be omitted, while retaining the same
 user/chat and challenge-marker checks. This changes acceptance input handling,
 not production Telegram routing. Ordinary verify after the change passed 482
 tests in 21 files, checks/types, build and both compiled startup checks.
+
+The post-change live run waited for a fresh challenge and timed out before a
+matching first input: exit 1, 1 failed, 1 unrelated case filtered out, 240.71
+seconds. It adds no live pass or restart evidence. Both independent review axes
+reported zero actionable findings for the matching change. The live process
+exited and temporary acceptance data was cleaned.
