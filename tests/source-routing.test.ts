@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -289,8 +289,11 @@ it("recovers a saved summary and unfinished tools without model or tool replay",
   await runtime.stop();
   const history = await ConversationHistory.open(join(workspace, ".history"));
   await history.saveCompaction(first.session_id, "Exact saved summary.\n", undefined);
-  await history.saveMessage(first.session_id, { role: "user", content: "Unfinished work" });
-  await history.saveMessage(first.session_id, {
+  const userId = await history.saveMessage(first.session_id, {
+    role: "user",
+    content: "Unfinished work",
+  });
+  const assistantId = await history.saveMessage(first.session_id, {
     role: "assistant",
     content: "",
     reasoning_content: "Original tool reasoning.",
@@ -298,10 +301,21 @@ it("recovers a saved summary and unfinished tools without model or tool replay",
       {
         id: "unfinished",
         type: "function",
-        function: { name: "bash", arguments: JSON.stringify({ command: "touch replayed" }) },
+        function: {
+          name: "write",
+          arguments: JSON.stringify({
+            path: join(workspace, "replayed"),
+            content: "Unexpected replay",
+          }),
+        },
       },
     ],
   });
+  const log = join(workspace, ".history/sessions", `${first.session_id}.jsonl`);
+  await appendFile(
+    log,
+    'broken JSON\n{"type":"compaction","id":"invalid-summary","summary":"Discard me","firstKeptEntryId":"missing"}\n',
+  );
   runtime = await EventRuntime.open({ workspace });
   expect(fixture.requests).toHaveLength(1);
   const next = await runtime.submit({ source: "platform-ws:alice", content: "Continue" });
@@ -329,6 +343,17 @@ it("recovers a saved summary and unfinished tools without model or tool replay",
   ]);
   await expect(access(join(workspace, "replayed"))).rejects.toMatchObject({ code: "ENOENT" });
   expect(await runtime.getPendingReplies(first.session_id)).toHaveLength(2);
+  const fresh = await ConversationHistory.open(join(workspace, ".history"));
+  const afterRecovery = await fresh.recoverContext(first.session_id);
+  expect(afterRecovery.diagnostics.join("\n")).toContain("invalid compaction");
+  expect(afterRecovery.diagnostics.join("\n")).toContain("JSON record skipped");
+  expect(afterRecovery.messages.slice(0, 2).map((entry) => entry.id)).toEqual([
+    userId,
+    assistantId,
+  ]);
+  const repairedLog = await readFile(log, "utf8");
+  expect(await fresh.recoverContext(first.session_id)).toEqual(afterRecovery);
+  expect(await readFile(log, "utf8")).toBe(repairedLog);
 });
 
 it("routes a legacy history without source metadata and never invents old deliveries", async () => {

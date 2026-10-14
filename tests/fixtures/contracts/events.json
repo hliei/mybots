@@ -1,0 +1,19 @@
+[
+  {
+    "type": "InboundEvent",
+    "session_id": "contract-session",
+    "source": "platform-telegram:42:-100",
+    "content": "Continue the saved conversation",
+    "timestamp": 1791936000,
+    "retry_count": 0
+  },
+  {
+    "type": "OutboundEvent",
+    "session_id": "contract-session",
+    "source": "agent:helper",
+    "content": "Saved answer",
+    "timestamp": 1791936001,
+    "error": null,
+    "reply_id": "contract-reply"
+  }
+]

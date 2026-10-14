@@ -685,6 +685,13 @@ Brave or SerpApi settings configured in a local Workspace, run:
 MYBOTS_ACCEPTANCE_WORKSPACE=/absolute/path/to/workspace npm run test:live
 ```
 
+This full live command also includes interactive Telegram acceptance. It requires
+a configured test bot and explicit test user/chat IDs; missing settings fail the
+case. See [runtime acceptance](docs/runtime-acceptance.md) for focused DeepSeek,
+WebSocket and Telegram commands, restart checkpoints, and separate offline/live
+evidence. Actual Telegram acceptance is still outstanding until a test bot is
+configured and the real send/receive flow passes.
+
 The source defaults to `./workspace`. Acceptance uses temporary Workspaces and
 real services, consumes model/search quota, and fails when required configuration
 or a service check is missing. It covers thinking/tool continuation, Skills and

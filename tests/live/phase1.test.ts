@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { stringify } from "yaml";
 import { loadSettings } from "../../src/config/workspace.ts";
@@ -30,7 +31,7 @@ beforeEach(async () => {
   );
   await writeFile(
     join(root, ".agents/bots/acceptance/AGENT.md"),
-    "---\nname: Acceptance\nallow_skills: true\n---\n\nFollow the user's acceptance steps exactly. Use only the requested tools, paths and shell command. Keep final answers short. Never read configuration or credentials.\n",
+    `---\nname: Acceptance\nallow_skills: true\n---\n\nFollow the user's acceptance steps exactly. Use tools only when explicitly requested. All file paths must be absolute and inside ${root}. Use only the requested tools, paths and shell command. Keep final answers short. Never read configuration or credentials.\n`,
   );
   await writeFile(
     join(root, ".agents/skills/acceptance/SKILL.md"),
@@ -63,7 +64,12 @@ async function recorded() {
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line));
-  expect(messages).toEqual(raw);
+  const originalMessages = raw.filter((entry) => typeof entry.role === "string");
+  expect(messages.length).toBe(originalMessages.length);
+  for (const [index, message] of messages.entries()) {
+    const { id: _id, ...original } = originalMessages[index];
+    expect(isDeepStrictEqual(message, original)).toBe(true);
+  }
   console.log(
     `History evidence: ${messages.length} messages; reasoning lengths=${messages
       .filter((message) => message.role === "assistant")
@@ -218,7 +224,10 @@ it("compacts with a real summary, preserves original history and continues", asy
     const fact =
       turn === 0 ? `The critical fact is ${marker}. Preserve it for later recall.\n` : "";
     expect(
-      await agent.chat(`${fact}${background}\nArchive batch ${turn}. Reply ACK only.`, signal),
+      await agent.chat(
+        `${fact}${background}\nArchive batch ${turn}. Reply ACK only. Do not use tools.`,
+        signal,
+      ),
     ).toContain("ACK");
   }
   const log = join(root, ".history/sessions", `${agent.sessionId}.jsonl`);
@@ -229,15 +238,35 @@ it("compacts with a real summary, preserves original history and continues", asy
   const result = await agent.runCommand("/compact", signal);
   expect(result).toMatch(/^Compacted \d+ older messages;/);
   expect(await agent.runCommand("/context")).not.toBe(contextBefore);
-  expect(await readFile(log, "utf8")).toBe(before);
+  const compactedLog = await readFile(log, "utf8");
+  expect(compactedLog.startsWith(before)).toBe(true);
+  const appended = compactedLog
+    .slice(before.length)
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(appended).toHaveLength(1);
+  expect(appended[0].type).toBe("compaction");
+  expect(appended[0].summary.includes(marker)).toBe(true);
   expect(await readFile(index, "utf8")).toBe(beforeIndex);
+  const history = await ConversationHistory.open(join(root, ".history"));
+  const saved = await history.recoverContext(agent.sessionId);
+  const sessionId = agent.sessionId;
+  await agent.close();
+  agent = await Agent.open({ workspace: root, sessionId });
+  const recovered = await history.recoverContext(sessionId);
+  expect(JSON.stringify(recovered) === JSON.stringify(saved)).toBe(true);
+  expect((await readFile(log, "utf8")) === compactedLog).toBe(true);
   expect(
-    await agent.chat("Report only the critical fact from the first archive batch.", signal),
+    await agent.chat(
+      "Report only the critical fact from the first archive batch. Do not use tools.",
+      signal,
+    ),
   ).toContain(marker);
   expect((await readFile(log, "utf8")).startsWith(before)).toBe(true);
   const messages = await recorded();
   expect(messages.filter((message) => message.role === "user")).toHaveLength(4);
   console.log(
-    `PASS: ${result} Original log/index unchanged; critical fact recalled after summary.`,
+    `PASS: ${result} Original log prefix/index preserved; saved summary reused after restart; critical fact recalled.`,
   );
 });

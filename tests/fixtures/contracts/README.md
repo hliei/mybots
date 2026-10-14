@@ -20,3 +20,10 @@ and new-reader recovery. Unknown fixture fields exercise forward compatibility.
 Explicit directory settings test configurable Agent and Skill locations.
 See the [data contracts and compatibility guarantees](../../../docs/phase1-acceptance.md)
 for the supported formats and their limits.
+
+`events.json` defines independent inbound/outbound envelopes, including a
+Telegram source, Unix-second timestamps and reply identity. `runtime.test.ts`
+submits its literal inbound envelope through a persisted source binding and
+checks the observed event, expected outbound fields and recovered destination.
+See [runtime acceptance](../../../docs/runtime-acceptance.md) for fault/restart
+coverage and separate actual-service checks.
