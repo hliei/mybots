@@ -1,6 +1,14 @@
 import { setTimeout } from "node:timers/promises";
 import type { RunnerMailbox } from "@mybots/mailbox";
-import type { AgentProvider } from "./providers/types.ts";
+import type { AgentProvider, AgentQuery, ProviderEvent } from "./providers/types.ts";
+
+async function* queryEvents(query: AgentQuery): AsyncGenerator<ProviderEvent> {
+  try {
+    yield* query.events;
+  } catch {
+    yield { type: "result", text: null, isError: true, error: "Agent query failed." };
+  }
+}
 
 export interface PollLoopOptions {
   mailbox: RunnerMailbox;
@@ -36,14 +44,43 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
       continuation: mailbox.continuation(),
       systemContext: { instructions: options.instructions },
     });
+    const answering = [input];
+    const pollingController = new AbortController();
+    const pollingSignal = AbortSignal.any([signal, pollingController.signal]);
+    let closed = false;
+    let pollFailure: unknown;
+    const closeAdmission = () => {
+      closed = true;
+      query.end();
+      pollingController.abort();
+    };
+    const polling = (async () => {
+      while (!pollingSignal.aborted && !closed) {
+        for (const followUp of mailbox.pending()) {
+          if (closed || pollingSignal.aborted || !query.push(followUp.content)) break;
+          answering.push(followUp);
+          // Deliberately early: SDK queue entries need not survive a hard crash.
+          mailbox.acknowledge(followUp.id, "completed");
+        }
+        await setTimeout(options.pollMs ?? 100, undefined, { signal: pollingSignal }).catch(
+          (error) => {
+            if (!pollingSignal.aborted) throw error;
+          },
+        );
+      }
+    })().catch((error: unknown) => {
+      pollFailure = error;
+      closeAdmission();
+      void query.abort().catch(() => {});
+    });
     const abort = () => {
+      closeAdmission();
       void query.abort().catch(() => {});
     };
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort();
-    let terminal = false;
     try {
-      for await (const event of query.events) {
+      for await (const event of queryEvents(query)) {
         if (signal.aborted) break;
         switch (event.type) {
           case "init":
@@ -58,18 +95,32 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
           case "progress":
             mailbox.activity(event.message);
             break;
-          case "result":
-            terminal = true;
+          case "result": {
+            const current = answering.shift();
+            if (!current) throw new Error("Agent query returned an uncorrelated result");
             // Deliberate separate commits: a crash here can lose the final reply.
-            mailbox.acknowledge(input.id, event.isError ? "failed" : "completed");
-            if (event.isError) mailbox.reply(input, event.error ?? "Agent query failed.", "error");
-            else if (event.text !== null) mailbox.reply(input, event.text);
+            if (current.id === input.id)
+              mailbox.acknowledge(current.id, event.isError ? "failed" : "completed");
+            if (event.isError) {
+              mailbox.reply(current, event.error ?? "Agent query failed.", "error");
+            } else if (event.text !== null) mailbox.reply(current, event.text);
+            if (answering.length === 0) closeAdmission();
             break;
+          }
         }
       }
-      if (!terminal && !signal.aborted) throw new Error("Agent query ended without a result");
+      if (pollFailure) throw pollFailure;
+      if (answering.length > 0 && !signal.aborted) {
+        closeAdmission();
+        for (const unfinished of answering) {
+          if (unfinished.id === input.id) mailbox.acknowledge(unfinished.id, "failed");
+          mailbox.reply(unfinished, "Agent query ended before completing the exchange.", "error");
+        }
+      }
     } finally {
+      closeAdmission();
       signal.removeEventListener("abort", abort);
+      await polling;
       await query.abort();
       mailbox.activity(null);
     }

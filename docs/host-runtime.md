@@ -68,6 +68,13 @@ Session-private mailboxes and Pi state live beneath
 separate conversations. Host shutdown stops its running session containers;
 restarting and sending a new input recreates execution for the same session.
 
+Inputs within a session become ordered follow-ups during execution, with a
+separate result for each input. Other sessions execute independently against the
+shared writable workspace without a workspace-wide lock. Outbound delivery is
+sequential within each session and progresses independently across sessions;
+a held execution or delivery cannot block another session's reply. Processing
+acknowledgements continue to be mirrored while delivery is held.
+
 The host mirrors terminal processing acknowledgements into inbound status and
 independently delivers persisted outbound rows to their original destination.
 `Host.inspect(sessionId)` reports input, output, continuation and delivery state.
@@ -106,6 +113,8 @@ stops session resources and closes the central store. Host shutdown has a defaul
 removes it. After an abnormal host termination, first verify the old process and
 session containers have stopped before removing a stale lock; automatic abandoned
 execution recovery is not included here.
+Shutdown awaits each session's in-flight delivery as well as execution cleanup.
+A delivery that settles after cancellation is not marked successfully delivered.
 
 `npm run demo:host` builds and runs compiled host/CLI modules with the controlled
 mailbox driver fixture. It shows an input/reply, CLI reconnect and host restart

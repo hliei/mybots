@@ -4,7 +4,177 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import { PiProvider } from "../container/agent-runner/src/providers/pi.ts";
 import type { ProviderEvent } from "../container/agent-runner/src/providers/types.ts";
+import { waitForCheckpoint } from "./checkpoint.ts";
 import { startPiService } from "./pi-fixture.ts";
+
+test("SDK request recovery preserves the current tool exchange before queued work", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mybots-pi-retry-"));
+  const held = Promise.withResolvers<void>();
+  let failed = false;
+  const service = await startPiService(async (request) => {
+    const latest = JSON.stringify(
+      request.messages.findLast((message) => message.role === "user")?.content,
+    );
+    if (latest.includes("Follow-up")) return { text: "Follow-up result." };
+    if (!request.messages.some((message) => message.role === "tool")) {
+      await held.promise;
+      return { tool: "bash", arguments: { command: "echo once >> effects.txt" } };
+    }
+    if (!failed) {
+      failed = true;
+      return { text: "Interrupted attempt", finishReason: "network_error" };
+    }
+    return { text: "Recovered result." };
+  });
+  const query = new PiProvider({ modelRuntime: service.runtime, model: service.model }).query({
+    prompt: "Write once",
+    cwd: root,
+    sessionDir: join(root, "pi"),
+  });
+  const events: ProviderEvent[] = [];
+  const collected = (async () => {
+    for await (const event of query.events) events.push(event);
+  })();
+  try {
+    await service.waitForRequest();
+    expect(query.push("Follow-up")).toBe(true);
+    held.resolve();
+    await waitForCheckpoint(collected, "Pi query completion");
+    expect(events.filter((event) => event.type === "result")).toEqual([
+      { type: "result", text: "Recovered result." },
+      { type: "result", text: "Follow-up result." },
+    ]);
+    expect(service.requests).toHaveLength(4);
+    expect(await readFile(join(root, "effects.txt"), "utf8")).toBe("once\n");
+    expect(events.filter((event) => event.type === "progress")).toEqual([
+      { type: "progress", message: "bash" },
+    ]);
+  } finally {
+    held.resolve();
+    await query.abort();
+    await waitForCheckpoint(collected, "Pi query completion");
+    await service.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 15000);
+
+test("abort rejects new follow-ups and abandons the queued SDK work", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mybots-pi-queued-abort-"));
+  const service = await startPiService(() => ({ hold: true }));
+  const query = new PiProvider({ modelRuntime: service.runtime, model: service.model }).query({
+    prompt: "Held",
+    cwd: root,
+    sessionDir: join(root, "pi"),
+  });
+  const events: ProviderEvent[] = [];
+  const collected = (async () => {
+    for await (const event of query.events) events.push(event);
+  })();
+  try {
+    await service.waitForRequest();
+    expect(query.push("Queued")).toBe(true);
+    const stopping = query.abort();
+    expect(query.push("After abort")).toBe(false);
+    await stopping;
+    await waitForCheckpoint(collected, "Pi query completion");
+    expect(events.filter((event) => event.type === "result")).toEqual([
+      { type: "result", text: null, isError: true, error: "Agent query aborted." },
+    ]);
+    expect(service.requests).toHaveLength(1);
+  } finally {
+    await query.abort();
+    await waitForCheckpoint(collected, "Pi query completion");
+    await service.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 10000);
+
+test("Pi keeps a failed exchange separate from the next queued exchange", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mybots-pi-queued-error-"));
+  const held = Promise.withResolvers<void>();
+  const service = await startPiService(async (request) => {
+    if (request.messages.filter((message) => message.role === "user").length === 1) {
+      await held.promise;
+      return { status: 400 };
+    }
+    return { text: "Follow-up result." };
+  });
+  const query = new PiProvider({ modelRuntime: service.runtime, model: service.model }).query({
+    prompt: "Fail",
+    cwd: root,
+    sessionDir: join(root, "pi"),
+  });
+  const events: ProviderEvent[] = [];
+  const collected = (async () => {
+    for await (const event of query.events) events.push(event);
+  })();
+  try {
+    await service.waitForRequest();
+    expect(query.push("Follow-up")).toBe(true);
+    held.resolve();
+    await waitForCheckpoint(collected, "Pi query completion");
+    expect(events.filter((event) => event.type === "result")).toEqual([
+      { type: "result", text: null, isError: true, error: "Agent model request failed." },
+      { type: "result", text: "Follow-up result." },
+    ]);
+    expect(service.requests).toHaveLength(2);
+  } finally {
+    held.resolve();
+    await query.abort();
+    await waitForCheckpoint(collected, "Pi query completion");
+    await service.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 10000);
+
+test("Pi queues FIFO follow-ups and returns each exchange after its tool rounds", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mybots-pi-follow-ups-"));
+  const held = Promise.withResolvers<void>();
+  const service = await startPiService(async (request) => {
+    const latest = request.messages.findLast((message) => message.role === "user");
+    const prompt = JSON.stringify(latest?.content);
+    if (prompt.includes("First")) {
+      if (request.messages.some((message) => message.role === "tool"))
+        return { text: "First result." };
+      await held.promise;
+      return { tool: "write", arguments: { path: "first.txt", content: "first" } };
+    }
+    return { text: prompt.includes("Second") ? "Second result." : "Third result." };
+  });
+  const query = new PiProvider({ modelRuntime: service.runtime, model: service.model }).query({
+    prompt: "First",
+    cwd: root,
+    sessionDir: join(root, "pi"),
+  });
+  const events: ProviderEvent[] = [];
+  const collected = (async () => {
+    for await (const event of query.events) events.push(event);
+  })();
+  try {
+    await service.waitForRequest();
+    expect(query.push("Second")).toBe(true);
+    expect(query.push("Third")).toBe(true);
+    query.end();
+    expect(query.push("Too late")).toBe(false);
+    held.resolve();
+    await waitForCheckpoint(collected, "Pi query completion");
+    expect(events.filter((event) => event.type === "result")).toEqual([
+      { type: "result", text: "First result." },
+      { type: "result", text: "Second result." },
+      { type: "result", text: "Third result." },
+    ]);
+    expect(service.requests).toHaveLength(4);
+    expect(JSON.stringify(service.requests[1]?.messages)).not.toContain("Second");
+    expect(JSON.stringify(service.requests[2]?.messages)).not.toContain("Third");
+    expect(await readFile(join(root, "first.txt"), "utf8")).toBe("first");
+  } finally {
+    held.resolve();
+    await query.abort();
+    await waitForCheckpoint(collected, "Pi query completion");
+    await service.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 10000);
 
 test("Pi executes a workspace tool and emits one final exchange reply", async () => {
   const root = await mkdtemp(join(tmpdir(), "mybots-pi-"));
@@ -87,7 +257,9 @@ test("a new Pi query explicitly reopens the selected conversation and its tool r
     const events: ProviderEvent[] = [];
     for await (const event of reopened.events) events.push(event);
     expect(events[0]).toEqual({ type: "init", continuation });
-    expect(events.at(-1)).toEqual({ type: "result", text: "Reopened original." });
+    expect(events.filter((event) => event.type === "result")).toEqual([
+      { type: "result", text: "Reopened original." },
+    ]);
     const messages = service.requests.at(-1)?.messages;
     expect(messages).toContainEqual(
       expect.objectContaining({
@@ -182,7 +354,9 @@ test("abort stops a waiting SDK request and disposal permits reopening", async (
     });
     const next = [];
     for await (const event of reopened.events) next.push(event);
-    expect(next.at(-1)).toEqual({ type: "result", text: "After abort." });
+    expect(next.filter((event) => event.type === "result")).toEqual([
+      { type: "result", text: "After abort." },
+    ]);
   } finally {
     await query.abort();
     await service.close();

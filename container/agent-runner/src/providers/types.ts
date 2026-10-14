@@ -17,6 +17,10 @@ export type ProviderEvent =
 
 export interface AgentQuery {
   events: AsyncIterable<ProviderEvent>;
+  /** Queue one follow-up; false leaves it outside this query for a later query. */
+  push(message: string): boolean;
+  /** Close admission without cancelling work already queued. */
+  end(): void;
   /** Stop execution and await SDK cleanup. */
   abort(): Promise<void>;
 }

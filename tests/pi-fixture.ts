@@ -8,13 +8,15 @@ export interface ModelRequest {
 }
 
 export type ModelReply =
-  | { text: string }
+  | { text: string; finishReason?: string }
   | { tool: string; arguments: Record<string, unknown>; text?: string }
   | { status: number }
   | { hold: true };
 
 /** Real HTTP/SSE boundary; SDK execution and persistence are not substituted. */
-export async function startPiService(respond: (request: ModelRequest) => ModelReply) {
+export async function startPiService(
+  respond: (request: ModelRequest) => ModelReply | Promise<ModelReply>,
+) {
   const requests: ModelRequest[] = [];
   let observeRequest: (() => void) | undefined;
   const server = createServer(async (request, response) => {
@@ -22,8 +24,8 @@ export async function startPiService(respond: (request: ModelRequest) => ModelRe
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const body = JSON.parse(Buffer.concat(chunks).toString()) as ModelRequest;
     requests.push(body);
-    const reply = respond(body);
     observeRequest?.();
+    const reply = await respond(body);
     if ("hold" in reply) return;
     if ("status" in reply) {
       response.writeHead(reply.status, { "Content-Type": "application/json" });
@@ -55,7 +57,7 @@ export async function startPiService(respond: (request: ModelRequest) => ModelRe
         ],
       });
     }
-    send({}, "tool" in reply ? "tool_calls" : "stop");
+    send({}, "tool" in reply ? "tool_calls" : (reply.finishReason ?? "stop"));
     response.end("data: [DONE]\n\n");
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -88,12 +90,14 @@ export async function startPiService(respond: (request: ModelRequest) => ModelRe
     runtime,
     model,
     requests,
-    waitForRequest: async () => {
-      if (requests.length) return;
+    waitForRequest: async (count = 1) => {
+      if (requests.length >= count) return;
       let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
         await new Promise<void>((resolve, reject) => {
-          observeRequest = resolve;
+          observeRequest = () => {
+            if (requests.length >= count) resolve();
+          };
           timeout = setTimeout(
             () => reject(new Error("No controlled model request arrived")),
             3000,

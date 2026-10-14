@@ -51,6 +51,13 @@ details and scope. See
 - Give long-running resources an explicit cleanup path. Define cancellation,
   message ordering, and failure behavior when introducing asynchronous work.
 
+Active runner queries admit FIFO follow-ups through Pi's synchronous Agent
+queue with one-at-a-time consumption. Each exchange keeps its input routing;
+follow-up acknowledgement precedes execution. Query shutdown closes admission
+and awaits polling/SDK cleanup. Host execution and delivery progress independently
+between sessions, with sequential delivery inside each session. See
+[container execution](../container-runtime.md) for event and failure mapping.
+
 ## Command contract
 
 | Script | Required behavior |

@@ -44,6 +44,7 @@ interface SessionExecution {
   starting?: Promise<void>;
   handle?: SessionHandle;
   exited?: Promise<void>;
+  delivering?: Promise<void>;
 }
 
 export class Host {
@@ -211,44 +212,9 @@ export class Host {
           const execution = await pending;
           if (signal.aborted) break;
           execution.mailbox.syncAcknowledgements();
-          for (const message of execution.mailbox.outputs()) {
-            if (signal.aborted) break;
-            if (execution.mailbox.deliveryStatus(message.id)) continue;
-            const route = execution.route;
-            const input = execution.mailbox
-              .inputs()
-              .find((input) => input.id === message.in_reply_to);
-            if (
-              !input ||
-              message.channel_type !== input.channel_type ||
-              message.platform_id !== input.platform_id ||
-              message.thread_id !== input.thread_id
-            ) {
-              execution.mailbox.markDelivered(message.id, "failed");
-              this.emit({
-                type: "failure",
-                sessionId: route.session.id,
-                error: "Outbound routing does not match its input",
-              });
-              continue;
-            }
-            const channel = this.channels.get(this.channelKey(route.channel_type, route.instance));
-            if (!channel) continue;
-            try {
-              await channel.deliver(message, signal);
-              execution.mailbox.markDelivered(message.id, "delivered");
-              this.emit({ type: "output", sessionId: route.session.id, message });
-            } catch {
-              if (!signal.aborted) {
-                execution.mailbox.markDelivered(message.id, "failed");
-                this.emit({
-                  type: "failure",
-                  sessionId: route.session.id,
-                  error: "Channel delivery failed",
-                });
-              }
-            }
-          }
+          execution.delivering ??= this.deliver(execution).finally(() => {
+            execution.delivering = undefined;
+          });
         } catch {
           if (!signal.aborted) this.emit({ type: "failure", error: "Session mailbox unavailable" });
         }
@@ -256,6 +222,51 @@ export class Host {
       await setTimeout(20, undefined, { signal }).catch((error) => {
         if (!signal.aborted) throw error;
       });
+    }
+  }
+
+  private async deliver(execution: SessionExecution): Promise<void> {
+    const signal = this.controller.signal;
+    try {
+      for (const message of execution.mailbox.outputs()) {
+        if (signal.aborted) break;
+        if (execution.mailbox.deliveryStatus(message.id)) continue;
+        const route = execution.route;
+        const input = execution.mailbox.inputs().find((input) => input.id === message.in_reply_to);
+        if (
+          !input ||
+          message.channel_type !== input.channel_type ||
+          message.platform_id !== input.platform_id ||
+          message.thread_id !== input.thread_id
+        ) {
+          execution.mailbox.markDelivered(message.id, "failed");
+          this.emit({
+            type: "failure",
+            sessionId: route.session.id,
+            error: "Outbound routing does not match its input",
+          });
+          continue;
+        }
+        const channel = this.channels.get(this.channelKey(route.channel_type, route.instance));
+        if (!channel) continue;
+        try {
+          await channel.deliver(message, signal);
+          if (signal.aborted) break;
+          execution.mailbox.markDelivered(message.id, "delivered");
+          this.emit({ type: "output", sessionId: route.session.id, message });
+        } catch {
+          if (!signal.aborted) {
+            execution.mailbox.markDelivered(message.id, "failed");
+            this.emit({
+              type: "failure",
+              sessionId: route.session.id,
+              error: "Channel delivery failed",
+            });
+          }
+        }
+      }
+    } catch {
+      if (!signal.aborted) this.emit({ type: "failure", error: "Session mailbox unavailable" });
     }
   }
 
@@ -333,6 +344,7 @@ export class Host {
               await execution.starting;
               if (execution.handle) await execution.handle.stop();
               await execution.exited;
+              await execution.delivering;
               if (!this.closed) this.store.containerStatus(execution.route.session.id, "stopped");
             }),
           );
