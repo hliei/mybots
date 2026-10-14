@@ -2,13 +2,16 @@
 
 ## Tooling status
 
-The single-package toolchain is configured. `package.json` scripts and tool
-configuration files are authoritative for command details and scope. See
+The host package and the Agent runner npm workspace share a root lockfile.
+`package.json` scripts and tool configuration files are authoritative for command
+details and scope. See
 [README](../../README.md) for installation and startup instructions.
 
 ## Technical baseline
 
-- Use TypeScript with Node.js and a single root npm package.
+- Use TypeScript with Node.js 24.21.0. The host is the root npm package; the
+  Agent runner is `container/agent-runner`, an npm workspace with its own SDK
+  dependencies and compilation boundary. Install all packages from the root.
 - Use npm and commit `package-lock.json` with dependency changes.
 - Pin the supported Node.js baseline and direct dependency versions during
   tooling setup. Keep local development and CI on the same baseline.
@@ -19,9 +22,9 @@ configuration files are authoritative for command details and scope. See
 - Use Node.js native type stripping for development and keep TypeScript syntax
   erasable. Use `tsc` for type checking and compilation, Vitest for tests, and
   Biome for formatting and linting.
-- Keep application source in `src/` and build output in `dist/`. Type-check
-  source, tests, and TypeScript configuration files; compile only application
-  source into `dist/`.
+- Keep host source in `src/` and runner source in `container/agent-runner/src/`.
+  Type-check source, tests, and TypeScript configuration files; compile host
+  source into `dist/` and runner source into `container/agent-runner/dist/`.
 - Ignore dependencies, build output, coverage output, local credentials, and
   runtime data. Keep source, tests, configuration, and the lockfile in Git.
 
@@ -48,12 +51,12 @@ configuration files are authoritative for command details and scope. See
 | --- | --- |
 | `dev:cli` | Run the interactive CLI from TypeScript source. |
 | `dev:bot` | Run the bot server from TypeScript source. |
-| `typecheck` | Check source, tests, and TypeScript configuration without emitting files. |
+| `typecheck` | Check host source, tests, configuration and runner source without emitting files. |
 | `check` | Check formatting, lint, and types without modifying files; do not run tests or build. |
 | `format` | Apply formatting fixes. |
 | `test` | Run all ordinary offline tests once and exit. |
 | `test:watch` | Watch files and rerun ordinary offline tests. |
-| `build` | Compile application source into `dist/`. |
+| `build` | Compile host and runner source into their separate `dist/` directories. |
 | `start:cli` | Run the built CLI with Node.js. |
 | `start:bot` | Run the built bot server with Node.js. |
 | `verify` | Run `check`, ordinary tests, build, and an offline startup smoke check for each entry point. |
@@ -62,6 +65,11 @@ Development commands run source without building or watching; restart manually
 after code changes. Start commands use the existing build; they do not build
 automatically. Startup smoke checks must exit without live credentials and cover
 executable entry points, not only imports.
+The offline startup checks also execute the compiled Pi provider against a local
+streaming model service through `scripts/pi-session-demo.mjs`. `npm run demo:pi`
+builds and runs this demonstration separately. It exercises SDK-owned tools and
+explicit conversation reopening without credentials or container infrastructure.
+
 Introduce a separate live-test script when live-service checks are implemented;
 keep it outside `test`, `test:watch`, and `verify`.
 

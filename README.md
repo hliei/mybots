@@ -45,6 +45,31 @@ These commands run TypeScript source directly using Node.js native type
 stripping. Restart the command manually after changing code. Pass `-- --help`
 to print help without loading configuration or contacting a service.
 
+## Offline Pi session demonstration
+
+```sh
+npm run demo:pi
+```
+
+This builds the Agent runner workspace and executes the real Pi SDK against a
+local controlled streaming model service. It writes a note in a temporary Agent
+workspace, returns a final reply, then creates a new SDK session object to reopen
+the saved conversation and its tool result. It cleans up its service and temporary
+state. No account key, paid request or Docker installation is needed.
+
+The provider supports one prompt per query, initialization with a `pi:`
+continuation, intermediate activity/text/tool progress, a final result and awaited
+abort/disposal. Pass a session-local directory separately from the shared working
+directory; continuation selects its exact SDK file and never a recent log.
+Use `data/sessions/<agent_group_id>/<session_id>/pi/` for session state and
+`groups/<folder>/` for shared materials. SDK built-in tools use the working
+directory; filesystem confinement will come from the container boundary.
+
+This slice establishes SDK execution and persistence. CLI/bot routing still uses
+the existing runtime until host/container integration is delivered. SDK resource
+selection, multi-input queries, container/gateway compatibility and live DeepSeek
+acceptance are subsequent work.
+
 ## CLI conversation
 
 Copy the credential-free example into the ignored local Workspace:

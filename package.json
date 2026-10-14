@@ -9,18 +9,19 @@
   "scripts": {
     "dev:cli": "node src/cli.ts",
     "dev:bot": "node src/server.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && npm run typecheck --workspace @mybots/agent-runner",
     "check": "biome check --error-on-warnings . && npm run typecheck",
     "format": "biome format --write .",
     "test": "vitest run",
     "test:watch": "vitest --watch",
     "test:live": "vitest run --config tests/live/vitest.config.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && npm run build --workspace @mybots/agent-runner",
     "start:cli": "node dist/cli.js",
     "start:bot": "node dist/server.js",
     "check:startup": "node scripts/check-startup.mjs",
     "verify": "npm run check && npm test && npm run build && npm run check:startup",
-    "prepare": "husky"
+    "prepare": "husky",
+    "demo:pi": "npm run build --workspace @mybots/agent-runner && npm run demo --workspace @mybots/agent-runner"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
@@ -39,5 +40,8 @@
     "turndown": "7.2.4",
     "ws": "8.22.0",
     "yaml": "2.9.1"
-  }
+  },
+  "workspaces": [
+    "container/agent-runner"
+  ]
 }

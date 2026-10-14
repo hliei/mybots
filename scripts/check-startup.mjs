@@ -20,4 +20,14 @@ for (const [entry, command] of [
   assert.ok(result.stdout.includes(`Usage: npm run start:${command}`));
 }
 
-console.log("CLI and bot startup smoke checks passed.");
+const runner = spawnSync(process.execPath, ["scripts/pi-session-demo.mjs"], {
+  cwd: projectRoot,
+  encoding: "utf8",
+  timeout: 15000,
+});
+if (runner.error) throw runner.error;
+assert.equal(runner.status, 0, `Pi runner demo failed: ${runner.stderr}`);
+assert.equal(runner.stderr, "");
+assert.ok(runner.stdout.includes("Workspace tool effect and selected-session reopening passed."));
+
+console.log("CLI, bot and Pi runner startup smoke checks passed.");

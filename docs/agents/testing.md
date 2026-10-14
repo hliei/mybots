@@ -71,3 +71,24 @@ Run live-service checks only when explicitly requested. Keep credentials out of
 fixtures and output, and report live checks separately from ordinary validation.
 An offline suite passing does not establish that a real provider or platform
 connection works.
+
+## Pi Agent session exchanges
+
+`tests/pi-provider.test.ts` exercises the production provider query contract with
+Pi coding-agent SDK 1.2.0 and its real SessionManager. The controlled HTTP/SSE
+model service in `tests/pi-fixture.ts` replaces only model responses. Tests cover
+workspace read/write/edit/bash effects, tool-result continuation, one final reply,
+explicit reopening despite a newer unrelated session, cancellation, provider
+failure and invalid continuation. State lives in fresh temporary directories;
+SDK resources and local servers are closed and awaited.
+
+Conversation files stay SDK-owned in the session-local `pi/sessions/` directory.
+Resource discovery is disabled in this exchange slice. ModelRuntime is supplied
+explicitly; the fixture uses in-memory credentials and disables network catalog
+refresh so normal checks do not read personal auth or contact public providers.
+
+The root `typecheck` and `build` commands include the runner npm workspace. The
+root `verify` also runs its compiled provider through the bounded offline demo
+in `scripts/check-startup.mjs`. Run `npm run demo:pi` for visible tool/reopening
+evidence. These checks establish the Node.js package boundary; Docker mounts,
+gateway proxy/TLS, paid providers and real messaging require separate acceptance.
