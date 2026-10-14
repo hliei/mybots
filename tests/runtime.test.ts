@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RuntimeEvent } from "../src/core/events.ts";
+import { ConversationHistory } from "../src/core/history.ts";
 import { EventRuntime } from "../src/core/runtime.ts";
 import { chatFixture, toolReply, unavailableResponses } from "./chat-fixture.ts";
 
@@ -14,6 +15,39 @@ afterEach(async () => {
   runtime = undefined;
   await fixture?.close();
   fixture = undefined;
+});
+
+it("exchanges independent event fixtures through a persisted source binding", async () => {
+  fixture = await chatFixture();
+  const [inbound, outbound] = JSON.parse(
+    await readFile(new URL("./fixtures/contracts/events.json", import.meta.url), "utf8"),
+  );
+  const workspace = await fixture.workspace(
+    fixture.root,
+    'sources:\n  "platform-telegram:42:-100":\n    session_id: contract-session\n',
+  );
+  const history = await ConversationHistory.open(join(workspace, ".history"));
+  await history.createSession("helper", "contract-session", "platform-telegram:42:-100");
+  fixture.responses.push({
+    status: 200,
+    body: { choices: [{ message: { role: "assistant", content: "Saved answer" } }] },
+  });
+  runtime = await EventRuntime.open({ workspace });
+  await runtime.openSession({ sessionId: "contract-session" });
+  const events: RuntimeEvent[] = [];
+  runtime.subscribe(async (event) => {
+    events.push(event);
+  });
+  const result = await runtime.submit(inbound);
+  await runtime.stop();
+  const { timestamp: _timestamp, reply_id: _replyId, ...expected } = outbound;
+  expect(result).toMatchObject(expected);
+  expect(events[0]).toEqual(inbound);
+  expect(events[1]).toEqual(result);
+  const fresh = await ConversationHistory.open(join(workspace, ".history"));
+  expect(await fresh.getPendingReplies("contract-session")).toEqual([
+    expect.objectContaining({ destination: inbound.source, payload: outbound.content }),
+  ]);
 });
 
 it("runs another session while execution and a subscriber wait on the first session", async () => {

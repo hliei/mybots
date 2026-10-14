@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { runBot } from "../src/bot/startup.ts";
+import { TelegramChannel, telegramTransport } from "../src/bot/telegram.ts";
 import type { TelegramApi, TelegramPollResult } from "../src/bot/telegram-api.ts";
 import { ConversationHistory } from "../src/core/history.ts";
 import { EventRuntime } from "../src/core/runtime.ts";
@@ -81,6 +82,67 @@ it("broadcasts inbound and outbound envelopes to every connected client", async 
   await vi.waitFor(async () => {
     expect(await runtime?.getPendingReplies(inbound.session_id as string)).toEqual([]);
   });
+});
+
+it("orders Telegram follow-ups while WebSocket input continues in an isolated session", async () => {
+  fixture = await chatFixture();
+  const held = Promise.withResolvers<unknown>();
+  const started = Promise.withResolvers<void>();
+  fixture.server.once("request", () => started.resolve());
+  fixture.responses.push({ status: 200, body: held.promise });
+  const sends: string[] = [];
+  const api: TelegramApi = {
+    async getMe() {
+      return { id: "1" };
+    },
+    async getUpdates(offset) {
+      return { updates: [], nextOffset: offset };
+    },
+    async sendMessage(chatId, text) {
+      sends.push(`${chatId}:${text}`);
+    },
+  };
+  runtime = await EventRuntime.open({
+    workspace: await fixture.workspace(),
+    delivery: { transports: [telegramTransport(api)], ownedPlatforms: ["telegram"] },
+  });
+  const channel = new TelegramChannel({ api, runtime, allowedUserIds: ["42"] });
+  server = new WebSocketInterface({ runtime, host: "127.0.0.1", port: 0 });
+  const observer = await openClient(await server.start());
+  const first = channel.dispatch({ updateId: 1, userId: "42", chatId: "-100", text: "First" });
+  await started.promise;
+  const next = channel.dispatch({ updateId: 2, userId: "42", chatId: "-100", text: "Follow-up" });
+  try {
+    observer.send({ source: "independent", content: "Other session" });
+    const other = await observer.waitFor(
+      (event) => event.type === "OutboundEvent",
+      "independent reply",
+    );
+    expect(other).toMatchObject({ content: "Hello!", error: null });
+    expect(sends).toEqual([]);
+  } finally {
+    held.resolve({ choices: [{ message: { role: "assistant", content: "First reply" } }] });
+  }
+  const firstResult = await first;
+  const nextResult = await next;
+  expect(nextResult?.session_id).toBe(firstResult?.session_id);
+  await vi.waitFor(() => expect(sends).toEqual(["-100:First reply", "-100:Hello!"]));
+  expect(fixture.requests.at(-1)?.messages.slice(-3)).toEqual([
+    { role: "user", content: "First" },
+    { role: "assistant", content: "First reply" },
+    { role: "user", content: "Follow-up" },
+  ]);
+  await vi.waitFor(() =>
+    expect(observer.messages.filter((event) => event.type === "OutboundEvent")).toHaveLength(3),
+  );
+  expect(
+    new Set(
+      observer.messages
+        .filter((event) => event.type === "InboundEvent")
+        .map((event) => event.session_id),
+    ).size,
+  ).toBe(2);
+  await channel.stop();
 });
 
 it("observes another platform's reply without acknowledging it", async () => {
