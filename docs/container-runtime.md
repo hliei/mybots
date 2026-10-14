@@ -3,8 +3,9 @@
 The container runner consumes persisted input and produces a persisted reply
 through directional SQLite mailboxes. `provisionSession` prepares the selected
 Agent session; `DockerDriver.start` launches its Pi runner with a `OneCliGateway`.
-These are reusable production boundaries. CLI and bot still use their existing
-runtime while host routing and channel integration are being delivered.
+The persistent host uses these production boundaries for its CLI sessions.
+See [host runtime](host-runtime.md) for entity routing, startup and the local
+socket client. The bot remains on its embedded runtime until channel integration.
 
 ## Runtime and configuration
 

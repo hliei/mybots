@@ -23,3 +23,7 @@ export interface SessionHandle {
   /** Resolves only when the runtime exits. */
   wait(): Promise<void>;
 }
+
+export interface SessionDriver {
+  start(material: SessionMaterial, signal: AbortSignal): Promise<SessionHandle>;
+}

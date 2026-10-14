@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,11 +72,43 @@ it("imports runtime, CLI, and WebSocket modules without reading configuration or
     [
       "--input-type=module",
       "-e",
-      'await import("./src/core/agent.ts"); await import("./src/core/events.ts"); await import("./src/core/runtime.ts"); await import("./src/cli.ts"); await import("./src/websocket/interface.ts"); await import("./src/websocket/protocol.ts"); await import("./src/bot/startup.ts"); await import("./src/bot/telegram.ts"); await import("./src/bot/telegram-api.ts");',
+      'await import("./src/index.ts"); await import("./src/host.ts"); await import("./src/channels/cli.ts"); await import("./src/core/agent.ts"); await import("./src/core/events.ts"); await import("./src/core/runtime.ts"); await import("./src/cli.ts"); await import("./src/websocket/interface.ts"); await import("./src/websocket/protocol.ts"); await import("./src/bot/startup.ts"); await import("./src/bot/telegram.ts"); await import("./src/bot/telegram-api.ts");',
     ],
     { cwd: projectRoot, encoding: "utf8", timeout: 5000 },
   );
   expect(result.status).toBe(0);
   expect(result.stdout).toBe("");
   expect(result.stderr).toBe("");
+});
+
+it.each(["--missing-file", "--invalid-json", "--invalid-settings"])(
+  "rejects unusable host startup settings (%s) before opening services",
+  (mode) => {
+    const file = join(temporaryRoot, `${mode}.json`);
+    if (mode !== "--missing-file")
+      writeFileSync(
+        file,
+        mode === "--invalid-json" ? "{" : '{"gateway":{"apiKey":"synthetic-secret-marker"}}',
+      );
+    const result = spawnSync(
+      process.execPath,
+      ["src/index.ts", "--root", temporaryRoot, "--config", file],
+      { cwd: projectRoot, encoding: "utf8", timeout: 5000 },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Invalid host configuration");
+    expect(result.stderr).not.toContain("synthetic-secret-marker");
+  },
+);
+
+it("reports an unavailable CLI host without opening an embedded runtime", () => {
+  const result = spawnSync(process.execPath, ["src/cli.ts", "--root", missingWorkspace], {
+    cwd: projectRoot,
+    encoding: "utf8",
+    timeout: 5000,
+  });
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain("start the host first");
 });

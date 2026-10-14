@@ -37,7 +37,7 @@ details and scope. See
 ## Code conventions
 
 - Keep agent execution, terminal interaction, and message-platform handling in
-  separate modules. CLI and bot entry points share the agent core.
+  separate modules. The CLI is a client of the persistent host; the bot still embeds its existing runtime.
 - Keep platform SDK details at the platform boundary and model SDK details at
   the model boundary. Core behavior must be testable without live credentials.
 - Prefer explicit types at module boundaries. Use `unknown` for unvalidated
@@ -55,6 +55,7 @@ details and scope. See
 
 | Script | Required behavior |
 | --- | --- |
+| `dev:host` | Run the persistent host from TypeScript source. |
 | `dev:cli` | Run the interactive CLI from TypeScript source. |
 | `dev:bot` | Run the bot server from TypeScript source. |
 | `typecheck` | Check host source, tests, configuration and runner source without emitting files. |
@@ -63,6 +64,7 @@ details and scope. See
 | `test` | Run all ordinary offline tests once and exit. |
 | `test:watch` | Watch files and rerun ordinary offline tests. |
 | `build` | Compile host and runner source into their separate `dist/` directories. |
+| `start:host` | Run the built persistent host with Node.js. |
 | `start:cli` | Run the built CLI with Node.js. |
 | `start:bot` | Run the built bot server with Node.js. |
 | `verify` | Run `check`, ordinary tests, build, and an offline startup smoke check for each entry point. |
@@ -75,6 +77,11 @@ The offline startup checks also execute the compiled Pi provider against a local
 streaming model service through `scripts/pi-session-demo.mjs`. `npm run demo:pi`
 builds and runs this demonstration separately. It exercises SDK-owned tools and
 explicit conversation reopening without credentials or container infrastructure.
+
+The startup checks also run the compiled host/CLI mailbox fixture demonstration
+for persistent affinity, reconnect and host restart, plus missing-host/settings
+failures. Run `npm run demo:host` for visible evidence. It does not require Docker
+or model credentials.
 
 Introduce a separate live-test script when live-service checks are implemented;
 keep it outside `test`, `test:watch`, and `verify`.

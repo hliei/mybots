@@ -1,0 +1,22 @@
+{
+  "owner": "cli:local",
+  "agent": {
+    "id": "personal",
+    "name": "Personal",
+    "folder": "personal",
+    "model": {
+      "provider": "deepseek",
+      "id": "deepseek-chat",
+      "baseUrl": "https://api.deepseek.com",
+      "contextWindow": 128000,
+      "maxTokens": 4096
+    },
+    "instructions": "Help the owner with practical tasks in the shared workspace."
+  },
+  "destinations": [
+    { "id": "terminal", "channelType": "cli", "platformId": "local", "instance": "cli" }
+  ],
+  "cliDestinationId": "terminal",
+  "container": { "image": "mybots-agent:mailbox", "network": "mybots-isolated" },
+  "gateway": { "url": "http://127.0.0.1:10254", "proxyHost": "onecli" }
+}

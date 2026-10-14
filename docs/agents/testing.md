@@ -118,3 +118,25 @@ for pins, prerequisites and the fixture-only upstream trust exception.
 
 Infrastructure evidence and actual-service evidence are separate. A passing
 container check does not establish a live DeepSeek or Telegram deployment.
+
+## Persistent host and CLI
+
+`tests/host.test.ts` uses the public host input, observation, session inspection
+and lifecycle interfaces with real `data/host.db` entities and session mailbox
+stores. `tests/host-fixture.ts` replaces only isolated execution at the session
+driver boundary: it reads runner-permitted input, writes processing/output and
+continuation, and owns its abortable loop. It is a mailbox fixture, not evidence
+of actual Pi, Docker or gateway behavior. Tests cover concurrent first routing,
+owner denial, separate destinations sharing one Agent workspace, restart affinity,
+explicit continuation, persisted output and independent completion/delivery state,
+configuration failure, blocked delivery cancellation and bounded shutdown failure.
+
+`tests/cli.test.ts` uses actual local Unix sockets and CLI/host child processes
+for input/reply, reconnect, first-input client replacement, malformed input,
+owner-local permissions, Ctrl+C, singleton listener and SIGTERM cleanup. Startup
+tests import modules without initialization and reject invalid host settings and
+an unavailable host without credentials. The compiled `scripts/host-cli-demo.mjs`
+is included in `verify` and separately runnable with `npm run demo:host`. It uses
+the same controlled mailbox driver and removes its processes, sockets and state.
+The replaced embedded CLI tests are retired; embedded Agent, bot, tools and
+context behavior retain their own tests until their responsibilities move.
