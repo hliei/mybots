@@ -82,6 +82,13 @@ explicit reopening despite a newer unrelated session, cancellation, provider
 failure and invalid continuation. State lives in fresh temporary directories;
 SDK resources and local servers are closed and awaited.
 
+The real SDK tests also hold a model request while admitting multiple follow-ups,
+check one result per input after tool continuation, distinguish an ordinary
+failed exchange from later queued work, and exercise automatic request recovery
+without repeating a completed tool effect. Abort rejects further input and
+abandons queued SDK work. A local streaming failure exercises SDK recovery;
+ordinary HTTP errors exercise the separate terminal error path.
+
 Conversation files stay SDK-owned in the session-local `pi/sessions/` directory.
 Resource discovery is disabled in this exchange slice. ModelRuntime is supplied
 explicitly; the fixture uses in-memory credentials and disables network catalog
@@ -130,6 +137,13 @@ of actual Pi, Docker or gateway behavior. Tests cover concurrent first routing,
 owner denial, separate destinations sharing one Agent workspace, restart affinity,
 explicit continuation, persisted output and independent completion/delivery state,
 configuration failure, blocked delivery cancellation and bounded shutdown failure.
+
+Runner tests additionally cover early follow-up completion before any output,
+FIFO results across distinct reply addresses, ordinary versus thrown/missing
+results, late success after cancellation, awaited cleanup and the accepted
+queued-work loss window. Host tests hold both execution and channel delivery
+at explicit checkpoints while another session writes shared materials and replies.
+All waits are bounded; no live credentials or workspace-wide lock are required.
 
 `tests/cli.test.ts` uses actual local Unix sockets and CLI/host child processes
 for input/reply, reconnect, first-input client replacement, malformed input,

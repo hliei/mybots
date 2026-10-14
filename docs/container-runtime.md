@@ -96,13 +96,29 @@ continuation, tool activity and delivery acknowledgements are separate records.
 SDK logs remain under the session's `pi/sessions/`; a saved `pi:` continuation
 selects one exact conversation at the stable container path after recreation.
 
-The poll loop executes one persisted input at a time. Inputs arriving during a
-query remain in the mailbox until it ends; active SDK follow-up queue integration
-is subsequent work. Ordinary provider failures become failed processing plus an
-error output. Cancellation awaits the query's cleanup and leaves an unfinished
-processing claim for host recovery. Initial-result acknowledgement deliberately
-precedes output persistence, so a crash between them can lose the reply. The
-runner does not repair that accepted loss window or add atomic completion.
+The poll loop queues inputs arriving during active execution as FIFO follow-ups.
+Each input remains a separate exchange with its own reply correlation and address;
+it does not steer the current exchange. A follow-up is acknowledged completed
+as soon as the query accepts it into Pi's queue. A hard crash can therefore lose
+that work even before a reply exists. Input refused by a closing query remains
+pending for the next query.
+
+Pi's synchronous Agent queue admits one follow-up at a time. Successful
+tool-free `turn_end` events follow SDK persistence and identify exchange results;
+tool rounds and low-level `agent_end` events do not. Errors and truncated
+attempts wait for SDK recovery, the next user input, or prompt settlement before
+becoming results. An ordinary failed exchange gets an error notice at its own
+address; later queued exchanges retain their own results. A query that ends or
+throws with unfinished work produces separate failure notices for those inputs.
+Request-level SDK recovery does not redeliver the whole task or repeat completed
+tools. Raw provider diagnostics are not reply content.
+
+Cancellation closes query admission, stops follow-up polling, awaits SDK cleanup
+and discards late results. The initial unfinished processing claim remains for
+host recovery; early-completed follow-ups remain completed. Initial-result
+acknowledgement deliberately precedes output persistence, so a crash between
+them can lose the reply. The runner does not repair these accepted loss windows
+or add atomic completion.
 
 Stop a session with its handle's awaited `stop()` before re-provisioning or
 replacing immutable context. Re-provisioning identical context is idempotent;

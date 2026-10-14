@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -27,6 +27,100 @@ let host: Host | undefined;
 afterEach(async () => {
   await host?.stop();
   if (root) await rm(root, { recursive: true, force: true });
+});
+
+it("another session writes shared materials and replies while execution and delivery are held", async () => {
+  root = await realpath(await mkdtemp(join(tmpdir(), "mybots-host-independent-")));
+  const driver = new MailboxDriver();
+  const heldExecution = Promise.withResolvers<void>();
+  const heldDelivery = Promise.withResolvers<void>();
+  const started = Promise.withResolvers<void>();
+  const delivering = Promise.withResolvers<void>();
+  driver.respond = async (input, material, signal) => {
+    if (input.content === "Held execution") {
+      started.resolve();
+      const release = () => heldExecution.resolve();
+      signal.addEventListener("abort", release, { once: true });
+      try {
+        await heldExecution.promise;
+      } finally {
+        signal.removeEventListener("abort", release);
+      }
+    } else if (input.content === "Independent") {
+      await writeFile(join(material.workspace, "shared.txt"), "Independent work");
+    }
+    return `Reply: ${input.content}`;
+  };
+  host = await Host.start({
+    root,
+    driver,
+    configuration: {
+      ...configuration,
+      destinations: [
+        ...configuration.destinations,
+        { id: "notes", channelType: "cli", platformId: "notes", instance: "cli" },
+        { id: "other", channelType: "cli", platformId: "other", instance: "cli" },
+      ],
+    },
+  });
+  const received: OutboundMessage[] = [];
+  host.attachChannel({
+    channelType: "cli",
+    instance: "cli",
+    async deliver(message, signal) {
+      if (message.content === "Reply: Held delivery") {
+        delivering.resolve();
+        const release = () => heldDelivery.resolve();
+        signal.addEventListener("abort", release, { once: true });
+        try {
+          await heldDelivery.promise;
+        } finally {
+          signal.removeEventListener("abort", release);
+        }
+      }
+      received.push(message);
+    },
+  });
+  try {
+    const held = await host.accept({
+      destinationId: "terminal",
+      userId: "cli:local",
+      text: "Held execution",
+    });
+    await vi.waitFor(() => expect(driver.launches).toHaveLength(1));
+    await started.promise;
+    await host.accept({ destinationId: "notes", userId: "cli:local", text: "Held delivery" });
+    await vi.waitFor(async () =>
+      expect((await host?.inspect(host.sessions()[1].id))?.outputs).toHaveLength(1),
+    );
+    await delivering.promise;
+    const independent = await host.accept({
+      destinationId: "other",
+      userId: "cli:local",
+      text: "Independent",
+    });
+    await vi.waitFor(() =>
+      expect(received).toContainEqual(
+        expect.objectContaining({
+          content: "Reply: Independent",
+          in_reply_to: independent.messageId,
+          platform_id: "other",
+        }),
+      ),
+    );
+    expect((await host.inspect(held.sessionId)).outputs).toEqual([]);
+    expect(await readFile(join(root, "groups", "personal", "shared.txt"), "utf8")).toBe(
+      "Independent work",
+    );
+    expect(driver.launches.map((launch) => launch.material.workspace)).toEqual([
+      join(root, "groups", "personal"),
+      join(root, "groups", "personal"),
+      join(root, "groups", "personal"),
+    ]);
+  } finally {
+    heldExecution.resolve();
+    heldDelivery.resolve();
+  }
 });
 
 it("delivers persisted mailbox replies and explicitly continues the saved runner conversation after host restart", async () => {
@@ -232,7 +326,11 @@ it("cancels blocked channel delivery and stops owned session resources within a 
       });
     },
   });
-  await host.accept({ destinationId: "terminal", userId: "cli:local", text: "Blocked delivery" });
+  const accepted = await host.accept({
+    destinationId: "terminal",
+    userId: "cli:local",
+    text: "Blocked delivery",
+  });
   await started.promise;
   await host.stop({ timeoutMs: 1000 });
   await cancelled.promise;
@@ -241,6 +339,9 @@ it("cancels blocked channel delivery and stops owned session resources within a 
   ).rejects.toThrow("Host is stopped");
   host = await Host.start({ root, configuration, driver });
   expect(host.sessions()).toHaveLength(1);
+  expect((await host.inspect(accepted.sessionId)).deliveries).toEqual([
+    expect.objectContaining({ status: undefined }),
+  ]);
 });
 
 it("reports bounded shutdown failure for a driver that ignores cancellation", async () => {

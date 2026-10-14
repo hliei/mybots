@@ -28,6 +28,9 @@ export class PiProvider implements AgentProvider {
     let wake: (() => void) | undefined;
     let finished = false;
     let aborted = false;
+    let admissionClosed = false;
+    let outstanding = 1;
+    let pendingResult: Extract<ProviderEvent, { type: "result" }> | undefined;
     let session: AgentSession | undefined;
     const emit = (event: ProviderEvent) => {
       events.push(event);
@@ -80,6 +83,7 @@ export class PiProvider implements AgentProvider {
           resourceLoader,
         });
         session = created.session;
+        session.setFollowUpMode("one-at-a-time");
         emit({ type: "init", continuation: `pi:${session.sessionFile}` });
         if (aborted) {
           emit({ type: "result", text: null, isError: true, error: "Agent query aborted." });
@@ -87,7 +91,13 @@ export class PiProvider implements AgentProvider {
         }
         unsubscribe = session.subscribe((event) => {
           emit({ type: "activity" });
-          if (
+          if (event.type === "message_start" && event.message.role === "user" && pendingResult) {
+            // A new queued input proves that recovery of the previous exchange
+            // has ended. Its failure must not consume this input's later answer.
+            outstanding--;
+            emit(pendingResult);
+            pendingResult = undefined;
+          } else if (
             event.type === "message_update" &&
             event.assistantMessageEvent.type === "text_delta"
           ) {
@@ -102,18 +112,42 @@ export class PiProvider implements AgentProvider {
             });
           } else if (event.type === "tool_execution_end") {
             emit({ type: "tool", name: null });
+          } else if (event.type === "turn_end") {
+            const message = event.message;
+            if (message.role !== "assistant" || aborted) return;
+            if (message.stopReason === "error" || message.stopReason === "aborted") {
+              // The SDK may recover this attempt. Only settlement makes it terminal.
+              pendingResult = {
+                type: "result",
+                text: null,
+                isError: true,
+                error: "Agent model request failed.",
+              };
+            } else if (!message.content.some((part) => part.type === "toolCall")) {
+              const result: Extract<ProviderEvent, { type: "result" }> = {
+                type: "result",
+                text:
+                  message.content
+                    .filter((part) => part.type === "text")
+                    .map((part) => part.text)
+                    .join("") || null,
+              };
+              if (message.stopReason === "length") pendingResult = result;
+              else {
+                pendingResult = undefined;
+                outstanding--;
+                emit(result);
+              }
+            }
           }
         });
-        // prompt resolves after SDK retries and persistence; individual message/agent ends
-        // can precede tool continuation, so they must not become exchange results.
+        // Successful tool-free turn_end follows persistence and precedes the next
+        // FIFO input. prompt settlement resolves errors after SDK recovery.
         await session.prompt(input.prompt, { expandPromptTemplates: false });
-        const last = session.messages.findLast((message) => message.role === "assistant");
-        if (aborted || (last?.role === "assistant" && last.stopReason === "aborted")) {
+        if (outstanding > 0 && aborted) {
           emit({ type: "result", text: null, isError: true, error: "Agent query aborted." });
-        } else if (last?.role === "assistant" && last.stopReason === "error") {
-          emit({ type: "result", text: null, isError: true, error: "Agent model request failed." });
-        } else {
-          emit({ type: "result", text: session.getLastAssistantText() ?? null });
+        } else if (outstanding > 0 && pendingResult) {
+          emit(pendingResult);
         }
       } catch {
         emit({
@@ -131,6 +165,7 @@ export class PiProvider implements AgentProvider {
     };
     const completion = run();
     const abort = async () => {
+      admissionClosed = true;
       if (!finished) {
         aborted = true;
         await session?.abort();
@@ -138,13 +173,29 @@ export class PiProvider implements AgentProvider {
       await completion;
     };
     return {
+      push: (message) => {
+        if (admissionClosed || finished || aborted || !session?.isStreaming) return false;
+        // The low-level SDK queue is synchronous: no admission can slip past
+        // settlement while an asynchronous input hook is awaited.
+        session.agent.followUp({
+          role: "user",
+          content: [{ type: "text", text: message }],
+          timestamp: Date.now(),
+        });
+        outstanding++;
+        return true;
+      },
+      end: () => {
+        admissionClosed = true;
+      },
       abort,
       events: (async function* () {
         try {
           while (!finished || events.length > 0) {
             const event = events.shift();
-            if (event) yield event;
-            else
+            if (event) {
+              if (!(aborted && event.type === "result" && !event.isError)) yield event;
+            } else
               await new Promise<void>((resolve) => {
                 wake = resolve;
               });
