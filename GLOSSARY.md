@@ -4,9 +4,18 @@ A conversational agent that uses tools and Skills on behalf of its user.
 
 ## Language
 
+**Agent**:
+A persistent assistant identity whose instructions, Skills, and shared working
+materials can be used across multiple conversations.
+
+**Agent workspace**:
+The shared working materials and persistent resources associated with one Agent.
+Separate conversations with that Agent can access the same workspace.
+
 **Agent session**:
 A conversation associated with one Agent, containing the user's messages, the
-Agent's replies, and exchanges with tools.
+Agent's replies, and exchanges with tools. Sessions have separate conversation
+history even when they share an Agent workspace.
 
 **Agent turn**:
 An Agent's processing of one user message, including model replies and any
