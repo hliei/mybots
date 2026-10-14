@@ -1,7 +1,7 @@
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { ModelConfiguration, SessionMaterial } from "./drivers/types.ts";
-import { initializeMailbox } from "./mailbox/index.ts";
+import { initializeMailbox } from "./mailbox/node.ts";
 import type { SessionKey } from "./mailbox/types.ts";
 
 function legalName(value: string): boolean {

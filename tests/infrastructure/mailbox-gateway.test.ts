@@ -10,7 +10,7 @@ import { provisionSession } from "../../src/container-runner.ts";
 import { DockerDriver } from "../../src/drivers/docker-driver.ts";
 import type { SessionHandle } from "../../src/drivers/types.ts";
 import { OneCliGateway } from "../../src/gateway-providers/onecli.ts";
-import { HostMailbox } from "../../src/mailbox/index.ts";
+import { HostMailbox } from "../../src/mailbox/node.ts";
 
 const execute = promisify(execFile);
 

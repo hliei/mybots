@@ -37,7 +37,8 @@ const isolatedRunner = spawnSync(process.execPath, ["container/agent-runner/dist
 });
 if (isolatedRunner.error) throw isolatedRunner.error;
 assert.equal(isolatedRunner.status, 1);
-assert.ok(isolatedRunner.stderr.includes("requires Bun 1.4.0"));
+assert.ok(isolatedRunner.stderr.includes("ERR_UNSUPPORTED_ESM_URL_SCHEME"));
+assert.ok(isolatedRunner.stderr.includes("Received protocol 'bun:'"));
 assert.equal(isolatedRunner.stdout, "");
 
 console.log("CLI, bot, Pi provider and isolated runner startup smoke checks passed.");

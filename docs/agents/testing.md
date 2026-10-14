@@ -101,7 +101,9 @@ completion before output, the accepted final-reply crash gap, provider failure,
 cancellation, tool state, constrained gateway contributions and immutable
 provisioning. They use temporary state, real SQLite and a controlled management
 HTTP service. The compiled startup smoke also verifies that the isolated runner
-refuses the unsupported host runtime without fallback.
+refuses loading the Bun SQLite entry under the unsupported host runtime without
+fallback. Ordinary mailbox tests use the Node entry; actual container tests use
+the Bun entry with the same persisted protocol and concurrency protection.
 
 `npm run test:infrastructure` uses `tests/infrastructure/vitest.config.ts`.
 Ordinary discovery explicitly excludes `tests/infrastructure/`. The opt-in suite

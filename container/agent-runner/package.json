@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": "24.x"
+    "node": "24.x",
+    "bun": "1.4.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -15,5 +16,8 @@
     "@earendil-works/pi-ai": "1.2.0",
     "@earendil-works/pi-coding-agent": "1.2.0",
     "@mybots/mailbox": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0"
   }
 }

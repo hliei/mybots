@@ -1,8 +1,9 @@
+import type { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { RunnerMailbox } from "@mybots/mailbox";
+import { RunnerMailbox } from "@mybots/mailbox/bun";
 import { runMailbox } from "./poll-loop.ts";
 import { PiProvider } from "./providers/pi.ts";
 
@@ -64,8 +65,9 @@ async function main(): Promise<void> {
   if (!selected) throw new Error("Runner model unavailable.");
   const controller = new AbortController();
   const stop = () => controller.abort();
-  process.once("SIGTERM", stop);
-  process.once("SIGINT", stop);
+  const signals: EventEmitter = process;
+  signals.once("SIGTERM", stop);
+  signals.once("SIGINT", stop);
   try {
     await runMailbox({
       mailbox: new RunnerMailbox("/session"),
@@ -79,8 +81,8 @@ async function main(): Promise<void> {
       signal: controller.signal,
     });
   } finally {
-    process.removeListener("SIGTERM", stop);
-    process.removeListener("SIGINT", stop);
+    signals.removeListener("SIGTERM", stop);
+    signals.removeListener("SIGINT", stop);
   }
 }
 

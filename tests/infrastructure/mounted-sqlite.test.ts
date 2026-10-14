@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { promisify } from "node:util";
 import { expect, test } from "vitest";
-import { HostMailbox, initializeMailbox } from "../../src/mailbox/index.ts";
+import { HostMailbox, initializeMailbox } from "../../src/mailbox/node.ts";
 
 const execute = promisify(execFile);
 
@@ -48,7 +48,7 @@ test("directional readers tolerate concurrent writes on actual container mounts"
         ],
         { timeout: 10000 },
       );
-    const script = `import { RunnerMailbox } from "@mybots/mailbox";
+    const script = `import { RunnerMailbox } from "@mybots/mailbox/bun";
       const mailbox = new RunnerMailbox("/session"); const input = mailbox.pending()[0];
       for (let i = 0; i < 1000; i++) { mailbox.activity("write"); if (i % 100 === 0) mailbox.reply(input, "Checkpoint " + i); }
       mailbox.reply(input, "Done");`;
@@ -62,7 +62,7 @@ test("directional readers tolerate concurrent writes on actual container mounts"
     const result = await execute("docker", ["wait", name], { timeout: 10000 });
     expect(result.stdout.trim()).toBe("0");
     await execute("docker", ["rm", name], { timeout: 10000 });
-    await start(`import { RunnerMailbox } from "@mybots/mailbox";
+    await start(`import { RunnerMailbox } from "@mybots/mailbox/bun";
       const mailbox = new RunnerMailbox("/session");
       while (true) { const inputs = mailbox.pending(); if (inputs.length === 1001) { mailbox.reply(inputs.at(-1), "Observed 1001 inputs"); break; } await Bun.sleep(1); }`);
     for (let i = 0; i < 1000; i++)

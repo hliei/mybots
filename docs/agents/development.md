@@ -13,8 +13,11 @@ details and scope. See
   Agent runner is `container/agent-runner`, an npm workspace with its own SDK
   dependencies and compilation boundary. Its production container uses Bun 1.4.0;
   Node remains the offline SDK-development and host runtime. `src/mailbox` is a
-  shared npm workspace using Node/Bun native SQLite bindings. Install all packages
-  from the root.
+  shared npm workspace with explicit `/node` and `/bun` entries using static
+  native SQLite imports. Its root entry has no SQLite runtime import. The runner
+  pins `@types/bun` and enables Bun types in its own TypeScript project; the host
+  uses Node types and excludes the Bun entry from its compilation. Install all
+  packages from the root.
 - Use npm and commit `package-lock.json` with dependency changes.
 - Pin the supported Node.js baseline and direct dependency versions during
   tooling setup. Keep local development and CI on the same baseline.

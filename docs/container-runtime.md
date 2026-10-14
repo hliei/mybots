@@ -17,9 +17,20 @@ docker build -t mybots-agent:mailbox -f container/Dockerfile .
 The host uses Node.js 24.21.0. The runner uses Bun 1.4.0, pinned by image digest.
 Its Pi SDK dependencies are installed from the root npm lockfile in a separate
 image stage. No host credentials or runtime data enter the build context. The
-mailbox npm workspace shares its native TypeScript implementation between Node
-and Bun, using each runtime's SQLite bindings. Host compilation also emits the
-mailbox source alongside the host output.
+mailbox npm workspace exposes explicit runtime entries: `@mybots/mailbox/node`
+uses a static `node:sqlite` import, and `@mybots/mailbox/bun` uses a static
+`bun:sqlite` import. The root entry exports protocol types and lock cleanup
+without loading either SQLite driver. Both runtime entries share the schema,
+mailbox operations and per-database concurrency protection.
+
+The runner declares Bun 1.4.0 and pins `@types/bun` 1.4.0 as a development
+dependency. Only its TypeScript project enables `types: ["bun"]`; the host keeps
+`types: ["node"]` and excludes the Bun entry from its source discovery and build.
+Host compilation emits the Node entry and shared mailbox code alongside host
+output. The container executes TypeScript source with Bun; npm installs its
+runtime dependencies, while the image supplies Bun and its built-in SQLite.
+See [Bun TypeScript definitions](https://bun.sh/docs/typescript) and
+[SQLite](https://bun.sh/docs/runtime/sqlite) for the native API contracts.
 
 Provisioning takes an installation root, Agent group ID, session ID, workspace
 folder and explicit model configuration (`provider`, `id`, HTTPS `baseUrl`,

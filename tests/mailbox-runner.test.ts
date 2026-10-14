@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import { runMailbox } from "../container/agent-runner/src/poll-loop.ts";
 import type { AgentProvider } from "../container/agent-runner/src/providers/types.ts";
-import { HostMailbox, initializeMailbox, RunnerMailbox } from "../src/mailbox/index.ts";
+import { HostMailbox, initializeMailbox, RunnerMailbox } from "../src/mailbox/node.ts";
 
 test("runner acknowledges the initial result before persisting its correlated reply", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mybots-runner-"));
