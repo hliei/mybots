@@ -30,4 +30,14 @@ assert.equal(runner.status, 0, `Pi runner demo failed: ${runner.stderr}`);
 assert.equal(runner.stderr, "");
 assert.ok(runner.stdout.includes("Workspace tool effect and selected-session reopening passed."));
 
-console.log("CLI, bot and Pi runner startup smoke checks passed.");
+const isolatedRunner = spawnSync(process.execPath, ["container/agent-runner/dist/index.js"], {
+  cwd: projectRoot,
+  encoding: "utf8",
+  timeout: 5000,
+});
+if (isolatedRunner.error) throw isolatedRunner.error;
+assert.equal(isolatedRunner.status, 1);
+assert.ok(isolatedRunner.stderr.includes("requires Bun 1.4.0"));
+assert.equal(isolatedRunner.stdout, "");
+
+console.log("CLI, bot, Pi provider and isolated runner startup smoke checks passed.");

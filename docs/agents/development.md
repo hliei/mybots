@@ -2,7 +2,7 @@
 
 ## Tooling status
 
-The host package and the Agent runner npm workspace share a root lockfile.
+The host, Agent runner and shared mailbox npm workspace use a root lockfile.
 `package.json` scripts and tool configuration files are authoritative for command
 details and scope. See
 [README](../../README.md) for installation and startup instructions.
@@ -11,7 +11,10 @@ details and scope. See
 
 - Use TypeScript with Node.js 24.21.0. The host is the root npm package; the
   Agent runner is `container/agent-runner`, an npm workspace with its own SDK
-  dependencies and compilation boundary. Install all packages from the root.
+  dependencies and compilation boundary. Its production container uses Bun 1.4.0;
+  Node remains the offline SDK-development and host runtime. `src/mailbox` is a
+  shared npm workspace using Node/Bun native SQLite bindings. Install all packages
+  from the root.
 - Use npm and commit `package-lock.json` with dependency changes.
 - Pin the supported Node.js baseline and direct dependency versions during
   tooling setup. Keep local development and CI on the same baseline.
@@ -93,3 +96,14 @@ Update affected documentation and tests with the behavior they describe.
 Delivery is complete when applicable checks pass and no required validation is
 left unexplained. A passing test run does not replace type checking or running
 the compiled program.
+
+## Container execution
+
+`container/Dockerfile` pins Node 24.21.0 for reproducible npm installation and
+Bun 1.4.0 for the production runner. The image includes only runner dependencies,
+runner source and shared mailbox code. Build with `docker build -t
+mybots-agent:mailbox -f container/Dockerfile .`. Run the separate opt-in
+`npm run test:infrastructure` for mounted SQLite, proxy/TLS and controlled Pi
+execution. These checks need Docker and `openssl`, but no real account credentials.
+See [container runtime](../container-runtime.md) for fixed mounts, gateway
+configuration, cleanup and accepted completion behavior.

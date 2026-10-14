@@ -5,7 +5,7 @@ export default defineConfig({
     environment: "node",
     globals: false,
     include: ["tests/**/*.test.ts"],
-    exclude: [...configDefaults.exclude, "tests/live/**"],
+    exclude: [...configDefaults.exclude, "tests/live/**", "tests/infrastructure/**"],
     restoreMocks: true,
     unstubEnvs: true,
     unstubGlobals: true,

@@ -21,7 +21,8 @@
     "check:startup": "node scripts/check-startup.mjs",
     "verify": "npm run check && npm test && npm run build && npm run check:startup",
     "prepare": "husky",
-    "demo:pi": "npm run build --workspace @mybots/agent-runner && npm run demo --workspace @mybots/agent-runner"
+    "demo:pi": "npm run build --workspace @mybots/agent-runner && npm run demo --workspace @mybots/agent-runner",
+    "test:infrastructure": "docker build -t mybots-agent:mailbox -f container/Dockerfile . && vitest run --config tests/infrastructure/vitest.config.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
@@ -35,6 +36,7 @@
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",
+    "@onecli-sh/sdk": "2.2.1",
     "jsdom": "30.1.2",
     "openai": "7.32.0",
     "turndown": "7.2.4",
@@ -42,6 +44,7 @@
     "yaml": "2.9.1"
   },
   "workspaces": [
-    "container/agent-runner"
+    "container/agent-runner",
+    "src/mailbox"
   ]
 }

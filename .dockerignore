@@ -1,0 +1,11 @@
+.git
+.scratch
+.agents
+node_modules
+**/node_modules
+**/dist
+.env
+.env.*
+data
+groups
+workspace

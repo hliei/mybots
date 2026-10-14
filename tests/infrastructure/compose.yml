@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:18.0-alpine@sha256:48c8ad3a7284b82be4482a52076d47d879fd6fb084a1cbfccbd551f9331b0e40
+    environment:
+      POSTGRES_USER: fixture
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U fixture]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+    networks: [backend]
+    tmpfs: [/var/lib/postgresql]
+  gateway:
+    image: ghcr.io/onecli/onecli:1.42.0@sha256:8d4a3300e915259a2fcff13614ecd7394bfd35c75d6a64d69f28a28dd23f30fe
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://fixture:fixture@postgres:5432/fixture
+      GATEWAY_BASE_URL: proxy:10255
+      GATEWAY_SKIP_VERIFY_HOSTS: model.test
+      LOG_LEVEL: error
+    networks: [backend]
+    ports: [127.0.0.1::10254]
+    tmpfs: ["/app/data:uid=1000,gid=1000,mode=0700"]
+  proxy:
+    image: oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6
+    entrypoint: [bun, /fixture/proxy.mjs]
+    volumes:
+      - ./proxy.mjs:/fixture/proxy.mjs:ro
+    networks: [backend, session]
+  upstream:
+    image: oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6
+    entrypoint: [bun, /fixture/upstream.mjs]
+    environment:
+      FIXTURE_CREDENTIAL: ${MYBOTS_FIXTURE_CREDENTIAL:?Required ephemeral credential}
+    volumes:
+      - ./upstream.mjs:/fixture/upstream.mjs:ro
+      - ${MYBOTS_INFRA_ROOT:?Required temporary directory}/tls:/tls:ro
+    ports: [127.0.0.1::8080]
+    networks:
+      backend:
+        aliases: [model.test]
+networks:
+  backend:
+    internal: false
+  session:
+    internal: true

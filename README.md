@@ -67,8 +67,22 @@ directory; filesystem confinement will come from the container boundary.
 
 This slice establishes SDK execution and persistence. CLI/bot routing still uses
 the existing runtime until host/container integration is delivered. SDK resource
-selection, multi-input queries, container/gateway compatibility and live DeepSeek
+selection, multi-input queries, host/channel integration and live DeepSeek
 acceptance are subsequent work.
+
+## Isolated mailbox and gateway check
+
+```sh
+npm run test:infrastructure
+```
+
+This opt-in check requires Docker and `openssl`. It builds the production Bun
+runner, starts disposable OneCLI and controlled streaming services, verifies a
+workspace tool round and persisted mailbox reply, then recreates the container
+to reopen the same Pi conversation. It uses generated fixture credentials and
+makes no paid requests. Ordinary verification remains offline and excludes this
+suite. See [container execution](docs/container-runtime.md) for configuration,
+mount ownership, completion semantics and cleanup.
 
 ## CLI conversation
 
