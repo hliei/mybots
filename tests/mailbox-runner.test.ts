@@ -8,6 +8,7 @@ import type {
   ProviderEvent,
 } from "../container/agent-runner/src/providers/types.ts";
 import { HostMailbox, initializeMailbox, RunnerMailbox } from "../src/mailbox/node.ts";
+import { waitForCheckpoint } from "./checkpoint.ts";
 
 test.each(["result", "throw", "end"])(
   "%s failure keeps completed replies and accounts for each queued input",
@@ -132,7 +133,7 @@ test("cancelling queued execution rejects late success and retains the early-com
       ),
     );
     abort.abort();
-    await aborted.promise;
+    await waitForCheckpoint(aborted.promise, "query abort");
     expect(ended).toBe(true);
     expect(stopped).toBe(false);
     host.submit({
@@ -206,7 +207,7 @@ test("active follow-ups complete early and each FIFO result retains its own dest
       signal: abort.signal,
       pollMs: 1,
     });
-    await started.promise;
+    await waitForCheckpoint(started.promise, "active runner query");
     host.submit({
       id: "second",
       content: "Second",

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { Host, type HostConfiguration, type HostEvent } from "../src/host.ts";
 import type { OutboundMessage } from "../src/mailbox/types.ts";
+import { waitForCheckpoint } from "./checkpoint.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 
 const configuration: HostConfiguration = {
@@ -88,12 +89,12 @@ it("another session writes shared materials and replies while execution and deli
       text: "Held execution",
     });
     await vi.waitFor(() => expect(driver.launches).toHaveLength(1));
-    await started.promise;
+    await waitForCheckpoint(started.promise, "held session execution");
     await host.accept({ destinationId: "notes", userId: "cli:local", text: "Held delivery" });
     await vi.waitFor(async () =>
       expect((await host?.inspect(host.sessions()[1].id))?.outputs).toHaveLength(1),
     );
-    await delivering.promise;
+    await waitForCheckpoint(delivering.promise, "held session delivery");
     const independent = await host.accept({
       destinationId: "other",
       userId: "cli:local",

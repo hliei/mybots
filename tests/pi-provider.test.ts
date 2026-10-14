@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import { PiProvider } from "../container/agent-runner/src/providers/pi.ts";
 import type { ProviderEvent } from "../container/agent-runner/src/providers/types.ts";
+import { waitForCheckpoint } from "./checkpoint.ts";
 import { startPiService } from "./pi-fixture.ts";
 
 test("SDK request recovery preserves the current tool exchange before queued work", async () => {
@@ -38,7 +39,7 @@ test("SDK request recovery preserves the current tool exchange before queued wor
     await service.waitForRequest();
     expect(query.push("Follow-up")).toBe(true);
     held.resolve();
-    await collected;
+    await waitForCheckpoint(collected, "Pi query completion");
     expect(events.filter((event) => event.type === "result")).toEqual([
       { type: "result", text: "Recovered result." },
       { type: "result", text: "Follow-up result." },
@@ -51,7 +52,7 @@ test("SDK request recovery preserves the current tool exchange before queued wor
   } finally {
     held.resolve();
     await query.abort();
-    await collected;
+    await waitForCheckpoint(collected, "Pi query completion");
     await service.close();
     await rm(root, { recursive: true, force: true });
   }
@@ -75,14 +76,14 @@ test("abort rejects new follow-ups and abandons the queued SDK work", async () =
     const stopping = query.abort();
     expect(query.push("After abort")).toBe(false);
     await stopping;
-    await collected;
+    await waitForCheckpoint(collected, "Pi query completion");
     expect(events.filter((event) => event.type === "result")).toEqual([
       { type: "result", text: null, isError: true, error: "Agent query aborted." },
     ]);
     expect(service.requests).toHaveLength(1);
   } finally {
     await query.abort();
-    await collected;
+    await waitForCheckpoint(collected, "Pi query completion");
     await service.close();
     await rm(root, { recursive: true, force: true });
   }
@@ -111,7 +112,7 @@ test("Pi keeps a failed exchange separate from the next queued exchange", async 
     await service.waitForRequest();
     expect(query.push("Follow-up")).toBe(true);
     held.resolve();
-    await collected;
+    await waitForCheckpoint(collected, "Pi query completion");
     expect(events.filter((event) => event.type === "result")).toEqual([
       { type: "result", text: null, isError: true, error: "Agent model request failed." },
       { type: "result", text: "Follow-up result." },
@@ -120,7 +121,7 @@ test("Pi keeps a failed exchange separate from the next queued exchange", async 
   } finally {
     held.resolve();
     await query.abort();
-    await collected;
+    await waitForCheckpoint(collected, "Pi query completion");
     await service.close();
     await rm(root, { recursive: true, force: true });
   }
@@ -156,7 +157,7 @@ test("Pi queues FIFO follow-ups and returns each exchange after its tool rounds"
     query.end();
     expect(query.push("Too late")).toBe(false);
     held.resolve();
-    await collected;
+    await waitForCheckpoint(collected, "Pi query completion");
     expect(events.filter((event) => event.type === "result")).toEqual([
       { type: "result", text: "First result." },
       { type: "result", text: "Second result." },
@@ -169,7 +170,7 @@ test("Pi queues FIFO follow-ups and returns each exchange after its tool rounds"
   } finally {
     held.resolve();
     await query.abort();
-    await collected;
+    await waitForCheckpoint(collected, "Pi query completion");
     await service.close();
     await rm(root, { recursive: true, force: true });
   }
