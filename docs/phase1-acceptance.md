@@ -1,5 +1,11 @@
 # Phase 1 acceptance
 
+This record preserves the earlier acceptance scope and dated results. Current
+runtime checks and the outstanding Telegram service gate are documented in
+[runtime acceptance](runtime-acceptance.md). The commands and scenario descriptions
+below use the current append-only compaction contract; historical evidence is
+retained under its original dates.
+
 Phase 1 includes the shared Agent, CLI conversations and inspection commands,
 DeepSeek thinking/tool continuation, local tools, Skills, append-only JSONL
 history, manual/automatic compaction, explicit-provider search and HTTP content
@@ -32,7 +38,7 @@ as described in the [README](../README.md). Configure `web_search` with an expli
 Brave or SerpApi provider and its key. Then run:
 
 ```sh
-MYBOTS_ACCEPTANCE_WORKSPACE=/absolute/path/to/workspace npm run test:live
+MYBOTS_ACCEPTANCE_WORKSPACE=/absolute/path/to/workspace npm run test:live -- tests/live/phase1.test.ts
 ```
 
 The source defaults to `./workspace`. Effective model settings, including Agent
@@ -54,9 +60,10 @@ allowance and a 100,000-token context budget for these cases only.
    through the Agent. Check readable text, offsets, URL metadata, history and
    model continuation.
 4. Send three archive turns exceeding the recent-context retention target,
-   request a real manual summary, and recall a fact found only in the removed
-   prefix. Check changed active context, byte-for-byte original log/index
-   retention and subsequent append-only continuation.
+   request a real manual summary, restart the Agent and recall a fact found only
+   in the removed prefix. Check changed active context, an unchanged original log
+   prefix/index, one appended compaction record, saved context/ID reuse after
+   restart and subsequent append-only continuation.
 
 Cases run sequentially with four-minute cancellation deadlines and five-minute
 test timeouts; existing provider/tool deadlines still apply. Cleanup runs after
@@ -84,7 +91,7 @@ The delivered runtime, data formats, and tool behavior are covered as follows.
 | Unknown fields | Retain index extensions on rewrite; message files are append-only | ADR 0001; extension fixtures |
 | Skill inspection | Read discovered definitions through `SkillLoader`; inspection does not load context | ADR 0001; command/CLI tests |
 | Tool ordering | Execute multiple calls in order and preserve call/result pairing | README; ordered dependency tests |
-| Compaction | Incremental active-context summaries, reserve/usage budgets, UTF-8 estimates, safe tool boundaries, in-memory state | [ADR 0002](adr/0002-token-budgeted-context-compaction.md); offline manual/automatic invariants and real manual summary |
+| Compaction | Incremental active-context summaries, reserve/usage budgets, UTF-8 estimates, safe tool boundaries, appended summary and retention boundary | [ADR 0002](adr/0002-token-budgeted-context-compaction.md), [ADR 0004](adr/0004-persisted-active-context.md); offline reconstruction and real summary/restart |
 | Web tools | `web_search`/`fetch_content` replace legacy names/configuration without aliases; explicit Brave/SerpApi choice | [ADR 0003](adr/0003-web-search-and-content-fetching.md); migration errors and both offline adapters |
 | Web content | Direct HTTP without JavaScript rendering; bounded JSON, Unicode pagination and refetching; chunks are not stable snapshots | ADR 0003 supersedes rendered-browser acceptance; extraction and pagination tests |
 | Dependencies | Native Node.js error wording and HTTP deadlines covering body consumption | ADRs 0001/0003 and README; errors, deadline and cleanup tests |

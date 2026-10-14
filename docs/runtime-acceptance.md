@@ -145,3 +145,9 @@ delivery; their earlier live evidence remains in the separate acceptance record.
 Overall runtime acceptance is **incomplete pending actual Telegram send/receive
 and its restart checkpoint**. Delivered behavior and passing offline/model checks
 do not waive that requirement.
+
+Independent Standards and Spec reviews of the delivery found zero actionable
+findings on each axis. The reviewers retained the missing actual Telegram flow
+as an explicit acceptance limitation. The earlier acceptance guide's current
+command and compaction description were updated to match persistence/restart;
+its dated historical execution evidence remains intact.
