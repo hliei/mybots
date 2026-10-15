@@ -8,7 +8,7 @@ import { waitForCheckpoint } from "./checkpoint.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 
 const configuration: HostConfiguration = {
-  owner: "cli:local",
+  owners: ["cli:local"],
   agent: {
     id: "personal",
     name: "Personal",

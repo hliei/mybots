@@ -10,6 +10,9 @@
  * API reference: https://core.telegram.org/bots/api
  */
 
+/** Telegram's text-message length limit, in Unicode code points. */
+export const TELEGRAM_CHUNK_LIMIT = 4096;
+
 export interface TelegramUpdate {
   updateId: number;
   userId: string;

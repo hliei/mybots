@@ -1,8 +1,12 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { runBot } from "../src/bot/startup.ts";
 import { TelegramChannel, telegramTransport } from "../src/bot/telegram.ts";
-import type { TelegramApi, TelegramPollResult, TelegramUpdate } from "../src/bot/telegram-api.ts";
-import { createTelegramApi, normalizeTelegramUpdate } from "../src/bot/telegram-api.ts";
+import type {
+  TelegramApi,
+  TelegramPollResult,
+  TelegramUpdate,
+} from "../src/channels/telegram-api.ts";
+import { createTelegramApi, normalizeTelegramUpdate } from "../src/channels/telegram-api.ts";
 import { EventRuntime } from "../src/core/runtime.ts";
 import { chatFixture } from "./chat-fixture.ts";
 

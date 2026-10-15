@@ -1,8 +1,9 @@
 # Shared Agent workspace with separate conversations
 
 Status: accepted
-Implementation: persistent host/CLI affinity and shared workspace delivered;
-remaining channel adapters planned
+Implementation: persistent host/CLI affinity, owner-only Telegram
+private-chat affinity, and shared workspace delivered; local WebSocket and later
+channel adapters planned
 
 Personal entry points will use the same Agent identity and Agent workspace by
 default, with separate persistent Agent sessions per entry or chat. Returning

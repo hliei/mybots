@@ -1,5 +1,5 @@
 {
-  "owner": "cli:local",
+  "owners": ["cli:local"],
   "agent": {
     "id": "personal",
     "name": "Personal",
