@@ -123,14 +123,17 @@ it("keeps the Bot API token out of runner material and shared resources", async 
   });
   const accepted = await channel.dispatch(update());
   await vi.waitFor(async () =>
-    expect((await host?.inspect(accepted?.sessionId ?? ""))?.outputs).toHaveLength(1),
+    expect((await host?.inspect(accepted?.sessionId ?? ""))?.deliveries).toEqual([
+      expect.objectContaining({ status: "delivered" }),
+    ]),
   );
   expect(requests.some((url) => url.includes(token))).toBe(true);
-  const material = driver.launches[0].material;
   const visible = [
-    ...(await filesUnder(material.directory)),
-    ...(await filesUnder(material.workspace)),
+    ...(await filesUnder(join(root, "data"))),
+    ...(await filesUnder(join(root, "groups"))),
   ];
+  expect(visible.some((file) => file.includes("host.db"))).toBe(true);
+  expect(visible.some((file) => file.includes(".context"))).toBe(true);
   for (const file of visible)
     expect(await readFile(file, "latin1"), `${file} must not hold the token`).not.toContain(token);
   expect(JSON.stringify(await host.inspect(accepted?.sessionId ?? ""))).not.toContain(token);
