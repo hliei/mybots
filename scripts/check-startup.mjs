@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { copyFile, mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,7 +29,11 @@ const root = await mkdtemp(join(tmpdir(), "mybots-built-startup-"));
 let child;
 let exited;
 try {
-  await copyFile(new URL("../examples/host/host.json", import.meta.url), join(root, "host.json"));
+  const settings = JSON.parse(
+    await readFile(new URL("../examples/host/host.json", import.meta.url), "utf8"),
+  );
+  settings.websocket.port = 0;
+  await writeFile(join(root, "host.json"), JSON.stringify(settings));
   child = spawn(
     process.execPath,
     ["--no-strip-types", "packages/host/dist/index.js", "--root", root],
