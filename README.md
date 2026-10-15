@@ -106,10 +106,19 @@ at the next idle boundary, preserving other sessions and shared files. Configure
 in `groups/<folder>/AGENTS.md`. Disconnected replies remain in the
 mailbox without guaranteed terminal replay.
 
+An optional `websocket` section exposes the same host to trusted local WebSocket
+clients on a loopback address. Clients submit `{"type":"input","destination":"desktop","content":"hello"}`
+for a configured `websocket` destination and observe live inbound, outbound and
+failure envelopes. WebSocket destinations keep separate conversations on the
+shared Agent workspace, and observing another channel's output never acknowledges
+that channel's delivery. See [persistent host](docs/host-runtime.md) for the wire
+contract, admission, slow-peer and reconnect behavior.
+
 See [persistent host](docs/host-runtime.md) for configuration, public interfaces,
 SQLite entities, conversation ownership, failure and cleanup behavior. Run
-`npm run demo:host` for a controlled compiled input/reply/reconnect/restart demo;
-its mailbox driver fixture requires no Docker or model credentials.
+`npm run demo:host` for a controlled compiled CLI and WebSocket
+input/reply/reconnect/restart demo; its mailbox driver fixture requires no Docker
+or model credentials.
 
 ## Embedded bot runtime
 

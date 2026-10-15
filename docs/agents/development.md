@@ -37,7 +37,8 @@ details and scope. See
 ## Code conventions
 
 - Keep agent execution, terminal interaction, and message-platform handling in
-  separate modules. The CLI is a client of the persistent host; the bot still embeds its existing runtime.
+  separate modules. The CLI is a client of the persistent host and the owner-local
+  WebSocket interface is a host channel; the bot still embeds its existing runtime.
 - Keep platform SDK details at the platform boundary and model SDK details at
   the model boundary. Core behavior must be testable without live credentials.
 - Prefer explicit types at module boundaries. Use `unknown` for unvalidated

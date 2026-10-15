@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { CliChannel } from "./channels/cli.ts";
+import { WebSocketChannel } from "./channels/websocket.ts";
 import { loadHostSettings } from "./config/host.ts";
 import { DockerDriver } from "./drivers/docker-driver.ts";
 import { OneCliGateway } from "./gateway-providers/onecli.ts";
@@ -9,6 +10,7 @@ import { Host } from "./host.ts";
 export async function runHost(args: string[]): Promise<number> {
   let host: Host | undefined;
   let cli: CliChannel | undefined;
+  let webSocket: WebSocketChannel | undefined;
   let status = 0;
   const finished = Promise.withResolvers<void>();
   const stop = () => finished.resolve();
@@ -50,16 +52,31 @@ export async function runHost(args: string[]): Promise<number> {
       owner: settings.configuration.owner,
       instance: destination?.instance,
     });
+    if (settings.websocket) {
+      webSocket = await WebSocketChannel.listen({
+        host,
+        configuration: settings.configuration,
+        bindHost: settings.websocket.host,
+        port: settings.websocket.port,
+        path: settings.websocket.path,
+      });
+    }
     host.observe((event) => {
       if (event.type === "failure") console.error(`Error: ${event.error}`);
     });
     console.log(`Mybots host listening on ${join(root, "data", "cli.sock")}`);
+    if (webSocket) {
+      const address = webSocket.address;
+      console.log(
+        `Local WebSocket interface on ws://${address.host}:${address.port}${address.path}`,
+      );
+    }
     await finished.promise;
   } catch (error) {
     console.error(`Error: ${error instanceof Error ? error.message : "Host startup failed"}`);
     status = 1;
   } finally {
-    for (const cleanup of [() => cli?.close(), () => host?.stop()]) {
+    for (const cleanup of [() => webSocket?.close(), () => cli?.close(), () => host?.stop()]) {
       try {
         await cleanup();
       } catch (error) {

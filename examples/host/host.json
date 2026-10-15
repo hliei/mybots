@@ -14,9 +14,11 @@
     "instructions": "Help the owner with practical tasks in the shared workspace."
   },
   "destinations": [
-    { "id": "terminal", "channelType": "cli", "platformId": "local", "instance": "cli" }
+    { "id": "terminal", "channelType": "cli", "platformId": "local", "instance": "cli" },
+    { "id": "desktop", "channelType": "websocket", "platformId": "desktop", "instance": "ws" }
   ],
   "cliDestinationId": "terminal",
+  "websocket": { "host": "127.0.0.1", "port": 8787, "path": "/ws" },
   "container": { "image": "mybots-agent:mailbox", "network": "mybots-isolated" },
   "gateway": { "url": "http://127.0.0.1:10254", "proxyHost": "onecli" }
 }
