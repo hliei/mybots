@@ -1,7 +1,7 @@
 # Durable outbound delivery
 
 Status: accepted
-Implementation: completion commits, ordered delivery workers, finite retries, chunk progress, acknowledgements, Telegram transport, and local WebSocket interface delivered
+Implementation: completion commits, ordered delivery workers, finite retries, chunk progress, acknowledgements, Telegram transport, and local WebSocket interface delivered; superseded for the persistent host by [ADR 0008](0008-mailbox-completion-and-recovery.md)
 
 Generated replies awaiting delivery will be persisted, retried after delivery
 failure, and recovered after restart. A pending reply is cleared only after
@@ -79,3 +79,14 @@ disconnected peer is dropped without blocking the event dispatcher or another
 session. No client acknowledgement or replay protocol is added: a reconnect
 observes new events rather than historical replies, and unconfirmed replies stay
 recoverable for an explicit sender.
+
+## Host delivery supersession
+
+The persistent host does not use this ADR's chunk-progress projection, five-attempt
+schedule with 5/25/120/600-second waits, or restart-retry of an exhausted reply.
+It delivers persisted outbound rows with separate attempt and terminal state as
+[ADR 0008](0008-mailbox-completion-and-recovery.md) requires: at most three
+attempts including the first, no persisted chunk progress, and a terminal `failed`
+state that a later host instance does not retry. The accepted duplication window
+(platform acceptance before durable acknowledgement) is unchanged. The embedded
+runtime continues to follow this ADR until the runtime cutover retires it.

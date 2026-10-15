@@ -168,6 +168,17 @@ again on recovery, and neither the test nor the reply claims exactly-once
 execution. These fixtures use controlled external execution, not Pi, Docker or
 gateway behavior.
 
+`tests/host-delivery.test.ts` drives persisted outbound delivery through
+controlled channels against real central/session stores. It covers a successful
+send with cleared attempt bookkeeping, a poisoned send retried exactly three
+times before terminal `failed` state, prior-life attempt rows restored by a fresh
+host instance that still delivers once, exhaustion across host restarts that is
+never sent again, the platform-acceptance/acknowledgement gap that duplicates a
+reply, later replies continuing while an earlier reply fails in the same session,
+an independent session delivering while another destination fails, and no replay
+of output already accepted with no connected client. Attempt rows are read from
+the real host-coordination store; no live platform is contacted.
+
 `tests/cli.test.ts` uses actual local Unix sockets and CLI/host child processes
 for input/reply, reconnect, first-input client replacement, malformed input,
 owner-local permissions, Ctrl+C, singleton listener and SIGTERM cleanup. Startup

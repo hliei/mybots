@@ -5,7 +5,8 @@ import type { HostConfiguration } from "../host.ts";
 import type { AgentResources } from "../mailbox/types.ts";
 import { schema } from "./migrations/001-initial.ts";
 import { resourceSchema } from "./migrations/002-agent-resources.ts";
-import { recoverySchema } from "./migrations/003-session-recovery.ts";
+import { deliveryAttemptSchema } from "./migrations/003-delivery-attempts.ts";
+import { recoverySchema } from "./migrations/004-session-recovery.ts";
 
 export interface HostInstance {
   instance_id: string;
@@ -48,6 +49,16 @@ export interface SessionRoute {
   resources?: AgentResources;
 }
 
+/** Persisted platform-delivery bookkeeping for one outbound mailbox row. */
+export interface DeliveryAttempt {
+  message_id: string;
+  session_id: string;
+  attempts: number;
+  last_attempt_at: string | null;
+  next_attempt_at: string | null;
+  last_error: string | null;
+}
+
 export class HostStore {
   private readonly db: DatabaseSync;
   constructor(file: string, configuration: HostConfiguration) {
@@ -59,10 +70,11 @@ export class HostStore {
       const { user_version } = this.db.prepare("PRAGMA user_version").get() as {
         user_version: number;
       };
-      if (user_version > 3) throw new Error("Unsupported host schema version");
+      if (user_version > 4) throw new Error("Unsupported host schema version");
       if (user_version === 0) this.db.exec(schema);
       if (user_version <= 1) this.db.exec(resourceSchema);
-      if (user_version <= 2) this.db.exec(recoverySchema);
+      if (user_version <= 2) this.db.exec(deliveryAttemptSchema);
+      if (user_version <= 3) this.db.exec(recoverySchema);
       this.seed(configuration);
     } catch (error) {
       this.db.close();
@@ -302,6 +314,40 @@ export class HostStore {
         "UPDATE session_claims SET claimed_by = NULL, claimed_at = NULL, container_ref = NULL, updated_at = ? WHERE claimed_by = ?",
       )
       .run(now, instanceId);
+  }
+
+  /** Record one platform-delivery failure; returns the total attempts for the message. */
+  recordDeliveryAttempt(input: {
+    messageId: string;
+    sessionId: string;
+    at: string;
+    nextAttemptAt: string | null;
+    error?: string;
+  }): number {
+    this.db
+      .prepare(
+        `INSERT INTO delivery_attempts (message_id, session_id, attempts, last_attempt_at, next_attempt_at, last_error)
+         VALUES (?, ?, 1, ?, ?, ?)
+         ON CONFLICT(message_id) DO UPDATE SET session_id = excluded.session_id,
+           attempts = delivery_attempts.attempts + 1, last_attempt_at = excluded.last_attempt_at,
+           next_attempt_at = excluded.next_attempt_at, last_error = excluded.last_error`,
+      )
+      .run(input.messageId, input.sessionId, input.at, input.nextAttemptAt, input.error ?? null);
+    const row = this.db
+      .prepare("SELECT attempts FROM delivery_attempts WHERE message_id = ?")
+      .get(input.messageId) as { attempts: number };
+    return row.attempts;
+  }
+
+  deliveryAttempt(messageId: string): DeliveryAttempt | undefined {
+    return this.db.prepare("SELECT * FROM delivery_attempts WHERE message_id = ?").get(messageId) as
+      | DeliveryAttempt
+      | undefined;
+  }
+
+  /** The message reached a terminal delivery state; its attempt row is no longer needed. */
+  clearDeliveryAttempt(messageId: string): void {
+    this.db.prepare("DELETE FROM delivery_attempts WHERE message_id = ?").run(messageId);
   }
 
   close(): void {

@@ -8,6 +8,6 @@ CREATE TABLE session_claims (
  session_id TEXT PRIMARY KEY REFERENCES sessions(id), incarnation INTEGER NOT NULL,
  claimed_by TEXT, claimed_at TEXT, container_ref TEXT, updated_at TEXT NOT NULL
 );
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 COMMIT;
 `;

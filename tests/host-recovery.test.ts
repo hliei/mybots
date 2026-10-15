@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { HostStore } from "../src/db/index.ts";
 import { schema } from "../src/db/migrations/001-initial.ts";
 import { resourceSchema } from "../src/db/migrations/002-agent-resources.ts";
+import { deliveryAttemptSchema } from "../src/db/migrations/003-delivery-attempts.ts";
 import type { SessionDriver } from "../src/drivers/types.ts";
 import { Host, type HostConfiguration, type HostEvent } from "../src/host.ts";
 import { HostMailbox, RunnerMailbox } from "../src/mailbox/node.ts";
@@ -430,29 +431,39 @@ it.each(["list", "adopt"] as const)(
   },
 );
 
-it("upgrades an existing host store to the recovery schema", async () => {
-  const current = await temporaryRoot();
-  const file = join(current, "data", "host.db");
-  await mkdir(join(current, "data"), { recursive: true });
-  const previous = new DatabaseSync(file);
-  previous.exec(schema);
-  previous.exec(resourceSchema);
-  previous.close();
-  const store = new HostStore(file, configuration);
-  store.close();
-  const upgraded = new DatabaseSync(file);
-  expect(
-    (upgraded.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-  ).toBe(3);
-  expect(
-    upgraded
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('host_instances', 'session_claims') ORDER BY name",
-      )
-      .all(),
-  ).toEqual([{ name: "host_instances" }, { name: "session_claims" }]);
-  upgraded.close();
-});
+it.each([2, 3])(
+  "upgrades host schema version %s while preserving delivery attempts",
+  async (version) => {
+    const current = await temporaryRoot();
+    const file = join(current, "data", "host.db");
+    await mkdir(join(current, "data"), { recursive: true });
+    const previous = new DatabaseSync(file);
+    previous.exec(schema);
+    previous.exec(resourceSchema);
+    if (version === 3) {
+      previous.exec(deliveryAttemptSchema);
+      previous.exec(
+        "INSERT INTO delivery_attempts (message_id, session_id, attempts) VALUES ('saved-reply', 'saved-session', 2)",
+      );
+    }
+    previous.close();
+    const store = new HostStore(file, configuration);
+    if (version === 3) expect(store.deliveryAttempt("saved-reply")?.attempts).toBe(2);
+    store.close();
+    const upgraded = new DatabaseSync(file);
+    expect(
+      (upgraded.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
+    ).toBe(4);
+    expect(
+      upgraded
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('host_instances', 'session_claims') ORDER BY name",
+        )
+        .all(),
+    ).toEqual([{ name: "host_instances" }, { name: "session_claims" }]);
+    upgraded.close();
+  },
+);
 
 it("bounds repeated container crashes that happen before any claim", async () => {
   const current = await temporaryRoot();

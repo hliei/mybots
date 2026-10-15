@@ -35,8 +35,8 @@ model configuration. Optional `agent.resources.skills` selects directory IDs und
 tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
 The execution harness is Pi; the model backend is specified
 separately by `model.provider` and `model.id`. The central store uses schema
-version 3: host routing, resource selection, and the `host_instances` and
-`session_claims` lifecycle records. It migrates an existing version-2 store
+version 4: host routing, resource selection, delivery attempts, and the
+`host_instances` and `session_claims` lifecycle records. It migrates existing version-2/3 stores
 additively. The central store saves the model
 selector as `provider/id` plus its endpoint and token limits. Endpoints must use
 HTTPS without URL credentials. Host configuration and gateway management material
@@ -125,12 +125,30 @@ acknowledgements continue to be mirrored while delivery is held.
 
 The host mirrors terminal processing acknowledgements into inbound status and
 independently delivers persisted outbound rows to their original destination.
-`Host.inspect(sessionId)` reports input, output, continuation and delivery state.
+`Host.inspect(sessionId)` reports input, output, continuation and delivery state,
+including each reply's attempt count and last in-flight error.
 An output with a missing input correlation or changed reply address is rejected.
-Completion does not imply output persistence or delivery. Basic channel failure
-is terminal for this slice; outbound delivery retry accounting remains a
-separate policy. Accepted loss windows are described in
-[ADR 0008](adr/0008-mailbox-completion-and-recovery.md).
+Completion does not imply output persistence or delivery.
+
+Each platform-delivery failure records a `delivery_attempts` row in
+`data/host.db`, keyed by the outbound message, so counts survive a host restart
+and are not per-process memory. A message gets at most three attempts (including
+the first); a successful send clears its attempt row and records terminal
+`delivered` state in the session's `inbound.db`. A third failed attempt records
+terminal `failed` state and clears the row, so an exhausted message is never
+presented as sent and is not retried by a later host instance. Attempts are
+independent of processing completion, and a failing destination only affects its
+own messages: later replies in the same session and other sessions keep
+delivering. The host does not block a whole session on an exhausted reply and
+keeps no chunk-count projection. An in-flight failure records the channel error
+message (bounded to 200 characters) for inspection; `Host.inspect` exposes the
+attempt count, last attempt time and last error until the reply reaches terminal
+state. A destination whose channel is not attached yet
+stays pending—no attempt is counted—and becomes eligible once its channel is
+available, including after restart. Delivery is still not exactly-once: when the
+platform accepts a send but the host stops before recording durable
+acknowledgement, a later instance can send the same reply again. Accepted loss
+windows are described in [ADR 0008](adr/0008-mailbox-completion-and-recovery.md).
 
 The CLI wire format is one JSON line each way: input `{"text":"hello"}` and
 reply `{"text":"answer"}`. The data directory is mode 0700 and socket is mode
