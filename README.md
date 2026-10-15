@@ -96,8 +96,10 @@ npm run dev:cli -- --root ./workspace
 ```
 
 Configure the existing runner image, isolated Docker network and OneCLI gateway
-in `host.json`; real model credentials remain gateway-owned. The terminal connects
-to the owner-only `data/cli.sock`. Enter one message per line; `quit`, `exit`, `q`,
+in `host.json`; real model credentials remain gateway-owned. `owners` lists the
+owner's namespaced platform identities, with exactly one `cli:` identity for the
+terminal. The terminal connects to the owner-only `data/cli.sock`. Enter one
+message per line; `quit`, `exit`, `q`,
 EOF or Ctrl+C disconnect the client while Agent work stays on the host. A newer
 client replaces the old terminal on its first valid message. CLI reconnect and
 host restart reuse the saved conversation. `/reset` queues a fresh Pi conversation
@@ -105,6 +107,16 @@ at the next idle boundary, preserving other sessions and shared files. Configure
 `agent.resources` to select Skills and SDK built-in tools; shared instructions live
 in `groups/<folder>/AGENTS.md`. Disconnected replies remain in the
 mailbox without guaranteed terminal replay.
+
+Add one `telegram` destination for the owner's private chat (its `platformId` is
+the chat/user ID), the matching `telegram:<user-id>` owner identity and a
+`telegram` block naming the host environment variable that holds the Bot API
+token. The host polls Telegram only when that configuration is present; the token
+stays host-side and unknown senders never reach Agent work. Telegram and CLI use
+the same Agent workspace with separate persistent conversations, and replies are
+split to Telegram's message limit. See
+[persistent host](docs/host-runtime.md#telegram-private-chat) for the configuration
+shape and optional infrastructure.
 
 See [persistent host](docs/host-runtime.md) for configuration, public interfaces,
 SQLite entities, conversation ownership, failure and cleanup behavior. Run

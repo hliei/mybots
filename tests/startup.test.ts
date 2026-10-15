@@ -72,7 +72,7 @@ it("imports runtime, CLI, and WebSocket modules without reading configuration or
     [
       "--input-type=module",
       "-e",
-      'await import("./src/index.ts"); await import("./src/host.ts"); await import("./src/channels/cli.ts"); await import("./src/core/agent.ts"); await import("./src/core/events.ts"); await import("./src/core/runtime.ts"); await import("./src/cli.ts"); await import("./src/websocket/interface.ts"); await import("./src/websocket/protocol.ts"); await import("./src/bot/startup.ts"); await import("./src/bot/telegram.ts"); await import("./src/bot/telegram-api.ts");',
+      'await import("./src/index.ts"); await import("./src/host.ts"); await import("./src/channels/cli.ts"); await import("./src/core/agent.ts"); await import("./src/core/events.ts"); await import("./src/core/runtime.ts"); await import("./src/cli.ts"); await import("./src/websocket/interface.ts"); await import("./src/websocket/protocol.ts"); await import("./src/bot/startup.ts"); await import("./src/bot/telegram.ts"); await import("./src/channels/telegram-api.ts"); await import("./src/channels/telegram.ts");',
     ],
     { cwd: projectRoot, encoding: "utf8", timeout: 5000 },
   );

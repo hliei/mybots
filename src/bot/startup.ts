@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { createTelegramApi, type TelegramApi } from "../channels/telegram-api.ts";
 import { readWorkspaceSettings } from "../config/workspace.ts";
 import { EventRuntime } from "../core/runtime.ts";
 import { type WebSocketAddress, WebSocketInterface } from "../websocket/interface.ts";
 import { TelegramChannel, telegramTransport } from "./telegram.ts";
-import { createTelegramApi, type TelegramApi } from "./telegram-api.ts";
 
 export interface BotDependencies {
   createApi?: (options: { token: string }) => TelegramApi;

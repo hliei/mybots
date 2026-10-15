@@ -8,7 +8,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { runBot } from "../src/bot/startup.ts";
 import { TelegramChannel, telegramTransport } from "../src/bot/telegram.ts";
-import type { TelegramApi, TelegramPollResult } from "../src/bot/telegram-api.ts";
+import type { TelegramApi, TelegramPollResult } from "../src/channels/telegram-api.ts";
 import { ConversationHistory } from "../src/core/history.ts";
 import { EventRuntime } from "../src/core/runtime.ts";
 import { type WebSocketAddress, WebSocketInterface } from "../src/websocket/interface.ts";
