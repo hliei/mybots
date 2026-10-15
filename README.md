@@ -58,7 +58,7 @@ workspace, returns a final reply, then creates a new SDK session object to reope
 the saved conversation and its tool result. It cleans up its service and temporary
 state. No account key, paid request or Docker installation is needed.
 
-The provider supports one prompt per query, initialization with a `pi:`
+The provider supports FIFO follow-ups within a query, initialization with a `pi:`
 continuation, intermediate activity/text/tool progress, a final result and awaited
 abort/disposal. Pass a session-local directory separately from the shared working
 directory; continuation selects its exact SDK file and never a recent log.
@@ -67,9 +67,9 @@ Use `data/sessions/<agent_group_id>/<session_id>/pi/` for session state and
 directory; filesystem confinement will come from the container boundary.
 
 This slice establishes SDK execution and persistence. CLI routing now uses the persistent host; bot routing still uses
-the embedded runtime until its channel integration is delivered. SDK resource
-selection, multi-input queries, host/channel integration and live DeepSeek
-acceptance are subsequent work.
+the embedded runtime until its channel integration is delivered. Selected Agent
+resources, FIFO follow-ups and SDK-managed compaction/reset are available through
+the host; remaining channel integration and live DeepSeek acceptance follow separately.
 
 ## Isolated mailbox and gateway check
 
@@ -100,7 +100,10 @@ in `host.json`; real model credentials remain gateway-owned. The terminal connec
 to the owner-only `data/cli.sock`. Enter one message per line; `quit`, `exit`, `q`,
 EOF or Ctrl+C disconnect the client while Agent work stays on the host. A newer
 client replaces the old terminal on its first valid message. CLI reconnect and
-host restart reuse the saved conversation. Disconnected replies remain in the
+host restart reuse the saved conversation. `/reset` queues a fresh Pi conversation
+at the next idle boundary, preserving other sessions and shared files. Configure
+`agent.resources` to select Skills and SDK built-in tools; shared instructions live
+in `groups/<folder>/AGENTS.md`. Disconnected replies remain in the
 mailbox without guaranteed terminal replay.
 
 See [persistent host](docs/host-runtime.md) for configuration, public interfaces,

@@ -90,7 +90,7 @@ abandons queued SDK work. A local streaming failure exercises SDK recovery;
 ordinary HTTP errors exercise the separate terminal error path.
 
 Conversation files stay SDK-owned in the session-local `pi/sessions/` directory.
-Resource discovery is disabled in this exchange slice. ModelRuntime is supplied
+Resource discovery uses only explicitly selected Agent Skills and the shared workspace's `AGENTS.md`; ancestor and personal resource discovery stay disabled. ModelRuntime is supplied
 explicitly; the fixture uses in-memory credentials and disables network catalog
 refresh so normal checks do not read personal auth or contact public providers.
 
@@ -154,3 +154,20 @@ is included in `verify` and separately runnable with `npm run demo:host`. It use
 the same controlled mailbox driver and removes its processes, sockets and state.
 The replaced embedded CLI tests are retired; embedded Agent, bot, tools and
 context behavior retain their own tests until their responsibilities move.
+
+## Agent resources and conversation controls
+
+`tests/pi-resources.test.ts` uses the real SDK with a controlled streaming service
+for selected Skill discovery/read, explicit built-in tool selection, shared Agent
+instructions, missing resources, separate conversations reading shared materials,
+automatic compaction and exact summary reopening. An explicit reset persists a
+fresh SDK conversation without a model request and preserves previous logs.
+
+`tests/host-resources.test.ts` connects the public Host API to the production
+mailbox loop and real Pi adapter through an offline driver. It holds a model
+request, queues an owner reset and later input, checks the idle/FIFO boundary,
+authorization, separate session continuation and shared-file preservation, then
+restarts the host to verify the new continuation. This driver bypasses Docker
+and gateway transport; it establishes neither mount isolation nor live-provider
+compatibility. `tests/host.test.ts` also verifies selected resources persist into
+each session's immutable runner context after host restart.

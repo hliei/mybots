@@ -12,7 +12,7 @@ import type {
   SessionMaterial,
 } from "./drivers/types.ts";
 import { HostMailbox } from "./mailbox/node.ts";
-import type { OutboundMessage } from "./mailbox/types.ts";
+import type { AgentResources, OutboundMessage } from "./mailbox/types.ts";
 
 export interface HostConfiguration {
   owner: string;
@@ -22,6 +22,7 @@ export interface HostConfiguration {
     folder: string;
     model: ModelConfiguration;
     instructions?: string;
+    resources?: AgentResources;
   };
   destinations: { id: string; channelType: string; platformId: string; instance: string }[];
 }
@@ -121,6 +122,7 @@ export class Host {
         folder: route.folder,
         model: route.model,
         instructions: route.instructions,
+        resources: route.resources,
       }).then((material) => ({
         route,
         material,
@@ -137,6 +139,22 @@ export class Host {
     userId: string;
     text: string;
   }): Promise<{ sessionId: string; messageId: string }> {
+    if (input.text.trim() === "/reset") return this.reset(input);
+    return this.enqueue(input, "message");
+  }
+
+  /** Queue an owner control; the runner executes it after the active SDK query settles. */
+  reset(input: {
+    destinationId: string;
+    userId: string;
+  }): Promise<{ sessionId: string; messageId: string }> {
+    return this.enqueue({ ...input, text: "Conversation reset by owner." }, "reset");
+  }
+
+  private async enqueue(
+    input: { destinationId: string; userId: string; text: string },
+    kind: "message" | "reset",
+  ): Promise<{ sessionId: string; messageId: string }> {
     if (this.stopped) throw new Error("Host is stopped");
     if (!input.text.trim()) throw new Error("Input text is required");
     const route = this.store.resolve(input.destinationId, input.userId);
@@ -145,6 +163,7 @@ export class Host {
     const messageId = randomUUID();
     execution.mailbox.submit({
       id: messageId,
+      kind,
       content: input.text,
       channel_type: route.channel_type,
       platform_id: route.platform_id,

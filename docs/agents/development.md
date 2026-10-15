@@ -124,3 +124,22 @@ mybots-agent:mailbox -f container/Dockerfile .`. Run the separate opt-in
 execution. These checks need Docker and `openssl`, but no real account credentials.
 See [container runtime](../container-runtime.md) for fixed mounts, gateway
 configuration, cleanup and accepted completion behavior.
+
+## Agent resources and context
+
+The host persists `agent.resources` (selected Skill IDs and SDK built-in tool
+names) separately from model configuration. Provisioning copies only that
+non-secret selection into immutable runner context. The runner loads the shared
+workspace's `AGENTS.md` and selected `skills/<id>/SKILL.md` with Pi's resource
+loader when opening a query. Default personal/ancestor resource discovery,
+extensions, prompt templates, themes and file-backed SDK settings stay disabled.
+Shared instruction/Skill file changes take effect on the next query, after the
+current query and SDK cleanup finish; queued follow-ups retain their query's
+resources. Changing the configured selection requires stopped execution and
+explicit replacement of immutable context, as with model configuration.
+
+Pi owns automatic compaction, summaries and reopening. `/reset` or `Host.reset`
+queues an owner control in the session mailbox; it cannot enter the active SDK
+follow-up queue. It executes after query cleanup, stores a fresh `pi:` continuation
+and replies through ordinary persisted delivery. Later input uses that new
+conversation. No host token-budget algorithm or transcript rewriting is involved.

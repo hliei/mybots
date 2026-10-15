@@ -38,12 +38,15 @@ export function createMailbox(withDatabase: WithDatabase) {
       this.directory = directory;
     }
 
-    submit(message: { id: string; content: string } & Routing): void {
+    submit(
+      message: { id: string; content: string; kind?: InboundMessage["kind"] } & Routing,
+    ): void {
       withDatabase(this.directory, "inbound", false, (db) => {
         db.run(
           `INSERT INTO messages_in (id, seq, kind, timestamp, platform_id, channel_type, thread_id, content)
-        VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 2 FROM messages_in), 'message', ?, ?, ?, ?, ?)`,
+        VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 2 FROM messages_in), ?, ?, ?, ?, ?, ?)`,
           message.id,
+          message.kind ?? "message",
           new Date().toISOString(),
           message.platform_id,
           message.channel_type,

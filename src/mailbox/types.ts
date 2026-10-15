@@ -1,3 +1,9 @@
+/** Explicit Agent-owned SDK resource selection; paths resolve inside its shared workspace. */
+export interface AgentResources {
+  skills?: readonly string[];
+  tools?: readonly ("read" | "write" | "edit" | "bash" | "grep" | "find" | "ls")[];
+}
+
 export interface SessionKey {
   agentGroupId: string;
   sessionId: string;
@@ -12,7 +18,7 @@ export interface Routing {
 export interface InboundMessage extends Routing {
   id: string;
   seq: number;
-  kind: "message";
+  kind: "message" | "reset";
   timestamp: string;
   content: string;
   status: "pending" | "completed" | "failed";

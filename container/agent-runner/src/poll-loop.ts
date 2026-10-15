@@ -1,5 +1,5 @@
 import { setTimeout } from "node:timers/promises";
-import type { RunnerMailbox } from "@mybots/mailbox";
+import type { AgentResources, RunnerMailbox } from "@mybots/mailbox";
 import type { AgentProvider, AgentQuery, ProviderEvent } from "./providers/types.ts";
 
 async function* queryEvents(query: AgentQuery): AsyncGenerator<ProviderEvent> {
@@ -16,6 +16,7 @@ export interface PollLoopOptions {
   cwd: string;
   sessionDir: string;
   instructions?: string;
+  resources?: AgentResources;
   signal: AbortSignal;
   pollMs?: number;
 }
@@ -42,7 +43,8 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
       cwd: options.cwd,
       sessionDir: options.sessionDir,
       continuation: mailbox.continuation(),
-      systemContext: { instructions: options.instructions },
+      control: input.kind === "reset" ? "reset" : undefined,
+      systemContext: { instructions: options.instructions, resources: options.resources },
     });
     const answering = [input];
     const pollingController = new AbortController();
@@ -57,7 +59,16 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
     const polling = (async () => {
       while (!pollingSignal.aborted && !closed) {
         for (const followUp of mailbox.pending()) {
-          if (closed || pollingSignal.aborted || !query.push(followUp.content)) break;
+          // Controls form a FIFO boundary: neither the control nor later messages
+          // may enter the active SDK queue. The outer loop runs them after cleanup.
+          if (
+            input.kind === "reset" ||
+            followUp.kind === "reset" ||
+            closed ||
+            pollingSignal.aborted ||
+            !query.push(followUp.content)
+          )
+            break;
           answering.push(followUp);
           // Deliberately early: SDK queue entries need not survive a hard crash.
           mailbox.acknowledge(followUp.id, "completed");

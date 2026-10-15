@@ -1,4 +1,4 @@
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
@@ -9,6 +9,7 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { validateAgentResources } from "@mybots/mailbox";
 import type { AgentProvider, AgentQuery, ProviderEvent, QueryInput } from "./types.ts";
 
 export interface PiProviderOptions {
@@ -28,7 +29,7 @@ export class PiProvider implements AgentProvider {
     let wake: (() => void) | undefined;
     let finished = false;
     let aborted = false;
-    let admissionClosed = false;
+    let admissionClosed = input.control === "reset";
     let outstanding = 1;
     let pendingResult: Extract<ProviderEvent, { type: "result" }> | undefined;
     let session: AgentSession | undefined;
@@ -44,7 +45,7 @@ export class PiProvider implements AgentProvider {
         const agentDir = join(sessionDir, "config");
         await mkdir(historyDir, { recursive: true });
         let manager: SessionManager;
-        if (input.continuation !== undefined) {
+        if (input.control !== "reset" && input.continuation !== undefined) {
           const file = input.continuation.startsWith("pi:")
             ? resolve(input.continuation.slice(3))
             : "";
@@ -56,6 +57,23 @@ export class PiProvider implements AgentProvider {
         } else {
           manager = SessionManager.create(input.cwd, historyDir);
         }
+        const resources = validateAgentResources(input.systemContext?.resources);
+        const cwd = await realpath(input.cwd);
+        const skillPaths: string[] = [];
+        for (const name of resources?.skills ?? []) {
+          const file = join(cwd, "skills", name, "SKILL.md");
+          if ((await realpath(file)) !== file) throw new Error("Agent Skills must use real paths");
+          skillPaths.push(file);
+        }
+        const agentsFile = join(cwd, "AGENTS.md");
+        const agentsFiles: { path: string; content: string }[] = [];
+        try {
+          if ((await realpath(agentsFile)) !== agentsFile)
+            throw new Error("Agent instructions must use a real path");
+          agentsFiles.push({ path: agentsFile, content: await readFile(agentsFile, "utf8") });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
         const settingsManager = SettingsManager.inMemory();
         const resourceLoader = new DefaultResourceLoader({
           cwd: input.cwd,
@@ -63,6 +81,8 @@ export class PiProvider implements AgentProvider {
           settingsManager,
           noExtensions: true,
           noSkills: true,
+          additionalSkillPaths: skillPaths,
+          agentsFilesOverride: () => ({ agentsFiles }),
           noPromptTemplates: true,
           noThemes: true,
           noContextFiles: true,
@@ -71,19 +91,34 @@ export class PiProvider implements AgentProvider {
             : [],
         });
         await resourceLoader.reload();
+        if (resourceLoader.getSkills().diagnostics.some((item) => item.type === "error"))
+          throw new Error("Invalid selected Agent Skills");
         const created = await createAgentSession({
           cwd: input.cwd,
           agentDir,
           modelRuntime: this.options.modelRuntime,
           model: this.options.model,
           thinkingLevel: "off",
-          tools: ["read", "write", "edit", "bash"],
+          tools: [...(resources?.tools ?? ["read", "write", "edit", "bash"])],
           sessionManager: manager,
           settingsManager,
           resourceLoader,
         });
         session = created.session;
         session.setFollowUpMode("one-at-a-time");
+        if (input.control === "reset") {
+          if (aborted) throw new Error("Agent query aborted");
+          // Pi persists setup only once a conversation message exists. Record the
+          // owner's control action without invoking the model or writing JSONL ourselves.
+          manager.appendMessage({
+            role: "user",
+            content: "Conversation reset by owner.",
+            timestamp: Date.now(),
+          });
+          emit({ type: "init", continuation: `pi:${session.sessionFile}` });
+          emit({ type: "result", text: "Conversation reset." });
+          return;
+        }
         emit({ type: "init", continuation: `pi:${session.sessionFile}` });
         if (aborted) {
           emit({ type: "result", text: null, isError: true, error: "Agent query aborted." });

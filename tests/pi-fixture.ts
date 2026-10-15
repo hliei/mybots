@@ -4,6 +4,7 @@ import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 export interface ModelRequest {
+  tools?: { function: { name: string } }[];
   messages: Array<{ role: string; content?: unknown; tool_calls?: unknown }>;
 }
 

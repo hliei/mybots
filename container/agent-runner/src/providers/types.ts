@@ -1,10 +1,12 @@
+import type { AgentResources } from "@mybots/mailbox";
 export interface QueryInput {
   prompt: string;
   cwd: string;
   /** Session-local Pi state, separate from the shared Agent workspace. */
   sessionDir: string;
   continuation?: string;
-  systemContext?: { instructions?: string };
+  control?: "reset";
+  systemContext?: { instructions?: string; resources?: AgentResources };
 }
 
 export type ProviderEvent =
