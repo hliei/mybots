@@ -7,14 +7,14 @@
     "node": "24.x"
   },
   "scripts": {
-    "dev:cli": "node src/cli.ts",
+    "dev:cli": "node src/cli/client.ts",
     "typecheck": "tsc --noEmit && npm run typecheck --workspace @mybots/agent-runner",
     "check": "biome check --error-on-warnings . && npm run typecheck",
     "format": "biome format --write .",
     "test": "vitest run",
     "test:watch": "vitest --watch",
     "build": "tsc -p tsconfig.build.json && npm run build --workspace @mybots/agent-runner",
-    "start:cli": "node dist/cli.js",
+    "start:cli": "node dist/cli/client.js",
     "check:startup": "node scripts/check-startup.mjs",
     "verify": "npm run check && npm test && npm run build && npm run check:startup",
     "prepare": "husky",

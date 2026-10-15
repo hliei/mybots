@@ -310,7 +310,13 @@ interface before stopping the host.
 `Host.start({ root, configuration, driver })`, `accept`, `sessions`, `inspect`,
 `reset({ destinationId, userId })`, `observe`, `attachChannel` and `stop` are the host boundary. The driver accepts
 session material and an abort signal and returns an awaited stop/exit handle.
-`CliChannel.listen` and `close` own the local listener and its connected sockets.
+`CliChannel.listen` and `close` in `src/cli/socket-server.ts` own the local listener
+and its connected sockets. The independent `src/cli/client.ts` parses CLI arguments
+and starts `src/cli/chat.ts` for terminal prompts, input and reply display.
+`src/cli/socket-client.ts` owns connection, newline-delimited JSON framing,
+text send/receive and awaited socket closure. The terminal handles close results
+without accessing the underlying socket. The connection stays open for interactive
+chat; EOF, quit or Ctrl+C disconnect it while host-side Agent work continues.
 `WebSocketChannel.listen` and `close` own the owner-local WebSocket listener, its
 clients and their bounded frames. `TelegramChannel.listen`, `start` and `stop` own
 host delivery and Bot API polling for one Telegram instance; `dispatch` routes a
@@ -344,7 +350,7 @@ opt-in infrastructure suite and actual-service acceptance remain separate.
 
 `src/index.ts` is the sole host startup entry point. It composes the CLI socket
 service and configured Telegram and WebSocket channels. Use `dev:host` or
-`start:host` once per installation root; `src/cli.ts` remains the independent
+`start:host` once per installation root; `src/cli/client.ts` remains the independent
 socket-client entry point.
 
 ## Shared instructions and Skills

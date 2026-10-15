@@ -72,7 +72,7 @@ it("imports runtime, CLI, and WebSocket modules without reading configuration or
     [
       "--input-type=module",
       "-e",
-      'await import("./src/index.ts"); await import("./src/host.ts"); await import("./src/channels/cli.ts"); await import("./src/channels/websocket.ts"); await import("./src/cli.ts"); await import("./src/channels/telegram-api.ts"); await import("./src/channels/telegram.ts");',
+      'await import("./src/index.ts"); await import("./src/host.ts"); await import("./src/cli/socket-server.ts"); await import("./src/channels/websocket.ts"); await import("./src/cli/client.ts"); await import("./src/channels/telegram-api.ts"); await import("./src/channels/telegram.ts");',
     ],
     { cwd: projectRoot, encoding: "utf8", timeout: 5000 },
   );
@@ -122,7 +122,7 @@ it("rejects a non-loopback WebSocket bind in host settings", () => {
 });
 
 it("reports an unavailable CLI host without opening an embedded runtime", () => {
-  const result = spawnSync(process.execPath, ["src/cli.ts", "--root", missingWorkspace], {
+  const result = spawnSync(process.execPath, ["src/cli/client.ts", "--root", missingWorkspace], {
     cwd: projectRoot,
     encoding: "utf8",
     timeout: 5000,

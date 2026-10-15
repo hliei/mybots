@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 
 for (const [entry, command] of [
-  ["cli", "cli"],
+  ["cli/client", "cli"],
   ["index", "host"],
 ]) {
   const result = spawnSync(process.execPath, [`dist/${entry}.js`, "--help"], {
@@ -51,7 +51,7 @@ assert.equal(host.status, 0, `Host CLI demo failed: ${host.stderr}`);
 assert.equal(host.stderr, "");
 assert.ok(host.stdout.includes("Persistent host routing, CLI/WebSocket conversations"));
 
-for (const entry of ["index", "cli"]) {
+for (const entry of ["index", "cli/client"]) {
   const failure = spawnSync(
     process.execPath,
     [`dist/${entry}.js`, "--root", "/__mybots_missing_host_root__"],
@@ -66,7 +66,7 @@ for (const entry of ["index", "cli"]) {
   assert.equal(failure.stdout, "");
   assert.ok(
     failure.stderr.includes(
-      entry !== "cli" ? "Invalid host configuration" : "start the host first",
+      entry !== "cli/client" ? "Invalid host configuration" : "start the host first",
     ),
   );
 }

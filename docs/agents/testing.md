@@ -184,7 +184,10 @@ the real host-coordination store; no live platform is contacted.
 
 `tests/cli.test.ts` uses actual local Unix sockets and CLI/host child processes
 for input/reply, reconnect, first-input client replacement, malformed input,
-owner-local permissions, Ctrl+C, singleton listener and SIGTERM cleanup. Startup
+owner-local permissions, Ctrl+C, singleton listener and SIGTERM cleanup. Controlled
+socket peers also exercise fragmented/coalesced replies, text validation,
+unexpected disconnect, EOF and superseded-client exit status through the actual
+CLI process. Startup
 tests import modules without initialization and reject invalid host settings and
 an unavailable host without credentials. The compiled `scripts/host-cli-demo.mjs`
 is included in `verify` and separately runnable with `npm run demo:host`. It uses

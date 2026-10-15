@@ -1,11 +1,12 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, realpath, rm, stat, unlink } from "node:fs/promises";
-import { connect, type Socket } from "node:net";
+import { connect, createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { CliChannel } from "../src/channels/cli.ts";
+import { CliChannel } from "../src/cli/socket-server.ts";
 import { Host, type HostConfiguration } from "../src/host.ts";
+import { waitForCheckpoint } from "./checkpoint.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 
 const configuration: HostConfiguration = {
@@ -27,6 +28,7 @@ const configuration: HostConfiguration = {
 let root: string;
 let host: Host | undefined;
 let channel: CliChannel | undefined;
+let server: Server | undefined;
 const sockets: Socket[] = [];
 const children: ChildProcessWithoutNullStreams[] = [];
 afterEach(async () => {
@@ -49,6 +51,8 @@ afterEach(async () => {
       }
     }
   }
+  if (server) await new Promise<void>((resolve) => server?.close(() => resolve()));
+  server = undefined;
   await channel?.close();
   await host?.stop();
   channel = undefined;
@@ -140,7 +144,7 @@ it("rejects malformed socket input without accepting Agent work and remains usab
 it("executes the CLI as a host client and reconnects to the same saved conversation", async () => {
   await setup();
   for (const text of ["First", "Continue"]) {
-    const child = spawn(process.execPath, ["src/cli.ts", "--root", root], { stdio: "pipe" });
+    const child = spawn(process.execPath, ["src/cli/client.ts", "--root", root], { stdio: "pipe" });
     children.push(child);
     let stdout = "";
     let stderr = "";
@@ -171,7 +175,7 @@ it("executes the CLI as a host client and reconnects to the same saved conversat
 
 it("disconnects a CLI process with Ctrl+C while the host keeps its conversation available", async () => {
   await setup();
-  const child = spawn(process.execPath, ["src/cli.ts", "--root", root], { stdio: "pipe" });
+  const child = spawn(process.execPath, ["src/cli/client.ts", "--root", root], { stdio: "pipe" });
   children.push(child);
   let stdout = "";
   child.stdout.setEncoding("utf8").on("data", (chunk) => {
@@ -265,4 +269,84 @@ it("stops the host even when removing the CLI socket fails during shutdown", asy
   } finally {
     clearTimeout(timeout);
   }
+});
+
+async function controlledTerminal() {
+  root = await realpath(await mkdtemp(join(tmpdir(), "mybots-cli-peer-")));
+  await mkdir(join(root, "data"));
+  const connected = Promise.withResolvers<Socket>();
+  server = createServer((socket) => {
+    sockets.push(socket);
+    connected.resolve(socket);
+  });
+  const listener = server;
+  await new Promise<void>((resolve, reject) => {
+    listener.once("error", reject);
+    listener.listen(join(root, "data", "cli.sock"), resolve);
+  });
+  const child = spawn(process.execPath, ["src/cli/client.ts", "--root", root], { stdio: "pipe" });
+  children.push(child);
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.setEncoding("utf8").on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("close", resolve);
+    child.once("error", reject);
+  });
+  const peer = await waitForCheckpoint(connected.promise, "CLI connection");
+  await vi.waitFor(() => expect(stdout).toContain("Connected"));
+  return {
+    child,
+    peer,
+    exited,
+    get stdout() {
+      return stdout;
+    },
+    get stderr() {
+      return stderr;
+    },
+  };
+}
+
+it("preserves text framing across fragmented and coalesced replies", async () => {
+  const terminal = await controlledTerminal();
+  let input = "";
+  terminal.peer.setEncoding("utf8").on("data", (chunk) => {
+    input += chunk;
+  });
+  terminal.child.stdin.write("  Message from the terminal  \n");
+  await vi.waitFor(() => expect(input).toBe('{"text":"Message from the terminal"}\n'));
+  terminal.peer.write('{"text":"First reply"}\n{"text":"Second');
+  await vi.waitFor(() => expect(terminal.stdout).toContain("First reply\n"));
+  expect(terminal.stdout).not.toContain("Second reply");
+  terminal.peer.write(' reply 😀"}\n{"text":"Third reply"}\n');
+  await vi.waitFor(() => expect(terminal.stdout).toContain("Second reply 😀\n"));
+  expect(terminal.stdout).toContain("Third reply\n");
+  terminal.child.stdin.end("quit\n");
+  expect(await waitForCheckpoint(terminal.exited, "terminal quit")).toBe(0);
+  expect(terminal.stderr).toBe("");
+});
+
+it.each([
+  ["EOF", 0],
+  ["disconnect", 1],
+  ["malformed", 1],
+  ["invalid text", 1],
+  ["superseded", 0],
+] as const)("closes the terminal on %s with its existing exit status", async (mode, expected) => {
+  const terminal = await controlledTerminal();
+  if (mode === "EOF") terminal.child.stdin.end();
+  if (mode === "disconnect") terminal.peer.end();
+  if (mode === "malformed") terminal.peer.write("not JSON\n");
+  if (mode === "invalid text") terminal.peer.write('{"text":42}\n');
+  if (mode === "superseded") terminal.peer.end('{"text":"[superseded by a newer client]"}\n');
+  expect(await waitForCheckpoint(terminal.exited, `terminal ${mode}`)).toBe(expected);
+  if (mode === "disconnect") expect(terminal.stderr).toContain("Host disconnected");
+  else expect(terminal.stderr).toBe("");
+  if (mode === "superseded") expect(terminal.stdout).toContain("[superseded by a newer client]");
 });

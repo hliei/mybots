@@ -1,9 +1,9 @@
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { CliChannel } from "./channels/cli.ts";
 import { TelegramChannel, type TelegramDestination } from "./channels/telegram.ts";
 import { createTelegramApi, type TelegramApi } from "./channels/telegram-api.ts";
 import { WebSocketChannel } from "./channels/websocket.ts";
+import { CliChannel } from "./cli/socket-server.ts";
 import { loadHostSettings } from "./config/host.ts";
 import { DockerDriver } from "./drivers/docker-driver.ts";
 import { OneCliGateway } from "./gateway-providers/onecli.ts";

@@ -39,7 +39,10 @@ details and scope. See
 - Keep agent execution, terminal interaction, and message-platform handling in
   separate modules. The CLI is a client of the persistent host and the owner-local
   WebSocket interface is a host channel. `src/index.ts` is the sole host startup
-  entry point and composes all three channel services.
+  entry point and composes all three channel services. The independent CLI entry
+  is `src/cli/client.ts`: it parses arguments and starts `chat.ts` for terminal
+  interaction. `socket-client.ts` owns the CLI socket protocol; `socket-server.ts`
+  owns the host-side CLI listener. All four modules live under `src/cli/`.
   The Telegram Bot API boundary in `src/channels/telegram-api.ts` serves the
   owner-only private-chat channel, which routes accepted input through the common
   host path and keeps the token host-side.

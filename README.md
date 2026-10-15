@@ -128,11 +128,14 @@ CI runs `npm run verify` and isolated Git workflow tests on Node.js 24.21.0.
 - `src/index.ts`: host startup, composing the CLI socket, Telegram and WebSocket services.
 - `src/host.ts`, `src/reconcile-session.ts`: routing, delivery and bounded recovery.
 - `src/db/`: central entities and schema migrations.
-- `src/channels/`: CLI, Telegram and WebSocket host adapters and Bot API transport.
+- `src/channels/`: Telegram and WebSocket host adapters and Bot API transport.
 - `src/drivers/`, `src/container-runner.ts`: isolated execution and session material.
 - `src/gateway-providers/`: host-side credential gateway integration.
 - `src/mailbox/`: shared directional mailbox package with Node and Bun entries.
-- `src/cli.ts`, `src/cli/`: terminal host client.
+- `src/cli/client.ts`: independent CLI entry and argument parsing.
+- `src/cli/chat.ts`: interactive terminal input, prompts and reply display.
+- `src/cli/socket-client.ts`: socket connection, text framing and awaited closure.
+- `src/cli/socket-server.ts`: host-side CLI listener, input routing and delivery.
 - `container/agent-runner/src/`: mailbox loop, Pi provider and Pi web tools.
 
 ## Project rules
