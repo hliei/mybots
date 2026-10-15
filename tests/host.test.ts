@@ -411,7 +411,16 @@ it("materializes the selected Agent resources for every routed session after res
   const driver = new MailboxDriver();
   const selected = {
     ...configuration,
-    agent: { ...configuration.agent, resources: { skills: ["brief"], tools: ["read"] as const } },
+    agent: {
+      ...configuration.agent,
+      resources: { skills: ["brief"], tools: ["read", "web_search"] as const },
+      web: {
+        search: {
+          provider: "brave" as const,
+          endpoint: "https://api.search.brave.test/res/v1/web/search",
+        },
+      },
+    },
     destinations: [
       ...configuration.destinations,
       { id: "notes", channelType: "cli", platformId: "notes", instance: "cli" },
@@ -434,7 +443,11 @@ it("materializes the selected Agent resources for every routed session after res
   );
   for (const launch of driver.launches) {
     const context = JSON.parse(await readFile(launch.material.contextFile, "utf8"));
-    expect(context.resources).toEqual({ skills: ["brief"], tools: ["read"] });
+    expect(context.resources).toEqual({ skills: ["brief"], tools: ["read", "web_search"] });
+    expect(context.web).toEqual({
+      search: { provider: "brave", endpoint: "https://api.search.brave.test/res/v1/web/search" },
+    });
+    expect(JSON.stringify(context)).not.toContain("api_key");
     expect(context).not.toHaveProperty("owner");
     expect(context).not.toHaveProperty("gateway");
   }

@@ -31,10 +31,12 @@ configuring a Telegram private chat.
 `agent` selects the Agent's ID, name, shared folder, instructions and explicit
 model configuration. Optional `agent.resources.skills` selects directory IDs under
 `groups/<folder>/skills/`; `agent.resources.tools` selects Pi built-ins (`read`,
-`write`, `edit`, `bash`, `grep`, `find`, `ls`). Omitted Skills select none; omitted
+`write`, `edit`, `bash`, `grep`, `find`, `ls`) and the configured web tools
+(`web_search`, `fetch_content`). Omitted Skills select none; omitted
 tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
-The execution harness is Pi; the model backend is specified
-separately by `model.provider` and `model.id`. The central store uses schema version 2 with an additive resource-selection column.
+Selecting a web tool requires matching `agent.web` configuration. The execution
+harness is Pi; the model backend is specified
+separately by `model.provider` and `model.id`. The central store uses schema version 3 with additive resource-selection and web-configuration columns.
 The central store saves the model
 selector as `provider/id` plus its endpoint and token limits. Endpoints must use
 HTTPS without URL credentials. Host configuration and gateway management material
@@ -46,6 +48,41 @@ mode, no threads and owner-only sender authorization. The `cliDestinationId` mus
 select a `cli` destination with platform ID `local`. Additional configured
 messaging destinations can use the same Agent workspace and different sessions
 through the host API; their channel adapters are separate deliveries.
+
+### Web search and content fetching
+
+`web_search` and `fetch_content` are Pi custom tools that run inside the session
+container. Select them through `agent.resources.tools` and configure the matching
+operation in `agent.web`:
+
+```json
+{
+  "agent": {
+    "resources": { "tools": ["read", "web_search", "fetch_content"] },
+    "web": {
+      "search": { "provider": "brave", "endpoint": "https://api.search.brave.com/res/v1/web/search" },
+      "fetch": true
+    }
+  }
+}
+```
+
+`agent.web.search` explicitly selects `brave` or `serpapi` and one complete
+HTTP(S) endpoint; the tool does not discover providers or fall back after a
+failure. `agent.web.fetch` enables content fetching without a provider selector.
+Omitted operations disable their tool, and selecting a web tool without its
+matching configuration fails validation before startup. The search endpoint is
+non-secret: it is copied into immutable runner context, while the real provider
+credential stays gateway-owned. The runner sends a placeholder token, and the
+OneCLI connection bound to the endpoint's hostname injects the scoped credential.
+Other model, search or channel endpoints acquire no blanket secret access.
+
+`fetch_content` requests public pages directly from the container with bounded
+time and response handling and uses Readability/Turndown extraction, matching the
+delivered search/fetch argument and result contracts. See
+[ADR 0003](adr/0003-web-search-and-content-fetching.md) for the tool contracts and
+[container execution](container-runtime.md#agent-resources-and-reset-controls)
+for the runner boundary.
 
 ### Telegram private chat
 
@@ -262,7 +299,7 @@ Read the relevant shared materials, then answer concisely.
 Select it in host configuration with
 `"resources": { "skills": ["brief"], "tools": ["read", "write", "edit", "bash"] }`.
 Selected Skill IDs must be unique path-safe names; tools must be unique supported
-built-in names. Selected Skill and instruction paths must be real workspace
+built-in or configured web-tool names. Selected Skill and instruction paths must be real workspace
 paths. Missing selected Skills fail the exchange before model traffic. Resource
 selection is not filesystem confinement: the actual container mounts protect
 host credentials and other session logs. Agent sessions deliberately share the

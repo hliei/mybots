@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { validateAgentResources } from "@mybots/mailbox";
+import { validateAgentResources, validateWebConfiguration } from "@mybots/mailbox";
 import { RunnerMailbox } from "@mybots/mailbox/bun";
 import { runMailbox } from "./poll-loop.ts";
 import { PiProvider } from "./providers/pi.ts";
@@ -80,6 +80,7 @@ async function main(): Promise<void> {
           ? context.instructions
           : undefined,
       resources: validateAgentResources("resources" in context ? context.resources : undefined),
+      web: validateWebConfiguration("web" in context ? context.web : undefined),
       signal: controller.signal,
     });
   } finally {

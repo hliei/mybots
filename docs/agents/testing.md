@@ -119,7 +119,10 @@ controlled TLS streaming upstream. A mounted stress regression additionally
 checks both directions under concurrent reads and one thousand writer operations.
 It checks a tool round, credential injection,
 forbidden/read-only mount behavior and exact Pi continuation after container
-recreation. It owns temporary Compose resources and generated fixture keys;
+recreation. A separate case enables `web_search`, registers a second gateway
+connection scoped to the controlled search hostname and verifies that the runner
+receives the injected search credential only at that target. It owns temporary
+Compose resources and generated fixture keys;
 no personal or paid services are used. See [container runtime](../container-runtime.md)
 for pins, prerequisites and the fixture-only upstream trust exception.
 
@@ -188,5 +191,18 @@ request, queues an owner reset and later input, checks the idle/FIFO boundary,
 authorization, separate session continuation and shared-file preservation, then
 restarts the host to verify the new continuation. This driver bypasses Docker
 and gateway transport; it establishes neither mount isolation nor live-provider
-compatibility. `tests/host.test.ts` also verifies selected resources persist into
-each session's immutable runner context after host restart.
+compatibility. `tests/host.test.ts` also verifies selected resources and web
+configuration persist into each session's immutable runner context after host
+restart.
+
+`tests/web-config.test.ts` covers the explicit web provider/endpoint selection,
+the web tool names in Agent resource selection, and the host-level requirement
+that a selected web tool has matching configuration. `tests/pi-web-tools.test.ts`
+uses the real SDK with a controlled streaming model service, a controlled search
+service and a controlled page service. It verifies that a model tool round calls
+`web_search` and `fetch_content`, that their JSON results return to the model and
+produce one final reply, that unselected web tools stay out of the model tool
+list, that provider failure returns a usable per-item error, that cancellation
+terminates an active request, and that batches preserve order and reject
+ambiguous arguments. No credential reaches the fixture; search requests carry
+only the gateway placeholder.

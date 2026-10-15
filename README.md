@@ -105,7 +105,14 @@ client replaces the old terminal on its first valid message. CLI reconnect and
 host restart reuse the saved conversation. `/reset` queues a fresh Pi conversation
 at the next idle boundary, preserving other sessions and shared files. Configure
 `agent.resources` to select Skills and SDK built-in tools; shared instructions live
-in `groups/<folder>/AGENTS.md`. Disconnected replies remain in the
+in `groups/<folder>/AGENTS.md`. Add `agent.resources.tools` entries `web_search`
+and/or `fetch_content` with a matching `agent.web` block to enable configured web
+search and content fetching inside the session container. `agent.web` names the
+explicit `brave` or `serpapi` provider and its complete HTTP(S) endpoint, plus
+`"fetch": true` for content fetching; the real search credential remains
+gateway-owned and is injected only for the configured hostname. See
+[persistent host](docs/host-runtime.md#web-search-and-content-fetching) for the
+configuration shape. Disconnected replies remain in the
 mailbox without guaranteed terminal replay.
 
 Add one `telegram` destination for the owner's private chat (its `platformId` is

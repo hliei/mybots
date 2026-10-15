@@ -1,7 +1,30 @@
 /** Explicit Agent-owned SDK resource selection; paths resolve inside its shared workspace. */
 export interface AgentResources {
   skills?: readonly string[];
-  tools?: readonly ("read" | "write" | "edit" | "bash" | "grep" | "find" | "ls")[];
+  tools?: readonly (
+    | "read"
+    | "write"
+    | "edit"
+    | "bash"
+    | "grep"
+    | "find"
+    | "ls"
+    | "web_search"
+    | "fetch_content"
+  )[];
+}
+
+/** Explicit, non-secret provider and endpoint selection for one web operation. */
+export interface WebSearchConfiguration {
+  provider: "brave" | "serpapi";
+  /** Complete HTTP(S) search endpoint owned by the selected provider. */
+  endpoint: string;
+}
+
+/** Non-secret web-tool configuration carried into immutable runner context. */
+export interface WebConfiguration {
+  search?: WebSearchConfiguration;
+  fetch?: boolean;
 }
 
 export interface SessionKey {

@@ -12,7 +12,7 @@ import type {
   SessionMaterial,
 } from "./drivers/types.ts";
 import { HostMailbox } from "./mailbox/node.ts";
-import type { AgentResources, OutboundMessage } from "./mailbox/types.ts";
+import type { AgentResources, OutboundMessage, WebConfiguration } from "./mailbox/types.ts";
 
 export interface HostConfiguration {
   /** Namespaced platform identities of the single personal owner, e.g. `cli:local` or `telegram:42`. */
@@ -24,6 +24,7 @@ export interface HostConfiguration {
     model: ModelConfiguration;
     instructions?: string;
     resources?: AgentResources;
+    web?: WebConfiguration;
   };
   destinations: { id: string; channelType: string; platformId: string; instance: string }[];
 }
@@ -144,6 +145,7 @@ export class Host {
         model: route.model,
         instructions: route.instructions,
         resources: route.resources,
+        web: route.web,
       }).then((material) => ({
         route,
         material,
