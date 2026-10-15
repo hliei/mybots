@@ -145,8 +145,9 @@ provider and endpoint or enables content fetching. Search requests use the
 gateway proxy with a placeholder credential; the real provider credential stays
 gateway-owned and is scoped to the configured endpoint hostname. Content
 fetching and HTML extraction execute in the container under the bounded request
-and response limits above. The embedded runtime sections below remain delivered
-behavior until the runtime transition retires them.
+and response limits above. The embedded-runtime `web_search`/`fetch_content`
+configuration and delivery remain unchanged until the runtime transition retires
+them.
 
 ## API and library documentation
 

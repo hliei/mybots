@@ -1,3 +1,4 @@
+import { domainToASCII } from "node:url";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Readability } from "@mozilla/readability";
 import type { WebConfiguration, WebSearchConfiguration } from "@mybots/mailbox";
@@ -200,16 +201,19 @@ async function runBatch<T>(
 }
 
 function normalizeDomains(domains: readonly string[]): { includes: string[]; excludes: string[] } {
-  const includes: string[] = [];
-  const excludes: string[] = [];
-  for (const domain of domains) {
+  const normalized = domains.map((domain) => {
     const value = domain.trim().toLowerCase().replace(/\.$/, "");
     const excluded = value.startsWith("-");
     const host = excluded ? value.slice(1) : value;
-    if (!host) continue;
-    (excluded ? excludes : includes).push(host);
-  }
-  return { includes, excludes };
+    const ascii = domainToASCII(host) || host;
+    return excluded ? `-${ascii}` : ascii;
+  });
+  return {
+    includes: normalized.filter((domain) => domain && !domain.startsWith("-")),
+    excludes: normalized
+      .filter((domain) => domain.startsWith("-"))
+      .map((domain) => domain.slice(1)),
+  };
 }
 
 const searchSchema = Type.Object(
@@ -302,7 +306,7 @@ function concat(chunks: Uint8Array[]): Uint8Array {
 }
 
 function extractHtml(
-  html: string,
+  html: Uint8Array,
   url: string,
   contentType: string,
 ): { title: string; content: string } {
@@ -410,7 +414,7 @@ async function fetchContent(
     const body = concat(chunks);
     const { title, content } =
       type === "text/html" || type === "application/xhtml+xml"
-        ? extractHtml(new TextDecoder().decode(body), finalUrl, contentType)
+        ? extractHtml(body, finalUrl, contentType)
         : {
             title: "",
             content: new TextDecoder(
@@ -476,18 +480,18 @@ export function createWebTools(config: WebConfiguration | undefined): ToolDefini
           ]
             .filter(Boolean)
             .join(" ");
-          const search_ = search.provider === "brave" ? searchBrave : searchSerpApi;
+          const runSearch = search.provider === "brave" ? searchBrave : searchSerpApi;
           const items = await runBatch(queries.length, abort, async (index, itemSignal) => {
             const query = queries[index] as string;
             try {
-              const sources_ = await search_(
+              const found = await runSearch(
                 search,
                 operators ? `${query} ${operators}` : query,
                 { numResults, recencyFilter: params.recencyFilter },
                 itemSignal,
               );
               itemSignal.throwIfAborted();
-              const results = sources_
+              const results = found
                 .filter((source) => {
                   const host = new URL(source.url).hostname.toLowerCase().replace(/\.$/, "");
                   const matches = (domain: string) =>

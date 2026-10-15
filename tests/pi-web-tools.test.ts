@@ -16,6 +16,9 @@ function results(events: ProviderEvent[]) {
   return events.filter((event) => event.type === "result");
 }
 
+// Direct tool tests have no extension context; Pi supplies one at runtime.
+const noContext = undefined as never;
+
 test("Pi runs configured web search and content fetching through the SDK tool loop", async () => {
   const root = await mkdtemp(join(tmpdir(), "mybots-pi-web-"));
   const search = await searchFixture("brave");
@@ -198,6 +201,35 @@ test("cancellation terminates an active web request", async () => {
   }
 }, 20000);
 
+test("content fetching decodes the declared character set before extraction", async () => {
+  const pages = await pageFixture();
+  pages.pages.set("/latin", {
+    body: Buffer.from(
+      "<html><head><title>Caf\u00e9</title></head><body><article><p>caf\u00e9 r\u00e9sum\u00e9</p></article></body></html>",
+      "latin1",
+    ),
+    headers: { "Content-Type": "text/html; charset=iso-8859-1" },
+  });
+  const tool = createWebTools({ fetch: true }).find(
+    (candidate) => candidate.name === "fetch_content",
+  );
+  if (!tool) throw new Error("Missing fetch_content tool");
+  try {
+    const result = await tool.execute(
+      "call-1",
+      { url: `${pages.endpoint}/latin` },
+      undefined,
+      undefined,
+      noContext,
+    );
+    const text = result.content[0];
+    if (text.type !== "text") throw new Error("Expected text tool content");
+    expect(text.text).toContain("caf\u00e9 r\u00e9sum\u00e9");
+  } finally {
+    await pages.close();
+  }
+}, 15000);
+
 test("web search batches preserve input order and reject ambiguous arguments", async () => {
   const search = await searchFixture("brave");
   const tools = createWebTools({
@@ -211,7 +243,7 @@ test("web search batches preserve input order and reject ambiguous arguments", a
       { queries: ["first", "second"] },
       undefined,
       undefined,
-      undefined as never,
+      noContext,
     );
     const text = result.content[0];
     if (text.type !== "text") throw new Error("Expected text tool content");
@@ -222,13 +254,7 @@ test("web search batches preserve input order and reject ambiguous arguments", a
       expect.stringContaining("q=second"),
     ]);
     await expect(
-      tool.execute(
-        "call-2",
-        { query: "a", queries: ["b"] },
-        undefined,
-        undefined,
-        undefined as never,
-      ),
+      tool.execute("call-2", { query: "a", queries: ["b"] }, undefined, undefined, noContext),
     ).rejects.toThrow("Provide either query or queries, exclusively.");
   } finally {
     await search.close();
