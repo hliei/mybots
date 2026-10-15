@@ -48,7 +48,7 @@ Each `destinations` entry names a messaging group with `id`, `channelType`,
 mode, no threads and owner-only sender authorization. The `cliDestinationId` must
 select a `cli` destination with platform ID `local`. Additional configured
 messaging destinations can use the same Agent workspace and different sessions
-through the host API; their channel adapters are separate deliveries.
+through their host-side channel adapters.
 
 ### Web search and content fetching
 
@@ -342,9 +342,9 @@ wiring. No test contacts Telegram or uses a real token. These checks do not
 establish Docker, gateway, CA or live provider behavior. The
 opt-in infrastructure suite and actual-service acceptance remain separate.
 
-The bot entry point still uses its embedded runtime while its adapters are being
-moved to the host. It has separate configuration and storage; see the embedded
-runtime sections in [README](../README.md).
+The bot command starts the same host with the same `--root` and `--config`
+arguments. Run one host command per installation root; no embedded Agent runtime
+or separate bot configuration remains.
 
 ## Shared instructions and Skills
 

@@ -38,10 +38,10 @@ details and scope. See
 
 - Keep agent execution, terminal interaction, and message-platform handling in
   separate modules. The CLI is a client of the persistent host and the owner-local
-  WebSocket interface is a host channel; the bot still embeds its existing runtime.
-  The Telegram Bot API boundary in `src/channels/telegram-api.ts` is shared by the
-  host's owner-only private-chat channel and the embedded bot; the host channel
-  routes accepted input through the common host path and keeps the token host-side.
+  WebSocket interface is a host channel; the bot command starts the same host.
+  The Telegram Bot API boundary in `src/channels/telegram-api.ts` serves the
+  owner-only private-chat channel, which routes accepted input through the common
+  host path and keeps the token host-side.
 - Keep platform SDK details at the platform boundary and model SDK details at
   the model boundary. Core behavior must be testable without live credentials.
 - Prefer explicit types at module boundaries. Use `unknown` for unvalidated
@@ -68,16 +68,16 @@ between sessions, with sequential delivery inside each session. See
 | --- | --- |
 | `dev:host` | Run the persistent host from TypeScript source. |
 | `dev:cli` | Run the interactive CLI from TypeScript source. |
-| `dev:bot` | Run the bot server from TypeScript source. |
+| `dev:bot` | Run the persistent host and configured channels from TypeScript source. |
 | `typecheck` | Check host source, tests, configuration and runner source without emitting files. |
 | `check` | Check formatting, lint, and types without modifying files; do not run tests or build. |
 | `format` | Apply formatting fixes. |
 | `test` | Run all ordinary offline tests once and exit. |
 | `test:watch` | Watch files and rerun ordinary offline tests. |
-| `build` | Compile host and runner source into their separate `dist/` directories. |
+| `build` | Clean generated output, then compile host and runner into their separate `dist/` directories. |
 | `start:host` | Run the built persistent host with Node.js. |
 | `start:cli` | Run the built CLI with Node.js. |
-| `start:bot` | Run the built bot server with Node.js. |
+| `start:bot` | Run the built host and configured channels with Node.js. |
 | `verify` | Run `check`, ordinary tests, build, and an offline startup smoke check for each entry point. |
 
 Development commands run source without building or watching; restart manually
@@ -94,7 +94,8 @@ for persistent affinity, reconnect and host restart, plus missing-host/settings
 failures. Run `npm run demo:host` for visible evidence. It does not require Docker
 or model credentials.
 
-Introduce a separate live-test script when live-service checks are implemented;
+The retired embedded-runtime live harness and `test:live` command are removed.
+Introduce a separate live-test script when current live-service checks are implemented;
 keep it outside `test`, `test:watch`, and `verify`.
 
 ## Validation and completion

@@ -1,88 +1,72 @@
-# Workspace configuration
+# Host configuration
 
-`config.user.yaml` supplies operator settings. `config.runtime.yaml` overlays it
-and stores runtime updates such as source-to-session bindings. Mappings merge
-recursively, while other values replace earlier values, including arrays and
-nulls. Missing or empty files contribute an empty mapping. A complete candidate
-must validate before replacing the last valid configuration. Null is valid only
-for explicitly optional settings, such as disabled web tools or delivery source.
+The installation root contains `host.json`. Start with the credential-free
+[CLI/WebSocket example](../examples/host/host.json) or
+[Telegram example](../examples/host/host-telegram.json). Run one host with
+`npm run dev:host -- --root ./workspace`; `--config FILE` selects another JSON
+file. The bot command starts the same host and accepts the same arguments.
+CLI selects only `--root`; it reads no model or gateway settings.
 
-Agent frontmatter model overrides apply after the Workspace merge. The default
-Agent and all definitions already loaded by a configuration store are validated
-with the candidate. Invalid YAML, configuration fields or Agent definitions
-retain the entire prior configuration and definitions; the store's `lastError`
-reports the rejection. Agent definitions are reread before a turn, and Skill
-content is read when the Skill loads.
+## Identity, model and resources
 
-## Fields and boundaries
+| Field | Meaning |
+| --- | --- |
+| `owners` | The owner's namespaced platform identities; exactly one `cli:` identity, plus `telegram:<user-id>` for a configured chat |
+| `agent.id`, `name`, `folder` | Persistent Agent identity and shared `groups/<folder>/` directory |
+| `agent.model.provider`, `id` | Model backend and model ID; the execution harness is Pi |
+| `agent.model.baseUrl` | HTTPS endpoint without credentials, query or fragment |
+| `agent.model.contextWindow`, `maxTokens` | Positive token limits; context window must cover the output allowance |
+| `agent.instructions` | Optional instructions appended through Pi's resource loader |
+| `agent.resources.skills` | Selected Skill directory IDs; omitted selects none |
+| `agent.resources.tools` | Selected Pi built-ins and configured web tools; omitted selects `read`, `write`, `edit`, `bash`; empty disables all tools |
+| `agent.web.search` | Optional `{ "provider": "brave" \| "serpapi", "endpoint": "https://..." }` |
+| `agent.web.fetch` | Optional `true` to enable content fetching |
 
-| Fields | Validation/default | Effect |
-| --- | --- | --- |
-| `llm` | Existing model contract; nonempty API key required | Next turn |
-| `web_search`, `fetch_content` | Existing web-tool contracts; omitted/null disables | Next turn |
-| Agent frontmatter and instruction body | Existing Agent contract | Next turn |
-| `default_agent` | Nonempty ID identifying a valid Agent | New sessions |
-| `sources` | Mapping from nonempty source to `{session_id: nonempty string}`; defaults to `{}` | Subsequent inputs |
-| `default_delivery_source` | Nonempty source string or null; defaults to null | Subsequent delivery selection |
-| `agents_path`, `skills_path`, `history_path` | Nonempty paths; defaults `.agents/bots`, `.agents/skills`, `.history` | Restart |
-| `logging_path`, `event_path` | Nonempty paths; defaults `.logs`, `.event` | Restart |
-| `channels.enabled` | Boolean; defaults false | Restart |
-| `channels.telegram.enabled` | Boolean; defaults false | Restart |
-| `channels.telegram.bot_token` | String; nonempty when Telegram is enabled | Restart |
-| `channels.telegram.allowed_user_ids` | Array of numeric ID strings; defaults `[]` | Restart |
-| `api.enabled` | Boolean; defaults false | Restart |
-| `api.host` | Nonempty string; defaults `127.0.0.1` | Restart |
-| `api.port` | Integer 1–65535; defaults 8000 | Restart |
+Selected web tool names (`web_search`, `fetch_content`) require their matching
+`agent.web` operation. Search endpoints are non-secret configuration; the gateway
+injects credentials only for the selected hostname. See [host runtime](host-runtime.md)
+for full web examples and [container execution](container-runtime.md) for gateway
+policy, proxy and trust requirements.
 
-All relative directories resolve against the selected Workspace. Configuration
-validation itself opens no model or messaging connections. These fields prepare
-connection/routing consumers; this configuration module does not start those
-consumers. The bot entry point serves `/ws` when `api.enabled` is true and starts
-Telegram polling when the channel is enabled; either interface runs independently.
-Imports and `--help` start nothing.
+Put shared instructions in `groups/<folder>/AGENTS.md` and selected Skills in
+`groups/<folder>/skills/<id>/SKILL.md`. Pi loads only explicitly selected resources;
+ancestor/personal resources, extensions and file-backed SDK settings are disabled.
+Shared instruction/Skill edits take effect on the next query after SDK cleanup.
+An active query and its queued follow-ups keep that query's resources.
 
-Telegram user and chat identifiers are configured and carried as digit strings.
-An empty `channels.telegram.allowed_user_ids` allows every user; a nonempty list
-allows only the listed user IDs. Channel enablement, the bot token and the
-allowlist take effect only after a restart.
+## Destinations and listeners
 
-A session keeps its Agent ID even when the default changes. Each turn captures
-its model, web tools and Agent definition before issuing requests; subsequent
-configuration changes do not alter tool continuations or compaction within that
-turn. Manual compaction also captures settings before starting. Refreshing a
-turn retains context, summaries, original reasoning and completed tool results;
-changed request settings invalidate prior token-usage estimates.
+Each `destinations` entry has an `id`, `channelType`, `platformId` and `instance`.
+IDs and channel/platform/instance combinations must be unique. Every destination
+is wired to the configured personal Agent with a separate persistent session.
 
-## Store ownership and runtime updates
+- `cliDestinationId` selects the local `cli` destination (`platformId: "local"`).
+  The CLI uses `data/cli.sock`, restricted to the host account.
+- `websocket` optionally supplies a loopback `host`, `port` and `path` (default
+  `/ws`). Its destinations use `channelType: "websocket"` and one common instance.
+  The loopback interface trusts processes on the local machine.
+- `telegram` supplies `instance` and `botTokenEnv`. Telegram destinations use
+  `channelType: "telegram"`, that same instance and the owner's numeric private
+  chat ID as `platformId`. The matching `telegram:<id>` owner is required.
+  The token is read from the named host environment variable. Unknown senders,
+  groups and unconfigured private chats produce no Agent work.
 
-One embedded runtime owns one `WorkspaceConfiguration`. Share that store with
-Agents using `Agent.open({configuration, agent})`. Without a supplied store, the
-Agent creates its own store and starts watching configuration files; callers
-release it with `await agent.close()`. Closing an Agent with a supplied store
-does not stop the shared store. The runtime owns its `startWatching()`/`stop()`
-lifecycle. Imports and CLI/bot help do not start watchers or connections.
+Omitting a channel section disables its listener. Telegram destinations require
+matching Telegram settings. `container.image` must name the built runner image;
+`container.network` selects an internal Docker network. `gateway.url` is the
+host-reachable management endpoint and `gateway.proxyHost` is the proxy-only
+hostname reachable on that network. Optional management credentials use host
+variables `MYBOTS_ONECLI_API_KEY` and `MYBOTS_ONECLI_PROJECT_ID`.
 
-- `config` returns the latest validated configuration.
-- `activeConfig` holds startup directory, channel and API values alongside live
-  settings. `Agent.config` reports its turn snapshot of these active values.
-- `restartRequired` lists changed directory fields and `channels`/`api` groups
-  requiring restart. It clears when values are restored to their startup values.
-- `snapshot(agentId?)` rereads and validates files, then returns an independent
-  configuration and Agent-definition snapshot. Omitting the ID selects the
-  current default. Invalid edits yield the prior valid snapshot.
-- `reload()` returns whether a candidate was accepted; a rejected candidate
-  leaves `lastError` available and preserves previous settings.
-- `updateRuntime(patch)` recursively merges a mapping into the latest runtime
-  file, preserving unknown extension fields. Reads, validation, writes and
-  memory publication serialize within the store. Arrays replace rather than
-  append. The serialized candidate is validated before a private temporary
-  file is renamed over `config.runtime.yaml`; memory changes only after the
-  replacement succeeds. Failed updates reject without publishing their settings.
-- `stop()` closes the watcher, skips queued watcher reloads and waits for accepted
-  reads/writes to finish. Further snapshots, reloads, writes and watcher starts
-  are rejected. Repeated stops are safe.
+## Persistence and configuration changes
 
-Watching the parent directory detects edits and common atomic-save replacements
-of both configuration files. Watcher errors are reported through `lastError`;
-explicit reload and next-turn reads remain available. No cross-process workspace
-lock is provided; run only one runtime against a Workspace at a time.
+The host persists identities, routing and container settings in `data/host.db`.
+Restart to load changed host settings. Execution configuration is immutable per
+session: a changed model/instruction/resource selection requires stopped execution
+and explicit context replacement; a restart alone does not overwrite it. Shared
+workspace instruction/Skill files follow the next-query boundary above.
+See [host lifecycle](host-runtime.md) for claims and restart recovery.
+
+This configuration has no YAML overlays, configuration watcher, embedded execution
+fallback or legacy history import. Real model/search keys belong in the gateway;
+channel tokens stay host-side and are never copied into runner context.

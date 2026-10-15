@@ -47,7 +47,7 @@ export async function runHost(
     if (values.help) {
       console.log("Usage: npm run start:host -- [--root PATH | -r PATH] [--config FILE | -c FILE]");
       console.log(
-        "Start one owner-local host. Defaults: current directory and host.json. Requires an isolated Docker network, runner image and OneCLI gateway. Configured Telegram destinations also poll the Bot API.",
+        "Start one persistent host for owner-local CLI, Telegram and WebSocket channels. Defaults: current directory and host.json. Requires an isolated Docker network, runner image and OneCLI gateway. Configured Telegram destinations also poll the Bot API.",
       );
       return 0;
     }

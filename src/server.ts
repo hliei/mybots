@@ -1,3 +1,4 @@
-import { runBot } from "./bot/startup.ts";
+import { runHost } from "./index.ts";
 
-if (import.meta.main) process.exitCode = await runBot(process.argv.slice(2));
+// The bot command starts the same persistent host and configured channels.
+if (import.meta.main) process.exitCode = await runHost(process.argv.slice(2));

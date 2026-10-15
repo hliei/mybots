@@ -1,100 +1,51 @@
 # Runtime acceptance
 
-The CLI embeds the shared event runtime and starts a fresh session per launch.
-The bot embeds the same runtime for Telegram and the local `/ws` interface.
-Sources retain their Agent session across bot restarts. Follow-ups run in order
-within a session; different sessions can run concurrently. Configuration reloads
-apply between turns, with directory/channel/listener changes requiring restart.
-See [configuration](configuration.md) for precedence and boundaries,
-[session recovery](adr/0004-persisted-active-context.md) for append-only context,
-and [outbound delivery](adr/0005-durable-outbound-delivery.md) for retry semantics.
+The default commands run one persistent host with CLI, owner-only Telegram and
+owner-local WebSocket channels. Session containers run Pi and share the Agent's
+working materials while retaining separate conversation histories.
 
-## Offline verification
+## Ordinary offline verification
 
-Use Node.js 24 and run `npm run verify`. This runs checks/types, ordinary tests,
-build, and both compiled entry-point startup checks. No ordinary test contacts
-DeepSeek or Telegram, even when credentials are configured. Watching and verify
-exclude `tests/live/` explicitly.
+Use Node.js 24.21.0 and run `npm run verify`. Checks include formatting/lint,
+host and runner types, all ordinary offline tests, both builds and compiled
+host/CLI/bot/runner startup checks. Controlled streaming services exercise the
+real Pi SDK. Ordinary discovery excludes infrastructure and live test directories;
+credentials in the environment never enable live traffic.
 
-| Contract or fault | Evidence |
+| Contract | Evidence |
 | --- | --- |
-| Configuration, Agent, Skill, legacy history and original reasoning/tool results | Independent [fixtures](../tests/fixtures/contracts/README.md), workspace-contracts/history tests |
-| Event envelopes and persisted source binding | Literal `events.json` through runtime submission, observation and fresh history reader in runtime tests |
-| Saved summary, stable IDs, malformed JSON, invalid-compaction fallback, interrupted tools without execution, idempotent repair | Recovery and source-routing tests; combined fresh-runtime case checks exact model input and absence of tool effects |
-| Completion/outbound crash, pending projection repair, acknowledgement, chunk recovery, accepted-but-unrecorded duplicate window | Completion/delivery tests with fresh instances and controlled filesystem/transport faults |
-| Follow-up ordering, session isolation, next-turn reload, request-only retry and shutdown cleanup | Runtime/configuration-reload/model-retries/CLI tests |
-| Delivery exhaustion isolated by session, confirmed chunk boundaries and shutdown cancellation | Delivery/Telegram tests |
-| Combined Telegram and WebSocket input | WebSocket integration test holds a Telegram turn, completes another source, then checks ordered Telegram follow-ups, destinations and all broadcasts |
-| Local input validation, broadcast to all clients, reconnect affinity and bot lifecycle | WebSocket tests with real local connections; Telegram tests at the transport boundary |
+| Three entry channels, overlapping inputs, shared files, observer/sender ownership and restart affinity | `tests/host-channels.test.ts` with real host/channels/mailboxes and a controlled execution boundary |
+| Actual SDK tools, FIFO exchanges, explicit continuation, resource loading, compaction, cancellation and model failure | `tests/pi-provider.test.ts`, `tests/pi-resources.test.ts`, `tests/pi-web-tools.test.ts` with real Pi and controlled HTTP/SSE |
+| Early completion and crash loss windows, repeated tool effects | `tests/mailbox-runner.test.ts` |
+| Persisted output, finite delivery attempts, duplicate window and failure isolation | `tests/host-delivery.test.ts` with fresh host instances |
+| Container adoption, fencing, bounded crash/stall recovery and exhaustion | `tests/host-recovery.test.ts`, `tests/reconcile-session.test.ts` |
+| Owner rejection, protocol, reconnect and cleanup | `tests/host-telegram.test.ts`, `tests/websocket-channel.test.ts`, `tests/cli.test.ts` |
+| Import safety, configuration failure and listener startup rollback | `tests/startup.test.ts`, compiled startup smoke checks |
 
-Deterministic local faults establish error behavior. Successful public requests
-establish connectivity and actual model continuation; neither replaces the other.
+## Controlled infrastructure
 
-## Separate real-service commands
+Run `npm run test:infrastructure` separately with Docker Desktop and `openssl`.
+It exercises the actual Bun runner, mounted directional SQLite, Pi tool execution,
+OneCLI proxy/TLS and scoped synthetic credential injection, including configured
+web search. It also reopens the selected SDK conversation after container
+recreation. See [container execution](container-runtime.md) for the topology,
+fixture cleanup and trust exception. This is separate from ordinary verification.
 
-Configure DeepSeek in a local source Workspace as described in the
-[README](../README.md). Set `MYBOTS_ACCEPTANCE_WORKSPACE` to its absolute path;
-it defaults to `./workspace`. Each case copies effective model settings into a
-fresh temporary Workspace with private configuration permissions. Source Agent
-instructions, Skills, runtime data and history are not reused. Cleanup removes
-temporary files after success or failure. Keep raw model responses and local
-configuration out of published evidence.
+## Actual-service acceptance
 
-Run the model/tool and compaction/restart cases:
+The current host/container architecture still requires an explicitly selected
+macOS acceptance pass with real DeepSeek and Telegram. That work must verify a
+gateway-backed model request and tool exchange, container and host restart,
+persistent per-entry affinity, shared workspace material and correctly addressed
+Telegram delivery. Configuration follows [host setup](host-runtime.md) and
+[configuration](configuration.md). No current live harness or `test:live` command
+is provided; the embedded-runtime live harness has been retired. Do not treat
+prior account connectivity or the controlled checks as this deployment's live pass.
 
-```sh
-npm run test:live -- tests/live/phase1.test.ts -t 'continues a real thinking|compacts with a real summary'
-```
+## Historical embedded-runtime evidence
 
-The first case checks fact recall, successful Skill/write/edit/read/bash exchanges,
-paired IDs, original saved reasoning and a fresh history reader. The second uses
-real archive turns and summary generation, checks append-only compaction and an
-unchanged index, reopens the saved session, verifies saved context and IDs, and
-recalls a fact from the removed prefix after restart. Thinking is forced on with
-an 8,192-token output allowance and a 100,000-token context window.
-
-Run actual DeepSeek through local WebSocket connections:
-
-```sh
-npm run test:live -- tests/live/runtime.test.ts -t 'continues real DeepSeek'
-```
-
-This executes `printf TOOL_CONFIRMED`, checks the tool result and saved reasoning,
-compares inbound/outbound broadcasts received by two clients, restarts the runtime
-and listener, reconnects with the same source, and requires fact recall in the
-same session with unchanged original messages. WebSocket delivery is acknowledged
-only after a connected client accepts the committed envelope.
-
-For actual Telegram acceptance, create a bot through Telegram's
-[BotFather](https://core.telegram.org/bots/features#botfather), save its token as
-`channels.telegram.bot_token` in the local source configuration, and open a test
-chat with it. A Telegram account alone does not supply a bot token. Use a bot and
-chat you control, determine your numeric user/chat IDs, and stop other processes
-polling that bot. The acceptance harness reads the token but admits only the
-explicit test user/chat and challenge text, ignoring outer whitespace and an
-optional final ASCII period. It does not start the production poller or process
-unrelated messages. Polling can advance past unrelated updates,
-so use a dedicated test bot.
-
-```sh
-MYBOTS_ACCEPTANCE_TELEGRAM_CHAT_ID=<test-chat-id> \
-MYBOTS_ACCEPTANCE_TELEGRAM_USER_ID=<test-user-id> \
-npm run test:live -- tests/live/runtime.test.ts -t 'receives actual Telegram'
-```
-
-Follow the two printed prompts in the test chat. Send the first exact challenge
-to remember a generated fact. After its reply is accepted and acknowledged, the
-harness restarts the runtime and prints the second prompt. Send that prompt only
-then. Acceptance requires the same source/session, recalled fact, successful real
-`sendMessage` responses and no remaining pending replies at each checkpoint.
-The receive loop uses real `getUpdates` and passes the selected update through
-`TelegramChannel.dispatch`, the same boundary used by the production poller.
-The overall receive deadline is four minutes. Missing token or IDs fails the case
-before contacting Telegram; it does not become a passing skip.
-
-`npm run test:live` runs all live cases, including the earlier search/HTTP cases
-and the interactive Telegram case. Focused passes establish only their named
-coverage. They do not establish a completed real-service gate.
+The following dated evidence belongs to the retired execution path. Commands,
+configuration and outcomes are historical and do not validate the current runtime.
 
 ## Executed evidence: October 14, 2026
 

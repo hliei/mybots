@@ -1,7 +1,15 @@
 # Durable outbound delivery
 
 Status: accepted
-Implementation: completion commits, ordered delivery workers, finite retries, chunk progress, acknowledgements, Telegram transport, and local WebSocket interface delivered; superseded for the persistent host by [ADR 0008](0008-mailbox-completion-and-recovery.md)
+Historical implementation: completion commits, ordered delivery workers, finite retries, chunk progress, acknowledgements, Telegram transport, and local WebSocket interface delivered; superseded for the persistent host by [ADR 0008](0008-mailbox-completion-and-recovery.md)
+
+Implementation note: the embedded execution, configuration, conversation and
+completion/delivery mechanisms described below are historical and have been
+retired. Current ownership and behavior are defined by ADRs
+[0006](0006-sdk-managed-agent-execution.md),
+[0007](0007-shared-agent-workspace.md) and
+[0008](0008-mailbox-completion-and-recovery.md). Use
+[host runtime](../host-runtime.md) for current setup and interfaces.
 
 Generated replies awaiting delivery will be persisted, retried after delivery
 failure, and recovered after restart. A pending reply is cleared only after

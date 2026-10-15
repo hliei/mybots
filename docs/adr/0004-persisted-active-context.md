@@ -1,7 +1,15 @@
 # Append-only session recovery
 
 Status: accepted
-Implementation: session recognition, compaction persistence, active-context reconstruction, and interrupted-tool repair delivered; completion and delivery state delivered
+Historical implementation: session recognition, compaction persistence, active-context reconstruction, and interrupted-tool repair delivered; completion and delivery state delivered
+
+Implementation note: the embedded execution, configuration, conversation and
+completion/delivery mechanisms described below are historical and have been
+retired. Current ownership and behavior are defined by ADRs
+[0006](0006-sdk-managed-agent-execution.md),
+[0007](0007-shared-agent-workspace.md) and
+[0008](0008-mailbox-completion-and-recovery.md). Use
+[host runtime](../host-runtime.md) for current setup and interfaces.
 
 Messages and successful compaction records share one append-only, linear
 session log. A compaction record stores the original summary and a stable

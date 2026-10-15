@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { chunkContent } from "../core/delivery.ts";
 import type { Host } from "../host.ts";
 import type { OutboundMessage } from "../mailbox/types.ts";
+import { chunkContent } from "./chunk-content.ts";
 import {
   TELEGRAM_CHUNK_LIMIT,
   type TelegramApi,

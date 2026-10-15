@@ -23,8 +23,7 @@ exactly-once tool execution is not guaranteed. Outbound delivery state remains
 separate from input processing completion, and platform delivery can also be
 duplicated around acknowledgement failures.
 
-This planned contract replaces the no-automatic-resumption rule and combined
+This contract replaces the no-automatic-resumption rule and combined
 final-message/completion/pending-reply record in
 [ADR 0004](0004-persisted-active-context.md), and the dependency on that combined
-record in [ADR 0005](0005-durable-outbound-delivery.md). Those ADRs continue to
-describe the delivered runtime until the architecture transition is implemented.
+record in [ADR 0005](0005-durable-outbound-delivery.md). Those ADRs preserve the superseded implementation history.

@@ -1,12 +1,20 @@
 # Agent runtime and data contracts
 
 Status: accepted
-Implementation: conversation history, CLI inspection, compaction, Brave web search, and rendered web reading delivered
+Historical implementation: conversation history, CLI inspection, compaction, Brave web search, and rendered web reading delivered
+
+Implementation note: the embedded execution, configuration, conversation and
+completion/delivery mechanisms described below are historical and have been
+retired. Current ownership and behavior are defined by ADRs
+[0006](0006-sdk-managed-agent-execution.md),
+[0007](0007-shared-agent-workspace.md) and
+[0008](0008-mailbox-completion-and-recovery.md). Use
+[host runtime](../host-runtime.md) for current setup and interfaces.
 
 Web-tool redesign: [ADR 0003](0003-web-search-and-content-fetching.md) records
 the delivered replacement of the web-tool contract and provider layout. The web
 sections below preserve the original delivery as historical decisions; use ADR
-0003 for the current web contract. Other runtime and data contracts remain applicable.
+0003 for the current web contract. Other runtime and data contracts below preserve the original decision history.
 
 The application uses TypeScript and Node.js in one npm package, with a shared
 Agent core called by the CLI. Terminal interaction and provider APIs remain at

@@ -2,8 +2,7 @@
 
 Status: accepted
 Implementation: persistent host/CLI affinity, owner-only Telegram
-private-chat affinity, and shared workspace delivered; local WebSocket and later
-channel adapters planned
+private-chat affinity, local WebSocket conversations and shared workspace delivered
 
 Personal entry points will use the same Agent identity and Agent workspace by
 default, with separate persistent Agent sessions per entry or chat. Returning

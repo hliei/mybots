@@ -189,8 +189,9 @@ tests import modules without initialization and reject invalid host settings and
 an unavailable host without credentials. The compiled `scripts/host-cli-demo.mjs`
 is included in `verify` and separately runnable with `npm run demo:host`. It uses
 the same controlled mailbox driver and removes its processes, sockets and state.
-The replaced embedded CLI tests are retired; embedded Agent, bot, tools and
-context behavior retain their own tests until their responsibilities move.
+All replaced embedded execution, context, routing and delivery tests are retired.
+Current contracts use host/channel and real Pi SDK tests. Independent Bot API
+normalization and transport cases remain in `tests/telegram-api.test.ts`.
 
 `tests/host-telegram.test.ts` connects `TelegramChannel` and `runHost` to the real
 host/store/mailbox path with a controlled Bot API. It covers owner routing,
@@ -245,3 +246,19 @@ only the gateway placeholder.
 An additional host case runs the production mailbox loop with the real SDK,
 search and page services, then verifies the correlated final reply reaches its
 host channel and receives persisted delivery acknowledgement.
+
+## Integrated channel operation
+
+`tests/host-channels.test.ts` connects CLI sockets, controlled Telegram and real
+local WebSocket clients to one host. It checks overlapping conversations, shared
+working material, a blocked Telegram send observed without acknowledgement by
+WebSocket, independent progress and preserved affinity after host restart.
+`tests/startup.test.ts` also exercises listener-bind startup rollback and verifies
+that the bot command uses host settings even if old YAML settings are present.
+The former live harness was retired with embedded execution; a current live
+harness is separate acceptance work. No ordinary fixture invokes that engine.
+
+`tests/pi-web-content.test.ts` preserves independent extraction coverage at the
+production Pi-tool boundary: ordered partial failures, Unicode continuation,
+hidden-content removal and relative-link resolution. No embedded Agent fixture
+is retained for these contracts.

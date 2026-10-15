@@ -18,7 +18,7 @@ for (const [entry, command] of [
   if (result.error) throw result.error;
   assert.equal(result.status, 0, `${command} startup failed: ${result.stderr}`);
   assert.equal(result.stderr, "");
-  assert.ok(result.stdout.includes(`Usage: npm run start:${command}`));
+  assert.ok(result.stdout.includes(`Usage: npm run start:${command === "bot" ? "host" : command}`));
 }
 
 const runner = spawnSync(process.execPath, ["scripts/pi-session-demo.mjs"], {
@@ -52,7 +52,7 @@ assert.equal(host.status, 0, `Host CLI demo failed: ${host.stderr}`);
 assert.equal(host.stderr, "");
 assert.ok(host.stdout.includes("Persistent host routing, CLI/WebSocket conversations"));
 
-for (const entry of ["index", "cli"]) {
+for (const entry of ["index", "server", "cli"]) {
   const failure = spawnSync(
     process.execPath,
     [`dist/${entry}.js`, "--root", "/__mybots_missing_host_root__"],
@@ -67,7 +67,7 @@ for (const entry of ["index", "cli"]) {
   assert.equal(failure.stdout, "");
   assert.ok(
     failure.stderr.includes(
-      entry === "index" ? "Invalid host configuration" : "start the host first",
+      entry !== "cli" ? "Invalid host configuration" : "start the host first",
     ),
   );
 }
