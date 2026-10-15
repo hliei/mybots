@@ -16,9 +16,9 @@ const missingWorkspace = join(temporaryRoot, "missing");
 
 afterAll(() => rmSync(temporaryRoot, { recursive: true, force: true }));
 
-describe("bot startup", () => {
+describe("host startup", () => {
   function run(...args: string[]) {
-    return spawnSync(process.execPath, ["src/server.ts", ...args], {
+    return spawnSync(process.execPath, ["src/index.ts", ...args], {
       cwd: projectRoot,
       encoding: "utf8",
       timeout: 5000,
@@ -72,7 +72,7 @@ it("imports runtime, CLI, and WebSocket modules without reading configuration or
     [
       "--input-type=module",
       "-e",
-      'await import("./src/index.ts"); await import("./src/server.ts"); await import("./src/host.ts"); await import("./src/channels/cli.ts"); await import("./src/channels/websocket.ts"); await import("./src/cli.ts"); await import("./src/channels/telegram-api.ts"); await import("./src/channels/telegram.ts");',
+      'await import("./src/index.ts"); await import("./src/host.ts"); await import("./src/channels/cli.ts"); await import("./src/channels/websocket.ts"); await import("./src/cli.ts"); await import("./src/channels/telegram-api.ts"); await import("./src/channels/telegram.ts");',
     ],
     { cwd: projectRoot, encoding: "utf8", timeout: 5000 },
   );

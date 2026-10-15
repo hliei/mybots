@@ -32,7 +32,7 @@ npm run dev:cli -- --root ./workspace
 
 The installation root defaults to the current directory. `--help` starts no
 services. `dev:host` starts the CLI socket and configured Telegram/WebSocket
-channels. `dev:bot` is another command for that same host; run one host command
+channels through `src/index.ts`, the sole host startup entry point. Run one host
 per installation root. A second host refuses the owned state directory. The CLI
 requires the host and never opens an independent execution runtime.
 
@@ -45,8 +45,8 @@ npm run start:host -- --root ./workspace
 npm run start:cli -- --root ./workspace
 ```
 
-`start:bot` starts the same host as `start:host`. Development commands run source
-once; restart manually after changes. Start commands use the existing build.
+Development commands run source once; restart manually after changes. Start
+commands use the existing build.
 Missing runtime, image, gateway or mount prerequisites fail execution explicitly.
 
 ## Configure the assistant
@@ -125,7 +125,7 @@ CI runs `npm run verify` and isolated Git workflow tests on Node.js 24.21.0.
 
 ## Source layout
 
-- `src/index.ts`, `src/server.ts`: the host and its bot command wrapper.
+- `src/index.ts`: host startup, composing the CLI socket, Telegram and WebSocket services.
 - `src/host.ts`, `src/reconcile-session.ts`: routing, delivery and bounded recovery.
 - `src/db/`: central entities and schema migrations.
 - `src/channels/`: CLI, Telegram and WebSocket host adapters and Bot API transport.

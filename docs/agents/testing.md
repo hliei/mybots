@@ -254,7 +254,8 @@ local WebSocket clients to one host. It checks overlapping conversations, shared
 working material, a blocked Telegram send observed without acknowledgement by
 WebSocket, independent progress and preserved affinity after host restart.
 `tests/startup.test.ts` also exercises listener-bind startup rollback and verifies
-that the bot command uses host settings even if old YAML settings are present.
+that the host entry point requires host settings even if old YAML settings are
+present.
 The former live harness was retired with embedded execution; a current live
 harness is separate acceptance work. No ordinary fixture invokes that engine.
 

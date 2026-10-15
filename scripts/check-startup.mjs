@@ -7,7 +7,6 @@ const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 for (const [entry, command] of [
   ["cli", "cli"],
   ["index", "host"],
-  ["server", "bot"],
 ]) {
   const result = spawnSync(process.execPath, [`dist/${entry}.js`, "--help"], {
     cwd: projectRoot,
@@ -18,7 +17,7 @@ for (const [entry, command] of [
   if (result.error) throw result.error;
   assert.equal(result.status, 0, `${command} startup failed: ${result.stderr}`);
   assert.equal(result.stderr, "");
-  assert.ok(result.stdout.includes(`Usage: npm run start:${command === "bot" ? "host" : command}`));
+  assert.ok(result.stdout.includes(`Usage: npm run start:${command}`));
 }
 
 const runner = spawnSync(process.execPath, ["scripts/pi-session-demo.mjs"], {
@@ -52,7 +51,7 @@ assert.equal(host.status, 0, `Host CLI demo failed: ${host.stderr}`);
 assert.equal(host.stderr, "");
 assert.ok(host.stdout.includes("Persistent host routing, CLI/WebSocket conversations"));
 
-for (const entry of ["index", "server", "cli"]) {
+for (const entry of ["index", "cli"]) {
   const failure = spawnSync(
     process.execPath,
     [`dist/${entry}.js`, "--root", "/__mybots_missing_host_root__"],
@@ -71,4 +70,4 @@ for (const entry of ["index", "server", "cli"]) {
     ),
   );
 }
-console.log("Host, CLI, bot, Pi provider and isolated runner startup smoke checks passed.");
+console.log("Host, CLI, Pi provider and isolated runner startup smoke checks passed.");

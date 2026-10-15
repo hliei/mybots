@@ -38,7 +38,8 @@ details and scope. See
 
 - Keep agent execution, terminal interaction, and message-platform handling in
   separate modules. The CLI is a client of the persistent host and the owner-local
-  WebSocket interface is a host channel; the bot command starts the same host.
+  WebSocket interface is a host channel. `src/index.ts` is the sole host startup
+  entry point and composes all three channel services.
   The Telegram Bot API boundary in `src/channels/telegram-api.ts` serves the
   owner-only private-chat channel, which routes accepted input through the common
   host path and keeps the token host-side.
@@ -68,7 +69,6 @@ between sessions, with sequential delivery inside each session. See
 | --- | --- |
 | `dev:host` | Run the persistent host from TypeScript source. |
 | `dev:cli` | Run the interactive CLI from TypeScript source. |
-| `dev:bot` | Run the persistent host and configured channels from TypeScript source. |
 | `typecheck` | Check host source, tests, configuration and runner source without emitting files. |
 | `check` | Check formatting, lint, and types without modifying files; do not run tests or build. |
 | `format` | Apply formatting fixes. |
@@ -77,7 +77,6 @@ between sessions, with sequential delivery inside each session. See
 | `build` | Clean generated output, then compile host and runner into their separate `dist/` directories. |
 | `start:host` | Run the built persistent host with Node.js. |
 | `start:cli` | Run the built CLI with Node.js. |
-| `start:bot` | Run the built host and configured channels with Node.js. |
 | `verify` | Run `check`, ordinary tests, build, and an offline startup smoke check for each entry point. |
 
 Development commands run source without building or watching; restart manually

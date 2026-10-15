@@ -342,9 +342,10 @@ wiring. No test contacts Telegram or uses a real token. These checks do not
 establish Docker, gateway, CA or live provider behavior. The
 opt-in infrastructure suite and actual-service acceptance remain separate.
 
-The bot command starts the same host with the same `--root` and `--config`
-arguments. Run one host command per installation root; no embedded Agent runtime
-or separate bot configuration remains.
+`src/index.ts` is the sole host startup entry point. It composes the CLI socket
+service and configured Telegram and WebSocket channels. Use `dev:host` or
+`start:host` once per installation root; `src/cli.ts` remains the independent
+socket-client entry point.
 
 ## Shared instructions and Skills
 

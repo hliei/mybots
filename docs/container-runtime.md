@@ -5,7 +5,7 @@ through directional SQLite mailboxes. `provisionSession` prepares the selected
 Agent session; `DockerDriver.start` launches its Pi runner with a `OneCliGateway`.
 The persistent host uses these boundaries for CLI, Telegram and WebSocket sessions.
 See [host runtime](host-runtime.md) for entity routing, startup and the local
-socket client. The bot command starts the same host.
+socket client. `src/index.ts` composes all host-side channel services.
 
 ## Runtime and configuration
 

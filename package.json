@@ -8,7 +8,6 @@
   },
   "scripts": {
     "dev:cli": "node src/cli.ts",
-    "dev:bot": "node src/server.ts",
     "typecheck": "tsc --noEmit && npm run typecheck --workspace @mybots/agent-runner",
     "check": "biome check --error-on-warnings . && npm run typecheck",
     "format": "biome format --write .",
@@ -16,7 +15,6 @@
     "test:watch": "vitest --watch",
     "build": "tsc -p tsconfig.build.json && npm run build --workspace @mybots/agent-runner",
     "start:cli": "node dist/cli.js",
-    "start:bot": "node dist/server.js",
     "check:startup": "node scripts/check-startup.mjs",
     "verify": "npm run check && npm test && npm run build && npm run check:startup",
     "prepare": "husky",

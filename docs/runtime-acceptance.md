@@ -8,7 +8,7 @@ working materials while retaining separate conversation histories.
 
 Use Node.js 24.21.0 and run `npm run verify`. Checks include formatting/lint,
 host and runner types, all ordinary offline tests, both builds and compiled
-host/CLI/bot/runner startup checks. Controlled streaming services exercise the
+host/CLI/runner startup checks. Controlled streaming services exercise the
 real Pi SDK. Ordinary discovery excludes infrastructure and live test directories;
 credentials in the environment never enable live traffic.
 
