@@ -57,6 +57,11 @@ export async function runHost(
     const telegramDestinations: TelegramDestination[] = configuration.destinations
       .filter((destination) => destination.channelType === "telegram")
       .map((destination) => ({ id: destination.id, platformId: destination.platformId }));
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    dependencies.signal?.addEventListener("abort", stop, { once: true });
+    if (dependencies.signal?.aborted) stop();
+    if (controller.signal.aborted) return 0;
     let api: TelegramApi | undefined;
     let botName: string | undefined;
     if (settings.telegram) {
@@ -67,11 +72,6 @@ export async function runHost(
       const identity = await api.getMe(controller.signal);
       botName = identity.username ? ` @${identity.username}` : "";
     }
-    process.once("SIGINT", stop);
-    process.once("SIGTERM", stop);
-    dependencies.signal?.addEventListener("abort", stop, { once: true });
-    if (dependencies.signal?.aborted) stop();
-    if (controller.signal.aborted) return 0;
     const gateway = new OneCliGateway({
       ...settings.gateway,
       apiKey: process.env.MYBOTS_ONECLI_API_KEY,
@@ -110,8 +110,10 @@ export async function runHost(
     if (telegram) console.log(`Telegram bot${botName} is polling.`);
     await finished.promise;
   } catch (error) {
-    console.error(`Error: ${describe(error)}`);
-    status = 1;
+    if (!controller.signal.aborted) {
+      console.error(`Error: ${describe(error)}`);
+      status = 1;
+    }
   } finally {
     for (const cleanup of [() => cli?.close(), () => telegram?.stop(), () => host?.stop()]) {
       try {

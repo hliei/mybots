@@ -12,6 +12,7 @@ import {
 import { loadHostSettings } from "../src/config/host.ts";
 import { Host, type HostConfiguration } from "../src/host.ts";
 import { runHost } from "../src/index.ts";
+import { waitForCheckpoint } from "./checkpoint.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 
 const configuration: HostConfiguration = {
@@ -337,6 +338,7 @@ it("requires coherent Telegram host settings before opening services", async () 
 it("fails host startup clearly when a configured Telegram token is absent", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-telegram-")));
   const file = await settingsFile("absent", settings);
+  vi.stubEnv("MYBOTS_TEST_TELEGRAM_TOKEN", undefined);
   const createTelegramApi = vi.fn();
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
@@ -349,10 +351,52 @@ it("fails host startup clearly when a configured Telegram token is absent", asyn
   }
 });
 
+it("cancels Telegram identity lookup when shutdown arrives during host startup", async () => {
+  root = await realpath(await mkdtemp(join(tmpdir(), "mybots-telegram-")));
+  const file = await settingsFile("startup-cancel", settings);
+  vi.stubEnv("MYBOTS_TEST_TELEGRAM_TOKEN", "offline-token");
+  const controller = new AbortController();
+  const lookup = Promise.withResolvers<AbortSignal>();
+  const release = Promise.withResolvers<void>();
+  const { api: base } = recordingApi();
+  const api: TelegramApi = {
+    ...base,
+    async getMe(signal) {
+      lookup.resolve(signal);
+      await Promise.race([
+        release.promise,
+        new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+      ]);
+      signal.throwIfAborted();
+      return { id: "1" };
+    },
+  };
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const running = runHost(["--root", root, "--config", file], {
+    createTelegramApi: () => api,
+    signal: controller.signal,
+  });
+  try {
+    const signal = await waitForCheckpoint(lookup.promise, "Telegram identity lookup");
+    controller.abort();
+    expect(signal.aborted).toBe(true);
+    await expect(waitForCheckpoint(running, "startup cancellation")).resolves.toBe(0);
+    expect(error).not.toHaveBeenCalled();
+  } finally {
+    release.resolve();
+    await running;
+    vi.unstubAllEnvs();
+    error.mockRestore();
+  }
+});
+
 it("starts and stops the configured Telegram channel through the host entry point", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-telegram-")));
   const file = await settingsFile("wiring", settings);
-  process.env.MYBOTS_TEST_TELEGRAM_TOKEN = "offline-token";
+  vi.stubEnv("MYBOTS_TEST_TELEGRAM_TOKEN", "offline-token");
   const controller = new AbortController();
   const polling = Promise.withResolvers<void>();
   const api: TelegramApi = {
@@ -384,7 +428,7 @@ it("starts and stops the configured Telegram channel through the host entry poin
     expect(log.mock.calls.flat().join("\n")).toContain("Telegram bot @test_bot is polling.");
     expect(error).not.toHaveBeenCalled();
   } finally {
-    delete process.env.MYBOTS_TEST_TELEGRAM_TOKEN;
+    vi.unstubAllEnvs();
     log.mockRestore();
     error.mockRestore();
   }
