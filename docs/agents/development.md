@@ -130,6 +130,22 @@ and `openssl`, but no real account credentials.
 See [container runtime](../container-runtime.md) for fixed mounts, gateway
 configuration, cleanup and accepted completion behavior.
 
+## Host lifecycle recovery
+
+The host claims each session with a fenced incarnation recorded in
+`session_claims` and registers its own live instance in `host_instances`.
+Startup reconciliation reads persisted sessions and the runtime containers the
+driver observes, adopting a running container or replacing abandoned execution.
+An abandoned `processing` claim is retried with waits of 5, 10, 20, 40 and 80
+seconds and then reaches an explicit failed state; completed input is never
+redelivered. The same schedule bounds input a container never claimed, so a
+crash before processing cannot restart forever. A running container with a stale
+heartbeat, or one that claimed input and then went silent, is stopped and its
+unfinished work recovered under the same policy. `Host.reconcile()` runs this pass on demand and the host also
+runs it periodically. Retrying unfinished input can repeat tool effects;
+exactly-once execution and delivery are not provided. See
+[host runtime](../host-runtime.md#interrupted-execution-recovery).
+
 ## Agent resources and context
 
 The host persists `agent.resources` (selected Skill IDs and SDK built-in or

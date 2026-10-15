@@ -1,23 +1,37 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
-import type { SessionDriver, SessionMaterial } from "../src/drivers/types.ts";
+import type {
+  ObservingSessionDriver,
+  SessionDriver,
+  SessionHandle,
+  SessionMaterial,
+  SessionObservation,
+} from "../src/drivers/types.ts";
 import { RunnerMailbox } from "../src/mailbox/node.ts";
 import type { InboundMessage } from "../src/mailbox/types.ts";
 
 /** External execution boundary: this fixture uses only the runner's mailbox API. */
-export class MailboxDriver implements SessionDriver {
-  readonly launches: { material: SessionMaterial; continuation?: string }[] = [];
+export class MailboxDriver implements SessionDriver, ObservingSessionDriver {
+  readonly launches: { material: SessionMaterial; continuation?: string; ref: string }[] = [];
+  /** Containers the runtime reports as running before this host started. */
+  observations: SessionObservation[] = [];
+  readonly adopted: SessionObservation[] = [];
+  readonly stopped: string[] = [];
   fail = false;
   respond?: (
     input: InboundMessage,
     material: SessionMaterial,
     signal: AbortSignal,
   ) => Promise<string>;
-  async start(material: SessionMaterial, signal: AbortSignal) {
+
+  async start(material: SessionMaterial, signal: AbortSignal): Promise<SessionHandle> {
     if (this.fail) throw new Error("Controlled driver unavailable");
     const mailbox = new RunnerMailbox(material.directory);
-    this.launches.push({ material, continuation: mailbox.continuation() });
+    const ref = `container:${material.key.agentGroupId}:${material.key.sessionId}:${
+      this.launches.length + 1
+    }`;
+    this.launches.push({ material, continuation: mailbox.continuation(), ref });
     const controller = new AbortController();
     const runningSignal = AbortSignal.any([signal, controller.signal]);
     const running = (async () => {
@@ -45,10 +59,38 @@ export class MailboxDriver implements SessionDriver {
       }
     })();
     return {
+      ref,
       wait: () => running,
       stop: async () => {
+        this.stopped.push(ref);
         controller.abort();
         await running;
+      },
+    };
+  }
+
+  async list(): Promise<SessionObservation[]> {
+    return this.observations;
+  }
+
+  /** Attach to an observation without creating another container. */
+  async adopt(
+    observation: SessionObservation,
+    _material: SessionMaterial,
+    signal: AbortSignal,
+  ): Promise<SessionHandle> {
+    if (this.fail) throw new Error("Controlled driver unavailable");
+    this.adopted.push(observation);
+    const done = Promise.withResolvers<void>();
+    const onAbort = () => done.resolve();
+    signal.addEventListener("abort", onAbort, { once: true });
+    return {
+      ref: observation.ref,
+      wait: () => done.promise,
+      stop: async () => {
+        this.stopped.push(observation.ref);
+        done.resolve();
+        signal.removeEventListener("abort", onAbort);
       },
     };
   }

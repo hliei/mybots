@@ -121,8 +121,10 @@ It checks a tool round, credential injection,
 forbidden/read-only mount behavior and exact Pi continuation after container
 recreation. A separate case enables `web_search`, registers a second gateway
 connection scoped to the controlled search hostname and verifies that the runner
-receives the injected search credential only at that target. It owns temporary
-Compose resources and generated fixture keys;
+receives the injected search credential only at that target.
+Runtime observation also verifies adoption without duplicate containers and
+observed termination.
+The suite owns temporary Compose resources and generated fixture keys;
 no personal or paid services are used. See [container runtime](../container-runtime.md)
 for pins, prerequisites and the fixture-only upstream trust exception.
 
@@ -130,6 +132,11 @@ Infrastructure evidence and actual-service evidence are separate. A passing
 container check does not establish a live DeepSeek or Telegram deployment.
 
 ## Persistent host and CLI
+
+Recovery regressions cover concurrent fresh/stale-lock acquisition, uncertain
+runtime observation/adoption, failed container termination with preserved claims,
+and input arriving during replacement. A controlled Docker executable at the
+process boundary verifies that failed termination can be retried successfully.
 
 `tests/host.test.ts` uses the public host input, observation, session inspection
 and lifecycle interfaces with real `data/host.db` entities and session mailbox
@@ -147,6 +154,33 @@ results, late success after cancellation, awaited cleanup and the accepted
 queued-work loss window. Host tests hold both execution and channel delivery
 at explicit checkpoints while another session writes shared materials and replies.
 All waits are bounded; no live credentials or workspace-wide lock are required.
+
+`tests/reconcile-session.test.ts` covers the recovery policy directly: the
+doubling waits before five bounded retries, exhaustion to a failed state, and
+stall decisions from heartbeat age, claim age and a tool's declared timeout
+against a real mailbox. `tests/host-recovery.test.ts` drives the public host
+lifecycle with a controlled clock and real stores: adopting an observed running
+container instead of starting another, adopting an abandoned host lock,
+recovering an abandoned claim across restart through the exact wait sequence,
+leaving completed and provider-failed input terminal, bounding repeated crashes
+that happen before any claim, replacing a container whose
+claim went silent, fencing a superseded handle's late exit, and upgrading an
+existing version-2 store. `tests/mailbox-runner.test.ts` adds the repeated
+tool-effect retry: a controlled effect performed before an interruption occurs
+again on recovery, and neither the test nor the reply claims exactly-once
+execution. These fixtures use controlled external execution, not Pi, Docker or
+gateway behavior.
+
+`tests/host-delivery.test.ts` drives persisted outbound delivery through
+controlled channels against real central/session stores. It covers a successful
+send with cleared attempt bookkeeping, a poisoned send retried exactly three
+times before terminal `failed` state, prior-life attempt rows restored by a fresh
+host instance that still delivers once, exhaustion across host restarts that is
+never sent again, the platform-acceptance/acknowledgement gap that duplicates a
+reply, later replies continuing while an earlier reply fails in the same session,
+an independent session delivering while another destination fails, and no replay
+of output already accepted with no connected client. Attempt rows are read from
+the real host-coordination store; no live platform is contacted.
 
 `tests/cli.test.ts` uses actual local Unix sockets and CLI/host child processes
 for input/reply, reconnect, first-input client replacement, malformed input,
@@ -197,7 +231,9 @@ restart.
 
 `tests/web-config.test.ts` covers the explicit web provider/endpoint selection,
 the web tool names in Agent resource selection, and the host-level requirement
-that a selected web tool has matching configuration. `tests/pi-web-tools.test.ts`
+that a selected web tool has matching configuration. It also upgrades existing
+schema versions 2 through 4 while preserving delivery and host lifecycle state.
+`tests/pi-web-tools.test.ts`
 uses the real SDK with a controlled streaming model service, a controlled search
 service and a controlled page service. It verifies that a model tool round calls
 `web_search` and `fetch_content`, that their JSON results return to the model and
@@ -206,3 +242,6 @@ list, that provider failure returns a usable per-item error, that cancellation
 terminates an active request, and that batches preserve order and reject
 ambiguous arguments. No credential reaches the fixture; search requests carry
 only the gateway placeholder.
+An additional host case runs the production mailbox loop with the real SDK,
+search and page services, then verifies the correlated final reply reaches its
+host channel and receives persisted delivery acknowledgement.

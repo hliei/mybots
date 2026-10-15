@@ -1,5 +1,14 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vitest";
 import { validateHostConfiguration } from "../src/config/host.ts";
+import { HostStore } from "../src/db/index.ts";
+import { schema } from "../src/db/migrations/001-initial.ts";
+import { resourceSchema } from "../src/db/migrations/002-agent-resources.ts";
+import { deliveryAttemptSchema } from "../src/db/migrations/003-delivery-attempts.ts";
+import { recoverySchema } from "../src/db/migrations/004-session-recovery.ts";
 import {
   resolveWebTools,
   validateAgentResources,
@@ -80,6 +89,55 @@ const hostBase = {
   },
   destinations: [{ id: "terminal", channelType: "cli", platformId: "local", instance: "cli" }],
 };
+
+test.each([2, 3, 4])(
+  "web configuration upgrades schema %s without losing operational state",
+  async (version) => {
+    const root = await mkdtemp(join(tmpdir(), "mybots-web-upgrade-"));
+    const file = join(root, "host.db");
+    try {
+      const previous = new DatabaseSync(file);
+      previous.exec(schema);
+      previous.exec(resourceSchema);
+      if (version >= 3) {
+        previous.exec(deliveryAttemptSchema);
+        previous.exec(
+          "INSERT INTO delivery_attempts (message_id, session_id, attempts) VALUES ('saved-reply', 'saved-session', 2)",
+        );
+      }
+      if (version === 4) {
+        previous.exec(recoverySchema);
+        previous.exec(
+          "INSERT INTO host_instances VALUES ('previous-host', 123, 'start', 'beat', 'stop')",
+        );
+      }
+      previous.close();
+      const configuration = validateHostConfiguration({
+        ...hostBase,
+        agent: { ...hostBase.agent, resources: { tools: ["fetch_content"] }, web: { fetch: true } },
+      });
+      const store = new HostStore(file, configuration);
+      try {
+        expect(store.resolve("terminal", "cli:local").web).toEqual({ fetch: true });
+        if (version >= 3) expect(store.deliveryAttempt("saved-reply")?.attempts).toBe(2);
+      } finally {
+        store.close();
+      }
+      const upgraded = new DatabaseSync(file);
+      try {
+        expect(upgraded.prepare("PRAGMA user_version").get()?.user_version).toBe(5);
+        if (version === 4)
+          expect(upgraded.prepare("SELECT instance_id FROM host_instances").all()).toEqual([
+            { instance_id: "previous-host" },
+          ]);
+      } finally {
+        upgraded.close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test("the host configuration accepts explicit web tool selection and configuration", () => {
   const configuration = validateHostConfiguration({

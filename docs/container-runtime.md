@@ -81,7 +81,9 @@ mounts or inherited host environment are passed to the runner.
 
 `HostMailbox` writes `messages_in`, `session_routing`, and `delivered` in
 `inbound.db`. `RunnerMailbox` writes `messages_out`, `processing_ack`,
-`session_state` and `container_state` in `outbound.db`. Each operation opens and
+`session_state` and `container_state` in `outbound.db`, and touches the
+session-local `.heartbeat` file on activity so the host has an observable
+liveness signal. Each operation opens and
 closes its connection, disables mmap, and uses DELETE journaling for writes.
 Readers open the opposite side read-only. An atomic directory lock per database
 serializes one read/write operation across the host and VM; their kernel advisory
@@ -121,7 +123,8 @@ and discards late results. The initial unfinished processing claim remains for
 host recovery; early-completed follow-ups remain completed. Initial-result
 acknowledgement deliberately precedes output persistence, so a crash between
 them can lose the reply. The runner does not repair these accepted loss windows
-or add atomic completion.
+or add atomic completion. The host reschedules or fails an abandoned claim under
+its bounded policy; see [host runtime](host-runtime.md#interrupted-execution-recovery).
 
 Stop a session with its handle's awaited `stop()` before re-provisioning or
 replacing immutable context. Re-provisioning identical context is idempotent;
@@ -145,7 +148,9 @@ OneCLI, runs workspace tools through Pi, reads persisted output on the host,
 recreates the session container and reopens the exact SDK conversation. A second
 case adds a separately scoped search connection, runs the `web_search` Pi tool
 against a controlled search route and verifies that only its host receives the
-search credential. A separate
+search credential.
+Runtime observation additionally verifies adoption without duplicate containers
+and observed termination. A separate
 mounted storage regression exercises one thousand writes in each direction with
 concurrent opposite-side readers. The suite also
 checks read-only context/trust/input mounts, forbidden host paths, credential
