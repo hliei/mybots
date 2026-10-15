@@ -1,12 +1,17 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
+import { runMailbox } from "../container/agent-runner/src/poll-loop.ts";
 import { PiProvider } from "../container/agent-runner/src/providers/pi.ts";
 import type { ProviderEvent } from "../container/agent-runner/src/providers/types.ts";
 import { createWebTools } from "../container/agent-runner/src/tools/web.ts";
+import type { SessionDriver } from "../src/drivers/types.ts";
+import { Host } from "../src/host.ts";
+import { RunnerMailbox } from "../src/mailbox/node.ts";
+import type { OutboundMessage } from "../src/mailbox/types.ts";
 import { waitForCheckpoint } from "./checkpoint.ts";
 import { pageFixture } from "./page-fixture.ts";
 import { startPiService } from "./pi-fixture.ts";
@@ -18,6 +23,113 @@ function results(events: ProviderEvent[]) {
 
 // Direct tool tests have no extension context; Pi supplies one at runtime.
 const noContext = undefined as never;
+
+test("the host routes a real SDK web exchange through persisted mailboxes to its channel", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "mybots-host-web-")));
+  const search = await searchFixture("brave");
+  const pages = await pageFixture();
+  pages.pages.set("/docs", {
+    headers: { "Content-Type": "text/plain" },
+    body: "Readable fixture documentation.",
+  });
+  const service = await startPiService((request) => {
+    const count = request.messages.filter((message) => message.role === "tool").length;
+    if (count === 0) return { tool: "web_search", arguments: { query: "documentation" } };
+    if (count === 1) return { tool: "fetch_content", arguments: { url: `${pages.endpoint}/docs` } };
+    return { text: "Read the searched documentation." };
+  });
+  const driver: SessionDriver = {
+    async start(material, signal) {
+      const controller = new AbortController();
+      const context = JSON.parse(await readFile(material.contextFile, "utf8"));
+      const running = runMailbox({
+        mailbox: new RunnerMailbox(material.directory),
+        provider: new PiProvider({ modelRuntime: service.runtime, model: service.model }),
+        cwd: material.workspace,
+        sessionDir: join(material.directory, "pi"),
+        resources: context.resources,
+        web: context.web,
+        signal: AbortSignal.any([signal, controller.signal]),
+        pollMs: 5,
+      });
+      return {
+        wait: () => running,
+        stop: async () => {
+          controller.abort();
+          await running;
+        },
+      };
+    },
+  };
+  let host: Host | undefined;
+  try {
+    host = await Host.start({
+      root,
+      driver,
+      configuration: {
+        owners: ["cli:local"],
+        agent: {
+          id: "personal",
+          name: "Personal",
+          folder: "personal",
+          model: {
+            provider: "controlled",
+            id: "controlled-model",
+            baseUrl: "https://controlled.invalid",
+            contextWindow: 32768,
+            maxTokens: 4096,
+          },
+          resources: { tools: ["web_search", "fetch_content"] },
+          web: { search: { provider: "brave", endpoint: search.endpoint }, fetch: true },
+        },
+        destinations: [
+          { id: "terminal", channelType: "cli", platformId: "local", instance: "cli" },
+        ],
+      },
+    });
+    const received: { message: OutboundMessage; destinationId: string; sessionId: string }[] = [];
+    host.attachChannel({
+      channelType: "cli",
+      instance: "cli",
+      async deliver(message, _signal, context) {
+        received.push({ message, ...context });
+      },
+    });
+    const accepted = await host.accept({
+      destinationId: "terminal",
+      userId: "cli:local",
+      text: "Search and read the documentation",
+    });
+    await vi.waitFor(async () =>
+      expect((await host?.inspect(accepted.sessionId))?.deliveries).toEqual([
+        expect.objectContaining({ status: "delivered" }),
+      ]),
+    );
+    expect(received).toEqual([
+      expect.objectContaining({
+        destinationId: "terminal",
+        sessionId: accepted.sessionId,
+        message: expect.objectContaining({
+          in_reply_to: accepted.messageId,
+          channel_type: "cli",
+          platform_id: "local",
+          content: "Read the searched documentation.",
+        }),
+      }),
+    ]);
+    expect(search.requests).toHaveLength(1);
+    expect(pages.requests).toContain("/docs");
+    expect(JSON.stringify(service.requests[2]?.messages)).toContain(
+      "Readable fixture documentation.",
+    );
+  } finally {
+    await host?.stop();
+    await service.close();
+    await search.close();
+    await pages.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 15000);
 
 test("Pi runs configured web search and content fetching through the SDK tool loop", async () => {
   const root = await mkdtemp(join(tmpdir(), "mybots-pi-web-"));
