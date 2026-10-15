@@ -1,4 +1,4 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, realpath, rm, stat, unlink } from "node:fs/promises";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -350,3 +350,60 @@ it.each([
   else expect(terminal.stderr).toBe("");
   if (mode === "superseded") expect(terminal.stdout).toContain("[superseded by a newer client]");
 });
+
+it("links mbt into an isolated npm prefix and uses the same interactive client from any directory", async () => {
+  await setup();
+  const prefix = join(root, "linked npm prefix");
+  const linked = spawnSync("npm", ["link", "--ignore-scripts", "--offline", "--workspaces=false"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    timeout: 15000,
+    env: { ...process.env, npm_config_prefix: prefix },
+  });
+  expect(linked.error).toBeUndefined();
+  expect(linked.status, linked.stderr).toBe(0);
+  const command = join(prefix, "bin", "mbt");
+  expect((await stat(command)).mode & 0o111).not.toBe(0);
+  for (const [cwd, args, text] of [
+    [root, [], "Linked default root"],
+    [tmpdir(), ["--root", root], "Linked explicit root"],
+  ] as const) {
+    const child = spawn(command, [...args], { cwd, stdio: "pipe" });
+    children.push(child);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
+      stderr += chunk;
+    });
+    const exited = new Promise<number | null>((resolve, reject) => {
+      child.once("close", resolve);
+      child.once("error", reject);
+    });
+    await vi.waitFor(
+      () =>
+        expect(
+          stdout,
+          JSON.stringify({ stderr, code: child.exitCode, signal: child.signalCode }),
+        ).toContain("Connected"),
+      { timeout: 3000 },
+    );
+    child.stdin.write(`${text}\n`);
+    await vi.waitFor(() => expect(stdout).toContain(`Reply: ${text}`));
+    child.kill("SIGINT");
+    expect(await waitForCheckpoint(exited, "linked mbt interruption")).toBe(130);
+    expect(stderr).toBe("");
+  }
+  expect(host?.sessions()).toHaveLength(1);
+  const missing = spawnSync(command, ["--root", join(root, "unavailable")], {
+    cwd: tmpdir(),
+    encoding: "utf8",
+    timeout: 5000,
+  });
+  expect(missing.status).toBe(1);
+  expect(missing.stdout).toBe("");
+  expect(missing.stderr).toContain("start the host first");
+  await expect(stat(join(root, "unavailable", "data"))).rejects.toMatchObject({ code: "ENOENT" });
+}, 15000);

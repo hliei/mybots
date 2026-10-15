@@ -187,7 +187,10 @@ for input/reply, reconnect, first-input client replacement, malformed input,
 owner-local permissions, Ctrl+C, singleton listener and SIGTERM cleanup. Controlled
 socket peers also exercise fragmented/coalesced replies, text validation,
 unexpected disconnect, EOF and superseded-client exit status through the actual
-CLI process. Startup
+CLI process. An isolated npm prefix exercises the real linked `mbt` executable
+from different directories, shared session affinity, Ctrl+C and missing-host
+failure without creating a host. Source command startup is checked with `dev`
+and `mbt`; compiled smoke executes `npm start` and the built CLI. Startup
 tests import modules without initialization and reject invalid host settings and
 an unavailable host without credentials. The compiled `scripts/host-cli-demo.mjs`
 is included in `verify` and separately runnable with `npm run demo:host`. It uses

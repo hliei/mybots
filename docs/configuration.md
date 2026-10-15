@@ -3,7 +3,7 @@
 The installation root contains `host.json`. Start with the credential-free
 [CLI/WebSocket example](../examples/host/host.json) or
 [Telegram example](../examples/host/host-telegram.json). Run one host with
-`npm run dev:host -- --root ./workspace`; `--config FILE` selects another JSON
+`npm run dev -- --root ./workspace`; `--config FILE` selects another JSON
 file. `src/index.ts` is the sole host startup entry point.
 CLI selects only `--root`; it reads no model or gateway settings.
 

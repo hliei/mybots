@@ -9,7 +9,8 @@ export async function runCli(args: string[]): Promise<number> {
       options: { root: { type: "string", short: "r" }, help: { type: "boolean", short: "h" } },
     });
     if (values.help) {
-      console.log("Usage: npm run start:cli -- [--root PATH | -r PATH]");
+      console.log("Usage: mbt [--root PATH | -r PATH]");
+      console.log("       npm run mbt -- [--root PATH | -r PATH]");
       console.log(
         "Connect to the owner-local host at PATH/data/cli.sock (PATH defaults to the current directory).",
       );

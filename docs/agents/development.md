@@ -70,22 +70,24 @@ between sessions, with sequential delivery inside each session. See
 
 | Script | Required behavior |
 | --- | --- |
-| `dev:host` | Run the persistent host from TypeScript source. |
-| `dev:cli` | Run the interactive CLI from TypeScript source. |
+| `dev` | Run the persistent host from TypeScript source. |
+| `mbt` | Run the interactive socket client from TypeScript source with Node.js. |
 | `typecheck` | Check host source, tests, configuration and runner source without emitting files. |
 | `check` | Check formatting, lint, and types without modifying files; do not run tests or build. |
 | `format` | Apply formatting fixes. |
 | `test` | Run all ordinary offline tests once and exit. |
 | `test:watch` | Watch files and rerun ordinary offline tests. |
 | `build` | Clean generated output, then compile host and runner into their separate `dist/` directories. |
-| `start:host` | Run the built persistent host with Node.js. |
-| `start:cli` | Run the built CLI with Node.js. |
+| `start` | Run the built persistent host with Node.js. |
 | `verify` | Run `check`, ordinary tests, build, and an offline startup smoke check for each entry point. |
 
-Development commands run source without building or watching; restart manually
-after code changes. Start commands use the existing build; they do not build
-automatically. Startup smoke checks must exit without live credentials and cover
-executable entry points, not only imports.
+`dev` runs host source without building or watching; restart manually after
+changes. `start` uses the existing host build without rebuilding. `mbt` runs the
+CLI source with Node.js native TypeScript support. The root package's executable
+`bin/mbt` exposes that same source client after `npm link --workspaces=false`,
+resolving npm symlinks while preserving the caller's current directory. Startup
+smoke checks must exit without live credentials and cover executable entry points,
+not only imports.
 The offline startup checks also execute the compiled Pi provider against a local
 streaming model service through `scripts/pi-session-demo.mjs`. `npm run demo:pi`
 builds and runs this demonstration separately. It exercises SDK-owned tools and

@@ -30,7 +30,7 @@ describe("host startup", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Usage: npm run start:host");
+    expect(result.stdout).toContain("Usage: npm start");
     expect(result.stdout).toContain("persistent host");
     expect(result.stdout).toContain("Telegram");
     expect(result.stderr).toBe("");
@@ -173,4 +173,15 @@ it("rolls back the CLI listener and host after WebSocket binding fails, then sta
     error.mockRestore();
     log.mockRestore();
   }
+});
+
+it.each([
+  [["run", "dev", "--", "--help"], "Usage: npm start"],
+  [["run", "mbt", "--", "--help"], "Usage: mbt"],
+] as const)("runs the source command %j without services", (args, usage) => {
+  const result = spawnSync("npm", [...args], { cwd: projectRoot, encoding: "utf8", timeout: 5000 });
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain(usage);
+  expect(result.stderr).toBe("");
 });

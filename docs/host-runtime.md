@@ -13,16 +13,23 @@ Use Node.js 24.21.0. Copy the credential-free example into an ignored local root
 ```sh
 mkdir -p workspace
 cp examples/host/host.json workspace/host.json
-npm run dev:host -- --root ./workspace
+npm run dev -- --root ./workspace
 # In another terminal:
-npm run dev:cli -- --root ./workspace
+npm run mbt -- --root ./workspace
 ```
 
-For built programs run `npm run build`, then `npm run start:host -- --root
-./workspace` and `npm run start:cli -- --root ./workspace`. Both commands default
+For the built host run `npm run build`, then `npm start -- --root
+./workspace`. The CLI continues to use source through `npm run mbt -- --root
+./workspace`. Both commands default
 to the current directory. The host accepts `--config FILE` to select another JSON
 file; CLI only selects the installation root. `--help` requires no configuration
 or service. Missing/invalid configuration fails before opening the host.
+
+`npm link --workspaces=false` exposes `mbt` from the root package's `bin/mbt`
+launcher. It resolves the linked checkout and invokes the same CLI source with
+Node.js; no build is needed for the client. Run `mbt --root /path/to/workspace`
+from any directory, or use the installation root as the current directory. The
+launcher preserves that directory and never starts the host automatically.
 
 `owners` lists the single owner's namespaced platform identities; the local
 example uses `["cli:local"]`. Exactly one identity must be a `cli:` identity for
@@ -349,8 +356,8 @@ establish Docker, gateway, CA or live provider behavior. The
 opt-in infrastructure suite and actual-service acceptance remain separate.
 
 `src/index.ts` is the sole host startup entry point. It composes the CLI socket
-service and configured Telegram and WebSocket channels. Use `dev:host` or
-`start:host` once per installation root; `src/cli/client.ts` remains the independent
+service and configured Telegram and WebSocket channels. Use `dev` or
+`start` once per installation root; `src/cli/client.ts` remains the independent
 socket-client entry point.
 
 ## Shared instructions and Skills

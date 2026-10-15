@@ -25,28 +25,41 @@ host owns the Telegram token. The example contains no credentials.
 
 ```sh
 docker build -t mybots-agent:mailbox -f container/Dockerfile .
-npm run dev:host -- --root ./workspace
+npm run dev -- --root ./workspace
 # In another terminal:
-npm run dev:cli -- --root ./workspace
+npm run mbt -- --root ./workspace
 ```
 
 The installation root defaults to the current directory. `--help` starts no
-services. `dev:host` starts the CLI socket and configured Telegram/WebSocket
+services. `dev` starts the CLI socket and configured Telegram/WebSocket
 channels through `src/index.ts`, the sole host startup entry point. Run one host
 per installation root. A second host refuses the owned state directory. The CLI
 requires the host and never opens an independent execution runtime.
 
-For compiled programs:
+For the compiled host:
 
 ```sh
 npm run build
-npm run start:host -- --root ./workspace
+npm start -- --root ./workspace
 # In another terminal:
-npm run start:cli -- --root ./workspace
+npm run mbt -- --root ./workspace
 ```
 
-Development commands run source once; restart manually after changes. Start
-commands use the existing build.
+`npm run dev` runs host source once; restart manually after changes. `npm start`
+uses the existing host build. `npm run mbt` always runs the CLI TypeScript source
+with Node.js, including when the host runs from its build.
+
+To expose the same CLI as a shell command, link this installed checkout:
+
+```sh
+npm link --workspaces=false
+mbt --root /absolute/path/to/workspace
+```
+
+Ensure npm's global bin directory is on `PATH`. The executable launcher resolves
+its real location through npm symlinks and preserves the caller's working
+directory: `mbt` defaults `--root` to that directory. It connects to the existing
+host and never starts a host or Agent runtime.
 Missing runtime, image, gateway or mount prerequisites fail execution explicitly.
 
 ## Configure the assistant
@@ -122,6 +135,15 @@ see [runtime acceptance](docs/runtime-acceptance.md). Offline and infrastructure
 results do not establish a real-service deployment.
 
 CI runs `npm run verify` and isolated Git workflow tests on Node.js 24.21.0.
+
+## Commands
+
+| Purpose | Command | Entry |
+| --- | --- | --- |
+| Development host | `npm run dev` | `src/index.ts` |
+| Built host | `npm start` | `dist/index.js` |
+| Interactive CLI | `npm run mbt -- [arguments]` | `src/cli/client.ts` |
+| Linked CLI | `mbt [arguments]` | `bin/mbt` to the same source CLI |
 
 ## Source layout
 

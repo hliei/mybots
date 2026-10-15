@@ -4,20 +4,20 @@ import { fileURLToPath } from "node:url";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 
-for (const [entry, command] of [
-  ["cli/client", "cli"],
-  ["index", "host"],
+for (const [command, args, usage] of [
+  [process.execPath, ["dist/cli/client.js", "--help"], "Usage: mbt"],
+  ["npm", ["start", "--", "--help"], "Usage: npm start"],
 ]) {
-  const result = spawnSync(process.execPath, [`dist/${entry}.js`, "--help"], {
+  const result = spawnSync(command, args, {
     cwd: projectRoot,
     encoding: "utf8",
     timeout: 5000,
   });
 
   if (result.error) throw result.error;
-  assert.equal(result.status, 0, `${command} startup failed: ${result.stderr}`);
+  assert.equal(result.status, 0, `Startup failed: ${result.stderr}`);
   assert.equal(result.stderr, "");
-  assert.ok(result.stdout.includes(`Usage: npm run start:${command}`));
+  assert.ok(result.stdout.includes(usage));
 }
 
 const runner = spawnSync(process.execPath, ["scripts/pi-session-demo.mjs"], {
