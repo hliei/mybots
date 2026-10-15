@@ -12,7 +12,7 @@ contracts in ADR 0001 remain a historical record.
 ## Current execution ownership
 
 The argument/result and extraction contracts below remain implemented in
-`container/agent-runner/src/tools/web.ts`. Pi owns schema validation, tool dispatch
+`packages/agent-runner/src/tools/web.ts`. Pi owns schema validation, tool dispatch
 and model continuation. Configuration uses `agent.resources` and `agent.web` in
 `host.json`; search credentials stay gateway-owned. The original module placement,
 Toolbox and YAML configuration described below are historical and have been

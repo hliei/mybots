@@ -94,7 +94,9 @@ Resource discovery uses only explicitly selected Agent Skills and the shared wor
 explicitly; the fixture uses in-memory credentials and disables network catalog
 refresh so normal checks do not read personal auth or contact public providers.
 
-The root `typecheck` and `build` commands include the runner npm workspace. The
+The root `typecheck` and `build` commands include all three npm workspaces.
+Offline tests resolve the mailbox source condition, including spawned source
+processes; compiled startup checks use its default JavaScript exports. The
 root `verify` also runs its compiled provider through the bounded offline demo
 in `scripts/check-startup.mjs`. Run `npm run demo:pi` for visible tool/reopening
 evidence. These checks establish the Node.js package boundary; Docker mounts,
@@ -107,7 +109,8 @@ and `tests/container-driver.test.ts` cover persisted ordering/correlation,
 completion before output, the accepted final-reply crash gap, provider failure,
 cancellation, tool state, constrained gateway contributions and immutable
 provisioning. They use temporary state, real SQLite and a controlled management
-HTTP service. The compiled startup smoke also verifies that the isolated runner
+HTTP service. The compiled startup smoke also starts and stops the built host with native TypeScript disabled, verifies
+the root mailbox export without loading either SQLite driver, and verifies that the isolated runner
 refuses loading the Bun SQLite entry under the unsupported host runtime without
 fallback. Ordinary mailbox tests use the Node entry; actual container tests use
 the Bun entry with the same persisted protocol and concurrency protection.

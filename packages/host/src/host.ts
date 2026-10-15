@@ -4,6 +4,8 @@ import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout } from "node:timers/promises";
+import type { AgentResources, OutboundMessage, WebConfiguration } from "@mybots/mailbox";
+import { HostMailbox } from "@mybots/mailbox/node";
 import { validateHostConfiguration } from "./config/host.ts";
 import { provisionSession } from "./container-runner.ts";
 import { HostStore, type SavedSession, type SessionRoute } from "./db/index.ts";
@@ -15,8 +17,6 @@ import type {
   SessionObservation,
 } from "./drivers/types.ts";
 import { observesSessions } from "./drivers/types.ts";
-import { HostMailbox } from "./mailbox/node.ts";
-import type { AgentResources, OutboundMessage, WebConfiguration } from "./mailbox/types.ts";
 import {
   decideStallAction,
   type RecoveryOutcome,

@@ -5,10 +5,42 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { promisify } from "node:util";
+import { HostMailbox, initializeMailbox } from "@mybots/mailbox/node";
 import { expect, test } from "vitest";
-import { HostMailbox, initializeMailbox } from "../../src/mailbox/node.ts";
 
 const execute = promisify(execFile);
+
+test("the production image resolves runner workspace source without host or repository dependencies", async () => {
+  const result = await execute(
+    "docker",
+    [
+      "run",
+      "--rm",
+      "--network=none",
+      "--entrypoint",
+      "bun",
+      "mybots-agent:mailbox",
+      "--conditions=mybots-source",
+      "-e",
+      `import assert from "node:assert/strict";
+     import { existsSync } from "node:fs";
+     const mailbox = await import("@mybots/mailbox");
+     const bun = await import("@mybots/mailbox/bun");
+     await import("@earendil-works/pi-coding-agent");
+     assert.equal(typeof mailbox.clearMailboxLocks, "function");
+     assert.equal(typeof bun.RunnerMailbox, "function");
+     assert.ok(import.meta.resolve("@mybots/mailbox/bun").endsWith("/packages/mailbox/src/bun.ts"));
+     for (const id of ["@mybots/host", "@onecli-sh/sdk", "typescript", "vitest"]) {
+       assert.throws(() => import.meta.resolve(id));
+     }
+     assert.equal(existsSync("/app/packages/host"), false);
+     assert.equal(existsSync("/app/packages/agent-runner/dist"), false);
+     console.log("Isolated runner workspace imports passed.");`,
+    ],
+    { timeout: 15000 },
+  );
+  expect(result.stdout.trim()).toBe("Isolated runner workspace imports passed.");
+});
 
 test("directional readers tolerate concurrent writes on actual container mounts", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "mybots-mounted-sqlite-"));
@@ -43,6 +75,7 @@ test("directional readers tolerate concurrent writes on actual container mounts"
           "--entrypoint",
           "bun",
           "mybots-agent:mailbox",
+          "--conditions=mybots-source",
           "-e",
           script,
         ],

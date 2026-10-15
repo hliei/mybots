@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
-import { runHost } from "../src/index.ts";
+import { runHost } from "../packages/host/src/index.ts";
 import { waitForCheckpoint } from "./checkpoint.ts";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -18,7 +18,7 @@ afterAll(() => rmSync(temporaryRoot, { recursive: true, force: true }));
 
 describe("host startup", () => {
   function run(...args: string[]) {
-    return spawnSync(process.execPath, ["src/index.ts", ...args], {
+    return spawnSync(process.execPath, ["packages/host/src/index.ts", ...args], {
       cwd: projectRoot,
       encoding: "utf8",
       timeout: 5000,
@@ -72,7 +72,7 @@ it("imports runtime, CLI, and WebSocket modules without reading configuration or
     [
       "--input-type=module",
       "-e",
-      'await import("./src/index.ts"); await import("./src/host.ts"); await import("./src/cli/socket-server.ts"); await import("./src/channels/websocket.ts"); await import("./src/cli/client.ts"); await import("./src/channels/telegram-api.ts"); await import("./src/channels/telegram.ts");',
+      'await import("./packages/host/src/index.ts"); await import("./packages/host/src/host.ts"); await import("./packages/host/src/cli/socket-server.ts"); await import("./packages/host/src/channels/websocket.ts"); await import("./packages/host/src/cli/client.ts"); await import("./packages/host/src/channels/telegram-api.ts"); await import("./packages/host/src/channels/telegram.ts");',
     ],
     { cwd: projectRoot, encoding: "utf8", timeout: 5000 },
   );
@@ -92,7 +92,7 @@ it.each(["--missing-file", "--invalid-json", "--invalid-settings"])(
       );
     const result = spawnSync(
       process.execPath,
-      ["src/index.ts", "--root", temporaryRoot, "--config", file],
+      ["packages/host/src/index.ts", "--root", temporaryRoot, "--config", file],
       { cwd: projectRoot, encoding: "utf8", timeout: 5000 },
     );
     expect(result.status).toBe(1);
@@ -109,7 +109,7 @@ it("rejects a non-loopback WebSocket bind in host settings", () => {
   writeFileSync(file, JSON.stringify(base));
   const result = spawnSync(
     process.execPath,
-    ["src/index.ts", "--root", temporaryRoot, "--config", file],
+    ["packages/host/src/index.ts", "--root", temporaryRoot, "--config", file],
     {
       cwd: projectRoot,
       encoding: "utf8",
@@ -122,11 +122,15 @@ it("rejects a non-loopback WebSocket bind in host settings", () => {
 });
 
 it("reports an unavailable CLI host without opening an embedded runtime", () => {
-  const result = spawnSync(process.execPath, ["src/cli/client.ts", "--root", missingWorkspace], {
-    cwd: projectRoot,
-    encoding: "utf8",
-    timeout: 5000,
-  });
+  const result = spawnSync(
+    process.execPath,
+    ["packages/host/src/cli/client.ts", "--root", missingWorkspace],
+    {
+      cwd: projectRoot,
+      encoding: "utf8",
+      timeout: 5000,
+    },
+  );
   expect(result.status).toBe(1);
   expect(result.stdout).toBe("");
   expect(result.stderr).toContain("start the host first");
@@ -179,7 +183,12 @@ it.each([
   [["run", "dev", "--", "--help"], "Usage: npm start"],
   [["run", "mbt", "--", "--help"], "Usage: mbt"],
 ] as const)("runs the source command %j without services", (args, usage) => {
-  const result = spawnSync("npm", [...args], { cwd: projectRoot, encoding: "utf8", timeout: 5000 });
+  const result = spawnSync("npm", [...args], {
+    cwd: projectRoot,
+    env: { ...process.env, NODE_OPTIONS: "" },
+    encoding: "utf8",
+    timeout: 5000,
+  });
   expect(result.error).toBeUndefined();
   expect(result.status).toBe(0);
   expect(result.stdout).toContain(usage);

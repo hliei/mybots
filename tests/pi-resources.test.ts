@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { PiProvider } from "../container/agent-runner/src/providers/pi.ts";
-import type { ProviderEvent, QueryInput } from "../container/agent-runner/src/providers/types.ts";
+import { PiProvider } from "../packages/agent-runner/src/providers/pi.ts";
+import type { ProviderEvent, QueryInput } from "../packages/agent-runner/src/providers/types.ts";
 import { startPiService } from "./pi-fixture.ts";
 
 async function exchange(provider: PiProvider, input: QueryInput) {

@@ -1,0 +1,30 @@
+{
+  "name": "@mybots/mailbox",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "mybots-source": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./src/node.ts",
+      "mybots-source": "./src/node.ts",
+      "default": "./dist/node.js"
+    },
+    "./bun": {
+      "types": "./src/bun.ts",
+      "mybots-source": "./src/bun.ts",
+      "default": "./dist/bun.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0"
+  }
+}

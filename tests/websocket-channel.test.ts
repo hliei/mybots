@@ -5,8 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
-import { WebSocketChannel, type WebSocketChannelAddress } from "../src/channels/websocket.ts";
-import { Host, type HostConfiguration } from "../src/host.ts";
+import {
+  WebSocketChannel,
+  type WebSocketChannelAddress,
+} from "../packages/host/src/channels/websocket.ts";
+import { Host, type HostConfiguration } from "../packages/host/src/host.ts";
 import { waitForCheckpoint } from "./checkpoint.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 
@@ -445,8 +448,8 @@ it("rejects an occupied port without crashing and releases channel attachment", 
       `
     import { createServer } from "node:http";
     import { once } from "node:events";
-    import { Host } from ${JSON.stringify(new URL("../src/host.ts", import.meta.url).href)};
-    import { WebSocketChannel } from ${JSON.stringify(new URL("../src/channels/websocket.ts", import.meta.url).href)};
+    import { Host } from ${JSON.stringify(new URL("../packages/host/src/host.ts", import.meta.url).href)};
+    import { WebSocketChannel } from ${JSON.stringify(new URL("../packages/host/src/channels/websocket.ts", import.meta.url).href)};
     import { MailboxDriver } from ${JSON.stringify(new URL("./host-fixture.ts", import.meta.url).href)};
     const configuration = ${JSON.stringify(configuration)};
     const host = await Host.start({ root: ${JSON.stringify(root)}, configuration, driver: new MailboxDriver() });

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import type { AgentResources, WebConfiguration } from "@mybots/mailbox";
 import type { ModelConfiguration } from "../drivers/types.ts";
 import type { HostConfiguration } from "../host.ts";
-import type { AgentResources, WebConfiguration } from "../mailbox/types.ts";
 import { schema } from "./migrations/001-initial.ts";
 import { resourceSchema } from "./migrations/002-agent-resources.ts";
 import { deliveryAttemptSchema } from "./migrations/003-delivery-attempts.ts";

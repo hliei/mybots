@@ -4,8 +4,8 @@ import { connect, createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { CliChannel } from "../src/cli/socket-server.ts";
-import { Host, type HostConfiguration } from "../src/host.ts";
+import { CliChannel } from "../packages/host/src/cli/socket-server.ts";
+import { Host, type HostConfiguration } from "../packages/host/src/host.ts";
 import { waitForCheckpoint } from "./checkpoint.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 
@@ -144,7 +144,9 @@ it("rejects malformed socket input without accepting Agent work and remains usab
 it("executes the CLI as a host client and reconnects to the same saved conversation", async () => {
   await setup();
   for (const text of ["First", "Continue"]) {
-    const child = spawn(process.execPath, ["src/cli/client.ts", "--root", root], { stdio: "pipe" });
+    const child = spawn(process.execPath, ["packages/host/src/cli/client.ts", "--root", root], {
+      stdio: "pipe",
+    });
     children.push(child);
     let stdout = "";
     let stderr = "";
@@ -175,7 +177,9 @@ it("executes the CLI as a host client and reconnects to the same saved conversat
 
 it("disconnects a CLI process with Ctrl+C while the host keeps its conversation available", async () => {
   await setup();
-  const child = spawn(process.execPath, ["src/cli/client.ts", "--root", root], { stdio: "pipe" });
+  const child = spawn(process.execPath, ["packages/host/src/cli/client.ts", "--root", root], {
+    stdio: "pipe",
+  });
   children.push(child);
   let stdout = "";
   child.stdout.setEncoding("utf8").on("data", (chunk) => {
@@ -216,7 +220,9 @@ it("refuses a second CLI listener without disrupting the existing channel", asyn
 it("starts the host executable with valid settings and removes its socket and ownership on SIGTERM", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-cli-")));
   await copyFile("examples/host/host.json", join(root, "host.json"));
-  const child = spawn(process.execPath, ["src/index.ts", "--root", root], { stdio: "pipe" });
+  const child = spawn(process.execPath, ["packages/host/src/index.ts", "--root", root], {
+    stdio: "pipe",
+  });
   children.push(child);
   let stdout = "";
   let stderr = "";
@@ -246,7 +252,9 @@ it("starts the host executable with valid settings and removes its socket and ow
 it("stops the host even when removing the CLI socket fails during shutdown", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-cli-")));
   await copyFile("examples/host/host.json", join(root, "host.json"));
-  const child = spawn(process.execPath, ["src/index.ts", "--root", root], { stdio: "pipe" });
+  const child = spawn(process.execPath, ["packages/host/src/index.ts", "--root", root], {
+    stdio: "pipe",
+  });
   children.push(child);
   let stdout = "";
   let stderr = "";
@@ -284,7 +292,9 @@ async function controlledTerminal() {
     listener.once("error", reject);
     listener.listen(join(root, "data", "cli.sock"), resolve);
   });
-  const child = spawn(process.execPath, ["src/cli/client.ts", "--root", root], { stdio: "pipe" });
+  const child = spawn(process.execPath, ["packages/host/src/cli/client.ts", "--root", root], {
+    stdio: "pipe",
+  });
   children.push(child);
   let stdout = "";
   let stderr = "";
@@ -368,7 +378,11 @@ it("links mbt into an isolated npm prefix and uses the same interactive client f
     [root, [], "Linked default root"],
     [tmpdir(), ["--root", root], "Linked explicit root"],
   ] as const) {
-    const child = spawn(command, [...args], { cwd, stdio: "pipe" });
+    const child = spawn(command, [...args], {
+      cwd,
+      stdio: "pipe",
+      env: { ...process.env, NODE_OPTIONS: "" },
+    });
     children.push(child);
     let stdout = "";
     let stderr = "";
@@ -399,6 +413,7 @@ it("links mbt into an isolated npm prefix and uses the same interactive client f
   expect(host?.sessions()).toHaveLength(1);
   const missing = spawnSync(command, ["--root", join(root, "unavailable")], {
     cwd: tmpdir(),
+    env: { ...process.env, NODE_OPTIONS: "" },
     encoding: "utf8",
     timeout: 5000,
   });

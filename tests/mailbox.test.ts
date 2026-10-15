@@ -1,8 +1,8 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { HostMailbox, initializeMailbox, RunnerMailbox } from "@mybots/mailbox/node";
 import { expect, test } from "vitest";
-import { HostMailbox, initializeMailbox, RunnerMailbox } from "../src/mailbox/node.ts";
 
 test("persisted input crosses the directional mailbox with ordered correlated output", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mybots-mailbox-"));

@@ -1,4 +1,4 @@
-import type { SessionKey } from "../mailbox/types.ts";
+import type { SessionKey } from "@mybots/mailbox";
 
 export interface GatewayContribution {
   env: Record<string, string>;

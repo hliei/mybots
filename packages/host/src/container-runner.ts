@@ -1,13 +1,9 @@
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import type { AgentResources, SessionKey, WebConfiguration } from "@mybots/mailbox";
+import { resolveWebTools, validateAgentResources, validateWebConfiguration } from "@mybots/mailbox";
+import { initializeMailbox } from "@mybots/mailbox/node";
 import type { ModelConfiguration, SessionMaterial } from "./drivers/types.ts";
-import {
-  resolveWebTools,
-  validateAgentResources,
-  validateWebConfiguration,
-} from "./mailbox/index.ts";
-import { initializeMailbox } from "./mailbox/node.ts";
-import type { AgentResources, SessionKey, WebConfiguration } from "./mailbox/types.ts";
 
 function legalName(value: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(value);

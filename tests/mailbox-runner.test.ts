@@ -1,13 +1,10 @@
 import { appendFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { HostMailbox, initializeMailbox, RunnerMailbox } from "@mybots/mailbox/node";
 import { expect, test, vi } from "vitest";
-import { runMailbox } from "../container/agent-runner/src/poll-loop.ts";
-import type {
-  AgentProvider,
-  ProviderEvent,
-} from "../container/agent-runner/src/providers/types.ts";
-import { HostMailbox, initializeMailbox, RunnerMailbox } from "../src/mailbox/node.ts";
+import { runMailbox } from "../packages/agent-runner/src/poll-loop.ts";
+import type { AgentProvider, ProviderEvent } from "../packages/agent-runner/src/providers/types.ts";
 import { waitForCheckpoint } from "./checkpoint.ts";
 
 test.each(["result", "throw", "end"])(

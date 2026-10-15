@@ -1,4 +1,4 @@
-import type { InboundMessage } from "./mailbox/types.ts";
+import type { InboundMessage } from "@mybots/mailbox";
 
 /** A running container whose heartbeat passed this age without activity is replaced. */
 export const HEARTBEAT_CEILING_MS = 30 * 60 * 1000;

@@ -6,9 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
-import { WebSocketChannel } from "../dist/channels/websocket.js";
-import { CliChannel } from "../dist/cli/socket-server.js";
-import { Host } from "../dist/host.js";
+import { WebSocketChannel } from "../packages/host/dist/channels/websocket.js";
+import { CliChannel } from "../packages/host/dist/cli/socket-server.js";
+import { Host } from "../packages/host/dist/host.js";
 import { MailboxDriver } from "../tests/host-fixture.ts";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));

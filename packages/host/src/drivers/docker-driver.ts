@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { clearMailboxLocks } from "@mybots/mailbox";
 import type { GatewayProvider } from "../gateway-providers/types.ts";
-import { clearMailboxLocks } from "../mailbox/index.ts";
 import type {
   ObservingSessionDriver,
   SessionHandle,

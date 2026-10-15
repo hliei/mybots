@@ -7,9 +7,8 @@
   },
   "files": {
     "includes": [
-      "container/agent-runner/src/**/*.ts",
-      "container/agent-runner/*.json",
-      "src/**/*.ts",
+      "packages/**/*.ts",
+      "packages/*/*.json",
       "tests/**/*.ts",
       "scripts/**/*.mjs",
       "*.json",

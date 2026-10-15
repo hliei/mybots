@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import { createTelegramApi, normalizeTelegramUpdate } from "../src/channels/telegram-api.ts";
+import {
+  createTelegramApi,
+  normalizeTelegramUpdate,
+} from "../packages/host/src/channels/telegram-api.ts";
 
 const signal = () => new AbortController().signal;
 

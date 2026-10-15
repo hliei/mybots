@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { OneCliGateway } from "../src/gateway-providers/onecli.ts";
+import { OneCliGateway } from "../packages/host/src/gateway-providers/onecli.ts";
 
 test("OneCLI contributes only scoped proxy identity, placeholder auth and public trust", async () => {
   let modelAuth = "placeholder";

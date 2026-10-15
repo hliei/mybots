@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { createWebTools } from "../container/agent-runner/src/tools/web.ts";
+import { createWebTools } from "../packages/agent-runner/src/tools/web.ts";
 import { pageFixture } from "./page-fixture.ts";
 
 // Pi supplies the extension context during SDK execution; these tools do not use it.

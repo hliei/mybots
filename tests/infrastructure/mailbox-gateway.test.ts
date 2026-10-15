@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { promisify } from "node:util";
+import { HostMailbox } from "@mybots/mailbox/node";
 import { expect, test } from "vitest";
-import { provisionSession } from "../../src/container-runner.ts";
-import { DockerDriver } from "../../src/drivers/docker-driver.ts";
-import type { SessionHandle } from "../../src/drivers/types.ts";
-import { OneCliGateway } from "../../src/gateway-providers/onecli.ts";
-import { HostMailbox } from "../../src/mailbox/node.ts";
+import { provisionSession } from "../../packages/host/src/container-runner.ts";
+import { DockerDriver } from "../../packages/host/src/drivers/docker-driver.ts";
+import type { SessionHandle } from "../../packages/host/src/drivers/types.ts";
+import { OneCliGateway } from "../../packages/host/src/gateway-providers/onecli.ts";
 
 const execute = promisify(execFile);
 

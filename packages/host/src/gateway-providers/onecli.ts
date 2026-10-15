@@ -1,8 +1,8 @@
 import { createHash, X509Certificate } from "node:crypto";
 import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { SessionKey } from "@mybots/mailbox";
 import { OneCLI } from "@onecli-sh/sdk";
-import type { SessionKey } from "../mailbox/types.ts";
 import type { GatewayContribution, GatewayProvider } from "./types.ts";
 
 export interface OneCliOptions {

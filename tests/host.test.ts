@@ -1,9 +1,9 @@
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { OutboundMessage } from "@mybots/mailbox";
 import { afterEach, expect, it, vi } from "vitest";
-import { Host, type HostConfiguration, type HostEvent } from "../src/host.ts";
-import type { OutboundMessage } from "../src/mailbox/types.ts";
+import { Host, type HostConfiguration, type HostEvent } from "../packages/host/src/host.ts";
 import { waitForCheckpoint } from "./checkpoint.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 

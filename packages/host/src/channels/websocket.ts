@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { OutboundMessage } from "@mybots/mailbox";
 import type { RawData } from "ws";
 import { WebSocket, WebSocketServer } from "ws";
 import type { ChannelDelivery, Host, HostConfiguration, HostEvent } from "../host.ts";
-import type { OutboundMessage } from "../mailbox/types.ts";
 
 export interface WebSocketChannelAddress {
   host: string;

@@ -1,0 +1,18 @@
+{
+  "name": "@mybots/host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@onecli-sh/sdk": "2.2.1",
+    "ws": "8.22.0",
+    "@mybots/mailbox": "0.0.0"
+  }
+}

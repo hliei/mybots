@@ -1,10 +1,6 @@
 import { readFile } from "node:fs/promises";
+import { resolveWebTools, validateAgentResources, validateWebConfiguration } from "@mybots/mailbox";
 import type { HostConfiguration } from "../host.ts";
-import {
-  resolveWebTools,
-  validateAgentResources,
-  validateWebConfiguration,
-} from "../mailbox/index.ts";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))

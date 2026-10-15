@@ -317,10 +317,10 @@ interface before stopping the host.
 `Host.start({ root, configuration, driver })`, `accept`, `sessions`, `inspect`,
 `reset({ destinationId, userId })`, `observe`, `attachChannel` and `stop` are the host boundary. The driver accepts
 session material and an abort signal and returns an awaited stop/exit handle.
-`CliChannel.listen` and `close` in `src/cli/socket-server.ts` own the local listener
-and its connected sockets. The independent `src/cli/client.ts` parses CLI arguments
-and starts `src/cli/chat.ts` for terminal prompts, input and reply display.
-`src/cli/socket-client.ts` owns connection, newline-delimited JSON framing,
+`CliChannel.listen` and `close` in `packages/host/src/cli/socket-server.ts` own the local listener
+and its connected sockets. The independent `packages/host/src/cli/client.ts` parses CLI arguments
+and starts `packages/host/src/cli/chat.ts` for terminal prompts, input and reply display.
+`packages/host/src/cli/socket-client.ts` owns connection, newline-delimited JSON framing,
 text send/receive and awaited socket closure. The terminal handles close results
 without accessing the underlying socket. The connection stays open for interactive
 chat; EOF, quit or Ctrl+C disconnect it while host-side Agent work continues.
@@ -355,9 +355,9 @@ wiring. No test contacts Telegram or uses a real token. These checks do not
 establish Docker, gateway, CA or live provider behavior. The
 opt-in infrastructure suite and actual-service acceptance remain separate.
 
-`src/index.ts` is the sole host startup entry point. It composes the CLI socket
+`packages/host/src/index.ts` is the sole host startup entry point. It composes the CLI socket
 service and configured Telegram and WebSocket channels. Use `dev` or
-`start` once per installation root; `src/cli/client.ts` remains the independent
+`start` once per installation root; `packages/host/src/cli/client.ts` remains the independent
 socket-client entry point.
 
 ## Shared instructions and Skills

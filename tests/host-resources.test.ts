@@ -1,12 +1,12 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { RunnerMailbox } from "@mybots/mailbox/node";
 import { expect, test, vi } from "vitest";
-import { runMailbox } from "../container/agent-runner/src/poll-loop.ts";
-import { PiProvider } from "../container/agent-runner/src/providers/pi.ts";
-import type { SessionDriver } from "../src/drivers/types.ts";
-import { Host, type HostConfiguration } from "../src/host.ts";
-import { RunnerMailbox } from "../src/mailbox/node.ts";
+import { runMailbox } from "../packages/agent-runner/src/poll-loop.ts";
+import { PiProvider } from "../packages/agent-runner/src/providers/pi.ts";
+import type { SessionDriver } from "../packages/host/src/drivers/types.ts";
+import { Host, type HostConfiguration } from "../packages/host/src/host.ts";
 import { waitForCheckpoint } from "./checkpoint.ts";
 import { startPiService } from "./pi-fixture.ts";
 

@@ -7,22 +7,22 @@
     "node": "24.x"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit && npm run typecheck --workspace @mybots/agent-runner",
+    "typecheck": "tsc --noEmit && npm run typecheck --workspaces",
     "check": "biome check --error-on-warnings . && npm run typecheck",
     "format": "biome format --write .",
     "test": "vitest run",
     "test:watch": "vitest --watch",
-    "build": "tsc -p tsconfig.build.json && npm run build --workspace @mybots/agent-runner",
+    "build": "npm run build --workspaces",
     "check:startup": "node scripts/check-startup.mjs",
     "verify": "npm run check && npm test && npm run build && npm run check:startup",
     "prepare": "husky",
-    "demo:pi": "npm run build --workspace @mybots/agent-runner && npm run demo --workspace @mybots/agent-runner",
+    "demo:pi": "npm run build --workspace @mybots/mailbox && npm run build --workspace @mybots/agent-runner && npm run demo --workspace @mybots/agent-runner",
     "test:infrastructure": "docker build -t mybots-agent:mailbox -f container/Dockerfile . && vitest run --config tests/infrastructure/vitest.config.ts",
     "demo:host": "npm run build && node scripts/host-cli-demo.mjs",
     "prebuild": "node scripts/clean-build.mjs",
-    "dev": "node src/index.ts",
-    "start": "node dist/index.js",
-    "mbt": "node src/cli/client.ts"
+    "dev": "node --conditions=mybots-source packages/host/src/index.ts",
+    "start": "node packages/host/dist/index.js",
+    "mbt": "node packages/host/src/cli/client.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
@@ -34,13 +34,10 @@
     "typescript": "7.0.2",
     "vitest": "5.0.3"
   },
-  "dependencies": {
-    "@onecli-sh/sdk": "2.2.1",
-    "ws": "8.22.0"
-  },
   "workspaces": [
-    "container/agent-runner",
-    "src/mailbox"
+    "packages/mailbox",
+    "packages/host",
+    "packages/agent-runner"
   ],
   "bin": {
     "mbt": "bin/mbt"

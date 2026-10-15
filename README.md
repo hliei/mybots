@@ -32,7 +32,7 @@ npm run mbt -- --root ./workspace
 
 The installation root defaults to the current directory. `--help` starts no
 services. `dev` starts the CLI socket and configured Telegram/WebSocket
-channels through `src/index.ts`, the sole host startup entry point. Run one host
+channels through `packages/host/src/index.ts`, the sole host startup entry point. Run one host
 per installation root. A second host refuses the owned state directory. The CLI
 requires the host and never opens an independent execution runtime.
 
@@ -140,25 +140,31 @@ CI runs `npm run verify` and isolated Git workflow tests on Node.js 24.21.0.
 
 | Purpose | Command | Entry |
 | --- | --- | --- |
-| Development host | `npm run dev` | `src/index.ts` |
-| Built host | `npm start` | `dist/index.js` |
-| Interactive CLI | `npm run mbt -- [arguments]` | `src/cli/client.ts` |
+| Development host | `npm run dev` | `packages/host/src/index.ts` |
+| Built host | `npm start` | `packages/host/dist/index.js` |
+| Interactive CLI | `npm run mbt -- [arguments]` | `packages/host/src/cli/client.ts` |
 | Linked CLI | `mbt [arguments]` | `bin/mbt` to the same source CLI |
+
+The root package owns unified commands and repository tools; `packages/host`,
+`packages/agent-runner` and `packages/mailbox` own their business dependencies and
+separate build output. One root lockfile covers all workspaces. Source host startup
+selects the mailbox source export; built startup uses its compiled export. See
+[package resolution](docs/container-runtime.md#mailbox-package-resolution).
 
 ## Source layout
 
-- `src/index.ts`: host startup, composing the CLI socket, Telegram and WebSocket services.
-- `src/host.ts`, `src/reconcile-session.ts`: routing, delivery and bounded recovery.
-- `src/db/`: central entities and schema migrations.
-- `src/channels/`: Telegram and WebSocket host adapters and Bot API transport.
-- `src/drivers/`, `src/container-runner.ts`: isolated execution and session material.
-- `src/gateway-providers/`: host-side credential gateway integration.
-- `src/mailbox/`: shared directional mailbox package with Node and Bun entries.
-- `src/cli/client.ts`: independent CLI entry and argument parsing.
-- `src/cli/chat.ts`: interactive terminal input, prompts and reply display.
-- `src/cli/socket-client.ts`: socket connection, text framing and awaited closure.
-- `src/cli/socket-server.ts`: host-side CLI listener, input routing and delivery.
-- `container/agent-runner/src/`: mailbox loop, Pi provider and Pi web tools.
+- `packages/host/src/index.ts`: host startup, composing the CLI socket, Telegram and WebSocket services.
+- `packages/host/src/host.ts`, `packages/host/src/reconcile-session.ts`: routing, delivery and bounded recovery.
+- `packages/host/src/db/`: central entities and schema migrations.
+- `packages/host/src/channels/`: Telegram and WebSocket host adapters and Bot API transport.
+- `packages/host/src/drivers/`, `packages/host/src/container-runner.ts`: isolated execution and session material.
+- `packages/host/src/gateway-providers/`: host-side credential gateway integration.
+- `packages/mailbox/src/`: shared directional mailbox package with Node and Bun entries.
+- `packages/host/src/cli/client.ts`: independent CLI entry and argument parsing.
+- `packages/host/src/cli/chat.ts`: interactive terminal input, prompts and reply display.
+- `packages/host/src/cli/socket-client.ts`: socket connection, text framing and awaited closure.
+- `packages/host/src/cli/socket-server.ts`: host-side CLI listener, input routing and delivery.
+- `packages/agent-runner/src/`: mailbox loop, Pi provider and Pi web tools.
 
 ## Project rules
 

@@ -9,15 +9,18 @@ details and scope. See
 
 ## Technical baseline
 
-- Use TypeScript with Node.js 24.21.0. The host is the root npm package; the
-  Agent runner is `container/agent-runner`, an npm workspace with its own SDK
-  dependencies and compilation boundary. Its production container uses Bun 1.4.0;
-  Node remains the offline SDK-development and host runtime. `src/mailbox` is a
-  shared npm workspace with explicit `/node` and `/bun` entries using static
-  native SQLite imports. Its root entry has no SQLite runtime import. The runner
-  pins `@types/bun` and enables Bun types in its own TypeScript project; the host
-  uses Node types and excludes the Bun entry from its compilation. Install all
-  packages from the root.
+- Use TypeScript with Node.js 24.21.0. The root npm package owns repository
+  tooling and commands. `packages/host`, `packages/agent-runner` and
+  `packages/mailbox` are independent workspaces installed from the root lockfile.
+  Host dependencies belong to the host package; Pi SDK and web-tool dependencies
+  belong to the runner. The production runner uses Bun 1.4.0; Node remains the
+  offline SDK-development and host runtime.
+- The mailbox root export has no SQLite runtime import. Its `/node` and `/bun`
+  entries statically import their respective native SQLite drivers. Host source
+  uses only the root and Node entries through `@mybots/mailbox` package imports.
+  Mailbox and runner type checking enable pinned Bun types in their own projects;
+  the host project uses Node types. See
+  [mailbox resolution](../container-runtime.md#mailbox-package-resolution).
 - Use npm and commit `package-lock.json` with dependency changes.
 - Pin the supported Node.js baseline and direct dependency versions during
   tooling setup. Keep local development and CI on the same baseline.
@@ -28,9 +31,10 @@ details and scope. See
 - Use Node.js native type stripping for development and keep TypeScript syntax
   erasable. Use `tsc` for type checking and compilation, Vitest for tests, and
   Biome for formatting and linting.
-- Keep host source in `src/` and runner source in `container/agent-runner/src/`.
+- Keep host source in `packages/host/src/` and runner source in `packages/agent-runner/src/`.
   Type-check source, tests, and TypeScript configuration files; compile host
-  source into `dist/` and runner source into `container/agent-runner/dist/`.
+  source into `packages/host/dist/`, runner source into
+  `packages/agent-runner/dist/`, and mailbox source into `packages/mailbox/dist/`.
 - Ignore dependencies, build output, coverage output, local credentials, and
   runtime data. Keep source, tests, configuration, and the lockfile in Git.
 
@@ -38,12 +42,12 @@ details and scope. See
 
 - Keep agent execution, terminal interaction, and message-platform handling in
   separate modules. The CLI is a client of the persistent host and the owner-local
-  WebSocket interface is a host channel. `src/index.ts` is the sole host startup
+  WebSocket interface is a host channel. `packages/host/src/index.ts` is the sole host startup
   entry point and composes all three channel services. The independent CLI entry
-  is `src/cli/client.ts`: it parses arguments and starts `chat.ts` for terminal
+  is `packages/host/src/cli/client.ts`: it parses arguments and starts `chat.ts` for terminal
   interaction. `socket-client.ts` owns the CLI socket protocol; `socket-server.ts`
-  owns the host-side CLI listener. All four modules live under `src/cli/`.
-  The Telegram Bot API boundary in `src/channels/telegram-api.ts` serves the
+  owns the host-side CLI listener. All four modules live under `packages/host/src/cli/`.
+  The Telegram Bot API boundary in `packages/host/src/channels/telegram-api.ts` serves the
   owner-only private-chat channel, which routes accepted input through the common
   host path and keeps the token host-side.
 - Keep platform SDK details at the platform boundary and model SDK details at
@@ -72,16 +76,17 @@ between sessions, with sequential delivery inside each session. See
 | --- | --- |
 | `dev` | Run the persistent host from TypeScript source. |
 | `mbt` | Run the interactive socket client from TypeScript source with Node.js. |
-| `typecheck` | Check host source, tests, configuration and runner source without emitting files. |
+| `typecheck` | Check all three workspaces, root tests and configuration without emitting files. |
 | `check` | Check formatting, lint, and types without modifying files; do not run tests or build. |
 | `format` | Apply formatting fixes. |
 | `test` | Run all ordinary offline tests once and exit. |
 | `test:watch` | Watch files and rerun ordinary offline tests. |
-| `build` | Clean generated output, then compile host and runner into their separate `dist/` directories. |
+| `build` | Clean generated output, then compile all three workspaces into their separate `dist/` directories. |
 | `start` | Run the built persistent host with Node.js. |
 | `verify` | Run `check`, ordinary tests, build, and an offline startup smoke check for each entry point. |
 
-`dev` runs host source without building or watching; restart manually after
+`dev` selects the mailbox `mybots-source` export condition and runs host source
+without building or watching; restart manually after
 changes. `start` uses the existing host build without rebuilding. `mbt` runs the
 CLI source with Node.js native TypeScript support. The root package's executable
 `bin/mbt` exposes that same source client after `npm link --workspaces=false`,
@@ -90,7 +95,7 @@ smoke checks must exit without live credentials and cover executable entry point
 not only imports.
 The offline startup checks also execute the compiled Pi provider against a local
 streaming model service through `scripts/pi-session-demo.mjs`. `npm run demo:pi`
-builds and runs this demonstration separately. It exercises SDK-owned tools and
+builds mailbox and runner, then runs this demonstration separately. It exercises SDK-owned tools and
 explicit conversation reopening without credentials or container infrastructure.
 
 The startup checks also run the compiled host/CLI mailbox fixture demonstration

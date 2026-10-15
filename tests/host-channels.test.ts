@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
-import { TelegramChannel } from "../src/channels/telegram.ts";
-import type { TelegramApi } from "../src/channels/telegram-api.ts";
-import { WebSocketChannel } from "../src/channels/websocket.ts";
-import { CliChannel } from "../src/cli/socket-server.ts";
-import { loadHostSettings } from "../src/config/host.ts";
-import { Host } from "../src/host.ts";
+import { TelegramChannel } from "../packages/host/src/channels/telegram.ts";
+import type { TelegramApi } from "../packages/host/src/channels/telegram-api.ts";
+import { WebSocketChannel } from "../packages/host/src/channels/websocket.ts";
+import { CliChannel } from "../packages/host/src/cli/socket-server.ts";
+import { loadHostSettings } from "../packages/host/src/config/host.ts";
+import { Host } from "../packages/host/src/host.ts";
 import { waitForCheckpoint } from "./checkpoint.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 
