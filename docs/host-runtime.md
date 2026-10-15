@@ -123,7 +123,8 @@ acknowledgements continue to be mirrored while delivery is held.
 
 The host mirrors terminal processing acknowledgements into inbound status and
 independently delivers persisted outbound rows to their original destination.
-`Host.inspect(sessionId)` reports input, output, continuation and delivery state.
+`Host.inspect(sessionId)` reports input, output, continuation and delivery state,
+including each reply's attempt count and last in-flight error.
 An output with a missing input correlation or changed reply address is rejected.
 Completion does not imply output persistence or delivery.
 
@@ -137,7 +138,10 @@ presented as sent and is not retried by a later host instance. Attempts are
 independent of processing completion, and a failing destination only affects its
 own messages: later replies in the same session and other sessions keep
 delivering. The host does not block a whole session on an exhausted reply and
-keeps no chunk-count projection. A destination whose channel is not attached yet
+keeps no chunk-count projection. An in-flight failure records the channel error
+message (bounded to 200 characters) for inspection; `Host.inspect` exposes the
+attempt count, last attempt time and last error until the reply reaches terminal
+state. A destination whose channel is not attached yet
 stays pending—no attempt is counted—and becomes eligible once its channel is
 available, including after restart. Delivery is still not exactly-once: when the
 platform accepts a send but the host stops before recording durable

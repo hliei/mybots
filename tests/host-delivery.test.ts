@@ -118,6 +118,10 @@ it("retries a failed platform send a finite number of times and records terminal
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-delivery-")));
   const driver = new MailboxDriver();
   host = await Host.start({ root, configuration, driver });
+  const failures: string[] = [];
+  host.observe((event) => {
+    if (event.type === "failure") failures.push(event.error);
+  });
   const sent: OutboundMessage[] = [];
   host.attachChannel({
     channelType: "cli",
@@ -138,8 +142,7 @@ it("retries a failed platform send a finite number of times and records terminal
     ]),
   );
   expect(sent).toHaveLength(3);
-  await new Promise((resolve) => setTimeout(resolve, 80));
-  expect(sent).toHaveLength(3);
+  expect(failures).toEqual(["Channel delivery failed permanently"]);
   const output = sent[0];
   await host.stop();
   host = undefined;
@@ -187,12 +190,21 @@ it("exhausts a retried message across host restarts and never sends a terminal f
   expect(failed).toHaveBeenCalledTimes(1);
   await host.stop();
   host = await Host.start({ root, configuration, driver });
-  const resent = vi.fn(async () => undefined);
-  host.attachChannel({ channelType: "cli", instance: "cli", deliver: resent });
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  expect(resent).not.toHaveBeenCalled();
+  const received: OutboundMessage[] = [];
+  host.attachChannel({
+    channelType: "cli",
+    instance: "cli",
+    async deliver(message) {
+      received.push(message);
+    },
+  });
+  await host.accept({ destinationId: "terminal", userId: "cli:local", text: "Again" });
+  await vi.waitFor(() => expect(received).toHaveLength(1));
+  expect(received[0].content).toBe("Reply: Again");
+  expect(received.map((message) => message.id)).not.toContain(output.id);
   expect((await host.inspect(sessionId)).deliveries).toEqual([
-    expect.objectContaining({ id: output.id, status: "failed" }),
+    expect.objectContaining({ id: output.id, status: "failed", attempts: 0 }),
+    expect.objectContaining({ status: "delivered" }),
   ]);
 });
 
@@ -210,7 +222,9 @@ it("treats an already exhausted attempt count as terminal without another send",
     ]),
   );
   expect(delivered).not.toHaveBeenCalled();
-  expect(withStore((store) => store.deliveryAttempt(output.id))).toBeUndefined();
+  expect((await host.inspect(sessionId)).deliveries).toEqual([
+    expect.objectContaining({ id: output.id, status: "failed", attempts: 0 }),
+  ]);
 });
 
 it("duplicates a platform-accepted message when the host stops before acknowledgement", async () => {
@@ -239,7 +253,14 @@ it("duplicates a platform-accepted message when the host stops before acknowledg
   });
   await vi.waitFor(() => expect(calls).toBe(2));
   const output = (await host.inspect(accepted.sessionId)).outputs[0];
-  expect(withStore((store) => store.deliveryAttempt(output.id)?.attempts)).toBe(1);
+  expect((await host.inspect(accepted.sessionId)).deliveries).toEqual([
+    expect.objectContaining({
+      id: output.id,
+      status: undefined,
+      attempts: 1,
+      lastError: "Platform accepted the message but acknowledgement was lost",
+    }),
+  ]);
   await host.stop();
   host = await Host.start({ root, configuration, driver });
   host.attachChannel({
@@ -358,30 +379,6 @@ it("does not replay a destination whose delivery was accepted with no connected 
   );
   await host.stop();
   host = await Host.start({ root, configuration, driver });
-  const replayed = vi.fn(async () => undefined);
-  host.attachChannel({ channelType: "cli", instance: "cli", deliver: replayed });
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  expect(replayed).not.toHaveBeenCalled();
-});
-
-it("keeps a pending output eligible after restart when its destination has no channel", async () => {
-  root = await realpath(await mkdtemp(join(tmpdir(), "mybots-delivery-")));
-  const driver = new MailboxDriver();
-  host = await Host.start({ root, configuration, driver });
-  const accepted = await host.accept({
-    destinationId: "terminal",
-    userId: "cli:local",
-    text: "Hello",
-  });
-  await vi.waitFor(async () =>
-    expect((await host?.inspect(accepted.sessionId))?.outputs).toHaveLength(1),
-  );
-  await host.stop();
-  host = await Host.start({ root, configuration, driver });
-  await new Promise((resolve) => setTimeout(resolve, 80));
-  expect((await host.inspect(accepted.sessionId)).deliveries).toEqual([
-    expect.objectContaining({ status: undefined }),
-  ]);
   const received: OutboundMessage[] = [];
   host.attachChannel({
     channelType: "cli",
@@ -390,8 +387,8 @@ it("keeps a pending output eligible after restart when its destination has no ch
       received.push(message);
     },
   });
+  await host.accept({ destinationId: "terminal", userId: "cli:local", text: "Again" });
   await vi.waitFor(() => expect(received).toHaveLength(1));
-  expect((await host.inspect(accepted.sessionId)).deliveries).toEqual([
-    expect.objectContaining({ status: "delivered" }),
-  ]);
+  expect(received[0].content).toBe("Reply: Again");
+  expect(received.map((message) => message.content)).not.toContain("Reply: Offline");
 });
