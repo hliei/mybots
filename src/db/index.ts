@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { ModelConfiguration } from "../drivers/types.ts";
 import type { HostConfiguration } from "../host.ts";
-import type { AgentResources } from "../mailbox/types.ts";
+import type { AgentResources, WebConfiguration } from "../mailbox/types.ts";
 import { schema } from "./migrations/001-initial.ts";
 import { resourceSchema } from "./migrations/002-agent-resources.ts";
 import { deliveryAttemptSchema } from "./migrations/003-delivery-attempts.ts";
 import { recoverySchema } from "./migrations/004-session-recovery.ts";
+import { webSchema } from "./migrations/005-web-tools.ts";
 
 export interface HostInstance {
   instance_id: string;
@@ -47,6 +48,7 @@ export interface SessionRoute {
   model: ModelConfiguration;
   instructions?: string;
   resources?: AgentResources;
+  web?: WebConfiguration;
 }
 
 /** Persisted platform-delivery bookkeeping for one outbound mailbox row. */
@@ -70,11 +72,12 @@ export class HostStore {
       const { user_version } = this.db.prepare("PRAGMA user_version").get() as {
         user_version: number;
       };
-      if (user_version > 4) throw new Error("Unsupported host schema version");
+      if (user_version > 5) throw new Error("Unsupported host schema version");
       if (user_version === 0) this.db.exec(schema);
       if (user_version <= 1) this.db.exec(resourceSchema);
       if (user_version <= 2) this.db.exec(deliveryAttemptSchema);
       if (user_version <= 3) this.db.exec(recoverySchema);
+      if (user_version <= 4) this.db.exec(webSchema);
       this.seed(configuration);
     } catch (error) {
       this.db.close();
@@ -102,7 +105,7 @@ export class HostStore {
         .run(agent.id, agent.name, agent.folder, now);
       this.db
         .prepare(
-          `INSERT INTO container_configs (agent_group_id, provider, model, model_config, instructions, resources, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?) ON CONFLICT(agent_group_id) DO UPDATE SET model = excluded.model, model_config = excluded.model_config, instructions = excluded.instructions, resources = excluded.resources, updated_at = excluded.updated_at`,
+          `INSERT INTO container_configs (agent_group_id, provider, model, model_config, instructions, resources, web, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?) ON CONFLICT(agent_group_id) DO UPDATE SET model = excluded.model, model_config = excluded.model_config, instructions = excluded.instructions, resources = excluded.resources, web = excluded.web, updated_at = excluded.updated_at`,
         )
         .run(
           agent.id,
@@ -110,6 +113,7 @@ export class HostStore {
           JSON.stringify(agent.model),
           agent.instructions ?? null,
           agent.resources ? JSON.stringify(agent.resources) : null,
+          agent.web ? JSON.stringify(agent.web) : null,
           now,
         );
       for (const destination of configuration.destinations) {
@@ -195,7 +199,7 @@ export class HostStore {
   route(session: SavedSession): SessionRoute {
     const row = this.db
       .prepare(
-        `SELECT a.folder, m.channel_type, m.platform_id, m.instance, c.model_config, c.instructions, c.resources FROM agent_groups a JOIN container_configs c ON c.agent_group_id = a.id JOIN messaging_groups m ON m.id = ? WHERE a.id = ?`,
+        `SELECT a.folder, m.channel_type, m.platform_id, m.instance, c.model_config, c.instructions, c.resources, c.web FROM agent_groups a JOIN container_configs c ON c.agent_group_id = a.id JOIN messaging_groups m ON m.id = ? WHERE a.id = ?`,
       )
       .get(session.messaging_group_id, session.agent_group_id);
     if (!row) throw new Error("Session routing is unavailable");
@@ -210,6 +214,7 @@ export class HostStore {
       resources: row.resources
         ? (JSON.parse(row.resources as string) as AgentResources)
         : undefined,
+      web: row.web ? (JSON.parse(row.web as string) as WebConfiguration) : undefined,
     };
   }
 

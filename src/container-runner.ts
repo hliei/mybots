@@ -1,9 +1,13 @@
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { ModelConfiguration, SessionMaterial } from "./drivers/types.ts";
-import { validateAgentResources } from "./mailbox/index.ts";
+import {
+  resolveWebTools,
+  validateAgentResources,
+  validateWebConfiguration,
+} from "./mailbox/index.ts";
 import { initializeMailbox } from "./mailbox/node.ts";
-import type { AgentResources, SessionKey } from "./mailbox/types.ts";
+import type { AgentResources, SessionKey, WebConfiguration } from "./mailbox/types.ts";
 
 function legalName(value: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(value);
@@ -17,6 +21,7 @@ export async function provisionSession(input: {
   model: ModelConfiguration;
   instructions?: string;
   resources?: AgentResources;
+  web?: WebConfiguration;
 }): Promise<SessionMaterial> {
   if (![input.key.agentGroupId, input.key.sessionId, input.folder].every(legalName))
     throw new Error("Invalid Agent/session path identity");
@@ -56,6 +61,8 @@ export async function provisionSession(input: {
     }
   }
   initializeMailbox(directory);
+  const resources = validateAgentResources(input.resources);
+  const web = resolveWebTools(resources, validateWebConfiguration(input.web));
   const contextFile = join(contextDirectory, `${input.key.sessionId}.json`);
   const context = `${JSON.stringify({
     model: {
@@ -66,7 +73,8 @@ export async function provisionSession(input: {
       maxTokens: input.model.maxTokens,
     },
     instructions: input.instructions,
-    resources: validateAgentResources(input.resources),
+    resources,
+    web,
   })}\n`;
   await writeFile(contextFile, context, { mode: 0o444, flag: "wx" }).catch(async (error) => {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;

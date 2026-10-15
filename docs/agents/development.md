@@ -125,7 +125,8 @@ Bun 1.4.0 for the production runner. The image includes only runner dependencies
 runner source and shared mailbox code. Build with `docker build -t
 mybots-agent:mailbox -f container/Dockerfile .`. Run the separate opt-in
 `npm run test:infrastructure` for mounted SQLite, proxy/TLS and controlled Pi
-execution. These checks need Docker and `openssl`, but no real account credentials.
+execution, including a scoped web-search gateway target. These checks need Docker
+and `openssl`, but no real account credentials.
 See [container runtime](../container-runtime.md) for fixed mounts, gateway
 configuration, cleanup and accepted completion behavior.
 
@@ -147,12 +148,16 @@ exactly-once execution and delivery are not provided. See
 
 ## Agent resources and context
 
-The host persists `agent.resources` (selected Skill IDs and SDK built-in tool
-names) separately from model configuration. Provisioning copies only that
+The host persists `agent.resources` (selected Skill IDs and SDK built-in or
+configured web tool names) and optional `agent.web` provider/endpoint selection
+separately from model configuration. Provisioning copies only that
 non-secret selection into immutable runner context. The runner loads the shared
 workspace's `AGENTS.md` and selected `skills/<id>/SKILL.md` with Pi's resource
 loader when opening a query. Default personal/ancestor resource discovery,
 extensions, prompt templates, themes and file-backed SDK settings stay disabled.
+Selecting `web_search` or `fetch_content` registers the matching Pi custom tool
+inside the container; the real search credential stays gateway-owned and is
+injected only for the configured endpoint's hostname.
 Shared instruction/Skill file changes take effect on the next query, after the
 current query and SDK cleanup finish; queued follow-ups retain their query's
 resources. Changing the configured selection requires stopped execution and

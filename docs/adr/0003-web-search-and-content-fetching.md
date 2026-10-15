@@ -136,6 +136,19 @@ Separate tool calls remain ordered through the existing Agent loop.
 The parameter framework, module ownership, new tools, removal of replaced
 code and dependencies, tests, and documentation form one replacement PR.
 
+## Session-container adaptation
+
+The same `web_search` and `fetch_content` argument and result contracts are now
+available as Pi custom tools inside the session container. Agent resource
+selection enables each tool, and `agent.web` explicitly selects the search
+provider and endpoint or enables content fetching. Search requests use the
+gateway proxy with a placeholder credential; the real provider credential stays
+gateway-owned and is scoped to the configured endpoint hostname. Content
+fetching and HTML extraction execute in the container under the bounded request
+and response limits above. The embedded-runtime `web_search`/`fetch_content`
+configuration and delivery remain unchanged until the runtime transition retires
+them.
+
 ## API and library documentation
 
 - [SerpApi Google Search API](https://serpapi.com/search-api).

@@ -1,4 +1,4 @@
-import type { AgentResources } from "@mybots/mailbox";
+import type { AgentResources, WebConfiguration } from "@mybots/mailbox";
 export interface QueryInput {
   prompt: string;
   cwd: string;
@@ -6,7 +6,7 @@ export interface QueryInput {
   sessionDir: string;
   continuation?: string;
   control?: "reset";
-  systemContext?: { instructions?: string; resources?: AgentResources };
+  systemContext?: { instructions?: string; resources?: AgentResources; web?: WebConfiguration };
 }
 
 export type ProviderEvent =

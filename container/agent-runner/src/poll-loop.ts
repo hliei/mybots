@@ -1,5 +1,5 @@
 import { setTimeout } from "node:timers/promises";
-import type { AgentResources, RunnerMailbox } from "@mybots/mailbox";
+import type { AgentResources, RunnerMailbox, WebConfiguration } from "@mybots/mailbox";
 import type { AgentProvider, AgentQuery, ProviderEvent } from "./providers/types.ts";
 
 async function* queryEvents(query: AgentQuery): AsyncGenerator<ProviderEvent> {
@@ -17,6 +17,7 @@ export interface PollLoopOptions {
   sessionDir: string;
   instructions?: string;
   resources?: AgentResources;
+  web?: WebConfiguration;
   signal: AbortSignal;
   pollMs?: number;
 }
@@ -44,7 +45,11 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
       sessionDir: options.sessionDir,
       continuation: mailbox.continuation(),
       control: input.kind === "reset" ? "reset" : undefined,
-      systemContext: { instructions: options.instructions, resources: options.resources },
+      systemContext: {
+        instructions: options.instructions,
+        resources: options.resources,
+        web: options.web,
+      },
     });
     const answering = [input];
     const pollingController = new AbortController();

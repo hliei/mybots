@@ -9,7 +9,8 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { validateAgentResources } from "@mybots/mailbox";
+import { resolveWebTools, validateAgentResources } from "@mybots/mailbox";
+import { createWebTools } from "../tools/web.ts";
 import type { AgentProvider, AgentQuery, ProviderEvent, QueryInput } from "./types.ts";
 
 export interface PiProviderOptions {
@@ -58,6 +59,9 @@ export class PiProvider implements AgentProvider {
           manager = SessionManager.create(input.cwd, historyDir);
         }
         const resources = validateAgentResources(input.systemContext?.resources);
+        const web = resolveWebTools(resources, input.systemContext?.web);
+        const webTools = createWebTools(web);
+        const selectedTools = [...(resources?.tools ?? ["read", "write", "edit", "bash"])];
         const cwd = await realpath(input.cwd);
         const skillPaths: string[] = [];
         for (const name of resources?.skills ?? []) {
@@ -99,7 +103,8 @@ export class PiProvider implements AgentProvider {
           modelRuntime: this.options.modelRuntime,
           model: this.options.model,
           thinkingLevel: "off",
-          tools: [...(resources?.tools ?? ["read", "write", "edit", "bash"])],
+          tools: selectedTools,
+          customTools: webTools,
           sessionManager: manager,
           settingsManager,
           resourceLoader,

@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
 import type { HostConfiguration } from "../host.ts";
-import { validateAgentResources } from "../mailbox/index.ts";
+import {
+  resolveWebTools,
+  validateAgentResources,
+  validateWebConfiguration,
+} from "../mailbox/index.ts";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -67,6 +71,8 @@ export function validateHostConfiguration(value: unknown): HostConfiguration {
     return owner;
   });
   if (new Set(owners).size !== owners.length) throw new Error("Owner identities must be unique");
+  const resources = validateAgentResources(agent.resources);
+  const web = resolveWebTools(resources, validateWebConfiguration(agent.web));
   return {
     owners,
     agent: {
@@ -74,7 +80,8 @@ export function validateHostConfiguration(value: unknown): HostConfiguration {
       name: text(agent.name),
       folder: name(agent.folder),
       instructions: agent.instructions === undefined ? undefined : text(agent.instructions),
-      resources: validateAgentResources(agent.resources),
+      resources,
+      web,
       model: {
         provider: name(model.provider),
         id: text(model.id),

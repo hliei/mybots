@@ -49,9 +49,12 @@ stay outside runner material. Harness-specific credential stubs are unsupported.
 
 The gateway must hold the model credential with bearer-header injection scoped
 to the selected endpoint's exact hostname, and its policy must permit the chosen
-model operation. The adapter does not create credentials, broaden credential
-host patterns, or approve policy holds. Provision those policies in the gateway
-before using the driver. No provider catalogue grants network permission.
+model operation. Enable web search by adding a provider credential connection
+scoped to the configured search endpoint's hostname; the runner sends a
+placeholder and never receives the real search key. The adapter does not create
+credentials, broaden credential host patterns, or approve policy holds. Provision
+those policies in the gateway before using the driver. No provider catalogue
+grants network permission.
 
 The driver requires an existing **internal** Docker network and an existing
 runner image. Put a proxy-only endpoint on this network; keep gateway management,
@@ -142,10 +145,12 @@ This command builds the production image and launches disposable, uniquely named
 OneCLI 1.42.0, PostgreSQL 18.0, a proxy-port relay and a controlled TLS/SSE model
 service. It generates ephemeral fixture credentials, stores the model key in
 OneCLI, runs workspace tools through Pi, reads persisted output on the host,
-recreates the session container and reopens the exact SDK conversation. While a
-container runs, it also confirms that runtime observation reports it, that
-adoption takes over the same container instead of starting a duplicate, and that
-observed termination removes it. A separate
+recreates the session container and reopens the exact SDK conversation. A second
+case adds a separately scoped search connection, runs the `web_search` Pi tool
+against a controlled search route and verifies that only its host receives the
+search credential.
+Runtime observation additionally verifies adoption without duplicate containers
+and observed termination. A separate
 mounted storage regression exercises one thousand writes in each direction with
 concurrent opposite-side readers. The suite also
 checks read-only context/trust/input mounts, forbidden host paths, credential
@@ -154,22 +159,35 @@ Containers, temporary state and fixture credentials are removed on completion.
 The infrastructure images are pinned by digest; the OneCLI management SDK is
 locked at 2.2.1.
 
-The fixture permits an unverified upstream certificate only for `model.test`,
-which has an ephemeral self-signed certificate. Pi still verifies the gateway's
+The fixture permits an unverified upstream certificate only for `model.test` and
+`search.test`, which use an ephemeral self-signed certificate. Pi still verifies
+the gateway's
 MITM certificate against its mounted public CA. This fixture exception must not
-be applied to a real model endpoint. The check makes no real provider calls and
+be applied to a real model or search endpoint. The check makes no real provider
+calls and
 is excluded from ordinary `test`, `test:watch`, and `verify`. Passing it establishes
-container, mailbox, proxy and CA integration; DeepSeek and channel acceptance
+container, mailbox, proxy, CA and scoped gateway-target integration; DeepSeek and
+channel acceptance
 require separate explicitly requested live checks.
 
 ## Agent resources and reset controls
 
-Immutable context carries optional non-secret `resources.skills` IDs and
-`resources.tools` built-in names. Pi loads only the shared Agent's `AGENTS.md`
+Immutable context carries optional non-secret `resources.skills` IDs,
+`resources.tools` built-in or web tool names, and the matching `web` provider and
+endpoint selection. Pi loads only the shared Agent's `AGENTS.md`
 and explicitly selected `skills/<id>/SKILL.md` on a new query. It uses in-memory
 settings and credentials; host Skills, login files, private settings, extensions,
 themes and prompt templates are not discovered. No new host mounts are required.
 See [host resources](host-runtime.md#shared-instructions-and-skills) for formats.
+
+The runner registers `web_search` and `fetch_content` as Pi custom tools only for
+the operations the Agent selected. Search sends requests to the explicit provider
+endpoint through the gateway proxy with a placeholder credential; the provider
+credential is gateway-owned. Content fetching and HTML extraction execute inside
+the container with a 30-second deadline and a streamed 5 MiB response limit per
+item, at most five items and three concurrent requests per call. Tool outcomes,
+including per-item errors, return to the model for continuation; cancellation
+stops active requests and awaited disposal releases their readers.
 
 A `reset` input is a runner control rather than model text. Follow-up admission
 stops at that row, leaving it and all later input pending until SDK query cleanup

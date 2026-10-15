@@ -16,7 +16,7 @@ import type {
 } from "./drivers/types.ts";
 import { observesSessions } from "./drivers/types.ts";
 import { HostMailbox } from "./mailbox/node.ts";
-import type { AgentResources, OutboundMessage } from "./mailbox/types.ts";
+import type { AgentResources, OutboundMessage, WebConfiguration } from "./mailbox/types.ts";
 import {
   decideStallAction,
   type RecoveryOutcome,
@@ -43,6 +43,7 @@ export interface HostConfiguration {
     model: ModelConfiguration;
     instructions?: string;
     resources?: AgentResources;
+    web?: WebConfiguration;
   };
   destinations: { id: string; channelType: string; platformId: string; instance: string }[];
 }
@@ -286,6 +287,7 @@ export class Host {
         model: route.model,
         instructions: route.instructions,
         resources: route.resources,
+        web: route.web,
       }).then((material) => ({
         route,
         material,

@@ -20,7 +20,7 @@ services:
     environment:
       DATABASE_URL: postgresql://fixture:fixture@postgres:5432/fixture
       GATEWAY_BASE_URL: proxy:10255
-      GATEWAY_SKIP_VERIFY_HOSTS: model.test
+      GATEWAY_SKIP_VERIFY_HOSTS: model.test,search.test
       LOG_LEVEL: error
     networks: [backend]
     ports: [127.0.0.1::10254]
@@ -36,13 +36,14 @@ services:
     entrypoint: [bun, /fixture/upstream.mjs]
     environment:
       FIXTURE_CREDENTIAL: ${MYBOTS_FIXTURE_CREDENTIAL:?Required ephemeral credential}
+      FIXTURE_SEARCH_CREDENTIAL: ${MYBOTS_SEARCH_FIXTURE_CREDENTIAL:-}
     volumes:
       - ./upstream.mjs:/fixture/upstream.mjs:ro
       - ${MYBOTS_INFRA_ROOT:?Required temporary directory}/tls:/tls:ro
     ports: [127.0.0.1::8080]
     networks:
       backend:
-        aliases: [model.test]
+        aliases: [model.test, search.test]
 networks:
   backend:
     internal: false
