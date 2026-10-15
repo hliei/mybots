@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -264,11 +265,30 @@ it("observes another channel's output without acknowledging its delivery", async
     expect.objectContaining({ id: outbound.message_id, status: undefined }),
   ]);
 
+  const next = await host.accept({
+    destinationId: "chat",
+    userId: "local:owner",
+    text: "Next Telegram input",
+  });
+  const nextOutbound = await observer.waitFor(
+    (message) => message.type === "outbound" && message.in_reply_to === next.messageId,
+    "second Telegram output while delivery is held",
+  );
+  expect(nextOutbound).toMatchObject({ content: "Reply: Next Telegram input" });
+  expect(delivered).toEqual([]);
+  expect((await host.inspect(accepted.sessionId)).deliveries).toEqual([
+    expect.objectContaining({ id: outbound.message_id, status: undefined }),
+    expect.objectContaining({ id: nextOutbound.message_id, status: undefined }),
+  ]);
+
   held.resolve();
-  await vi.waitFor(() => expect(delivered).toEqual(["Reply: Telegram input"]));
+  await vi.waitFor(() =>
+    expect(delivered).toEqual(["Reply: Telegram input", "Reply: Next Telegram input"]),
+  );
   await vi.waitFor(async () =>
     expect((await running.inspect(accepted.sessionId)).deliveries).toEqual([
       expect.objectContaining({ id: outbound.message_id, status: "delivered" }),
+      expect.objectContaining({ id: nextOutbound.message_id, status: "delivered" }),
     ]),
   );
   expect(
@@ -374,6 +394,87 @@ it("closes clients and admission within a bounded shutdown", async () => {
   await expect(stopping).resolves.toBeUndefined();
   channel = undefined;
   expect(host.sessions()).toHaveLength(0);
+});
+
+it("awaits admitted input from a disconnected client before closing", async () => {
+  root = await realpath(await mkdtemp(join(tmpdir(), "mybots-ws-")));
+  host = await Host.start({ root, configuration, driver: new MailboxDriver() });
+  const running = host;
+  const accept = running.accept.bind(running);
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const accepted = Promise.withResolvers<void>();
+  vi.spyOn(running, "accept").mockImplementation(async (input) => {
+    entered.resolve();
+    await release.promise;
+    const result = await accept(input);
+    accepted.resolve();
+    return result;
+  });
+  channel = await WebSocketChannel.listen({ host, configuration, port: 0 });
+  const client = await openClient(channel.address);
+  client.send({ type: "input", destination: "desktop", content: "Before closing" });
+  await waitForCheckpoint(entered.promise, "admitted input");
+  client.terminate();
+  await vi.waitFor(() => expect(channel?.clientCount).toBe(0));
+  const address = channel.address;
+  let closed = false;
+  const closing = channel.close().then(() => {
+    closed = true;
+  });
+  // Closing waits for input admitted by a now-disconnected peer.
+  try {
+    await expect(tryConnect(address)).rejects.toThrow();
+    expect(closed).toBe(false);
+  } finally {
+    release.resolve();
+    await waitForCheckpoint(closing, "channel input cleanup");
+    await waitForCheckpoint(accepted.promise, "accepted input");
+  }
+  expect(closed).toBe(true);
+  expect(running.sessions()).toHaveLength(1);
+});
+
+it("rejects an occupied port without crashing and releases channel attachment", async () => {
+  root = await realpath(await mkdtemp(join(tmpdir(), "mybots-ws-")));
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import { createServer } from "node:http";
+    import { once } from "node:events";
+    import { Host } from ${JSON.stringify(new URL("../src/host.ts", import.meta.url).href)};
+    import { WebSocketChannel } from ${JSON.stringify(new URL("../src/channels/websocket.ts", import.meta.url).href)};
+    import { MailboxDriver } from ${JSON.stringify(new URL("./host-fixture.ts", import.meta.url).href)};
+    const configuration = ${JSON.stringify(configuration)};
+    const host = await Host.start({ root: ${JSON.stringify(root)}, configuration, driver: new MailboxDriver() });
+    const occupied = createServer();
+    occupied.listen(0, "127.0.0.1");
+    await once(occupied, "listening");
+    try {
+      let rejected = false;
+      try {
+        await WebSocketChannel.listen({ host, configuration, port: occupied.address().port });
+      } catch (error) {
+        if (error.code !== "EADDRINUSE") throw error;
+        rejected = true;
+      }
+      if (!rejected) throw new Error("Occupied port must reject");
+      const channel = await WebSocketChannel.listen({ host, configuration, port: 0 });
+      await channel.close();
+      console.log("Bind rejected and channel attachment released");
+    } finally {
+      await host.stop();
+      await new Promise((resolve) => occupied.close(resolve));
+    }
+  `,
+    ],
+    { encoding: "utf8", timeout: 5000 },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain("Bind rejected and channel attachment released");
 });
 
 it("refuses a non-loopback bind and invalid options", async () => {

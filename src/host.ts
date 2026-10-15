@@ -256,6 +256,18 @@ export class Host {
           const execution = await pending;
           if (signal.aborted) break;
           execution.mailbox.syncAcknowledgements();
+          // Observe new rows even while an earlier channel delivery remains pending.
+          const route = execution.route;
+          for (const message of execution.mailbox.outputs()) {
+            if (message.seq <= (this.observed.get(route.session.id) ?? 0)) continue;
+            this.observed.set(route.session.id, message.seq);
+            this.emit({
+              type: "output",
+              sessionId: route.session.id,
+              destinationId: route.session.messaging_group_id,
+              message,
+            });
+          }
           execution.delivering ??= this.deliver(execution).finally(() => {
             execution.delivering = undefined;
           });
@@ -276,16 +288,6 @@ export class Host {
         if (signal.aborted) break;
         if (execution.mailbox.deliveryStatus(message.id)) continue;
         const route = execution.route;
-        // Observation reports a new outbound row independently of its delivery.
-        if (message.seq > (this.observed.get(route.session.id) ?? 0)) {
-          this.observed.set(route.session.id, message.seq);
-          this.emit({
-            type: "output",
-            sessionId: route.session.id,
-            destinationId: route.session.messaging_group_id,
-            message,
-          });
-        }
         const input = execution.mailbox.inputs().find((input) => input.id === message.in_reply_to);
         if (
           !input ||

@@ -119,6 +119,7 @@ export class WebSocketChannel {
   private readonly path: string;
   private readonly sendTimeoutMs: number;
   private readonly peers = new Set<Peer>();
+  private readonly inputs = new Set<Promise<void>>();
   private server: Server | undefined;
   private webSocketServer: WebSocketServer | undefined;
   private bound: WebSocketChannelAddress | undefined;
@@ -189,8 +190,10 @@ export class WebSocketChannel {
         };
         const onListening = () => {
           server.removeListener("error", onError);
+          webSocketServer.removeListener("error", onError);
           resolve();
         };
+        webSocketServer.once("error", onError);
         server.once("error", onError);
         server.once("listening", onListening);
         server.listen(channel.port, channel.bindHost);
@@ -242,7 +245,7 @@ export class WebSocketChannel {
     });
     server.closeAllConnections();
     await Promise.all([webSocketClosed, serverClosed]);
-    await Promise.allSettled(peers.map((peer) => peer.writes));
+    await Promise.allSettled([...this.inputs, ...peers.map((peer) => peer.writes)]);
   }
 
   private handleRequest(request: IncomingMessage, response: ServerResponse): void {
@@ -277,12 +280,19 @@ export class WebSocketChannel {
       socket.terminate();
     });
     socket.on("message", (data, isBinary) => {
+      if (!this.admission || peer.closed) return;
       if (isBinary) {
         this.sendError(peer, "Input must be a UTF-8 JSON text frame.");
         return;
       }
       const raw = textFrame(data);
-      peer.inputs = peer.inputs.then(() => this.handleMessage(peer, raw));
+      const input = peer.inputs.then(() => this.handleMessage(peer, raw));
+      peer.inputs = input;
+      this.inputs.add(input);
+      void input.then(
+        () => this.inputs.delete(input),
+        () => this.inputs.delete(input),
+      );
     });
   }
 
