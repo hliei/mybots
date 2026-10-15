@@ -172,7 +172,9 @@ The host mirrors terminal processing acknowledgements into inbound status and
 reschedules an abandoned `processing` claim for unfinished work. The recovery
 baseline allows the initial attempt and up to five retries with waits of five,
 ten, twenty, forty and eighty seconds; exhausted work reaches an explicit failed
-state and reports a host failure event. Completed input is never redelivered,
+state and reports a host failure event. A container that exits before claiming
+its input is bounded by the same schedule, so a crash loop reaches the failed
+state instead of restarting forever. Completed input is never redelivered,
 including an early-acknowledged follow-up, and an ordinary provider failure keeps
 its separate terminal failure path rather than becoming a crash claim.
 
@@ -180,7 +182,9 @@ A running container is replaced when it shows no progress: its heartbeat file is
 older than the absolute ceiling, or it claimed input and then went silent past
 the claim tolerance. A tool's declared timeout widens both the ceiling and the
 claim tolerance while that tool is active. Replacing a container stops it and
-recovers its unfinished claims under the same bounded policy. Retrying unfinished
+recovers its unfinished claims under the same bounded policy; the host waits for
+that stop before touching runner-owned claims, so a stopped incarnation cannot
+overwrite the recovered state. Retrying unfinished
 input can repeat an already-performed tool effect; the host does not provide
 exactly-once execution or delivery, and the accepted crash loss windows remain.
 
@@ -257,10 +261,11 @@ channels must settle delivery on shutdown cancellation.
 `SIGINT`/`SIGTERM` closes the production CLI listener, aborts polling and delivery,
 stops session resources and closes the central store. Host shutdown has a default
 10-second bound and reports a failure if a driver ignores cancellation. Exclusive
-`data/host.lock` prevents two hosts from owning the same state. Clean shutdown
-removes it. After an abnormal host termination, first verify the old process and
-session containers have stopped before removing a stale lock; automatic abandoned
-execution recovery is not included here.
+`data/host.lock` prevents two hosts from owning the same state and records the
+owning instance and process. Clean shutdown removes it. If an abnormal termination
+leaves it behind, the next host refuses the lock while the recorded process is
+alive and otherwise adopts the persisted state and reconciles it; see
+[interrupted-execution recovery](#interrupted-execution-recovery).
 Shutdown awaits each session's in-flight delivery as well as execution cleanup.
 A delivery that settles after cancellation is not marked successfully delivered.
 

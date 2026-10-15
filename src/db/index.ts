@@ -296,14 +296,6 @@ export class HostStore {
       .run(containerRef, now, sessionId);
   }
 
-  releaseSessionClaim(sessionId: string, instanceId: string, now: string): void {
-    this.db
-      .prepare(
-        "UPDATE session_claims SET claimed_by = NULL, claimed_at = NULL, container_ref = NULL, updated_at = ? WHERE session_id = ? AND claimed_by = ?",
-      )
-      .run(now, sessionId, instanceId);
-  }
-
   releaseClaims(instanceId: string, now: string): void {
     this.db
       .prepare(

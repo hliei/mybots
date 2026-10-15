@@ -21,6 +21,23 @@ history even when they share an Agent workspace.
 An Agent's processing of one user message, including model replies and any
 exchanges with tools.
 
+**Session claim**:
+The host's fenced ownership of one Agent session's execution. Claiming a session
+starts a new incarnation, so a superseded host or container cannot change it.
+
+**Incarnation**:
+The generation number of a session claim. It advances whenever a host or
+container takes over the session and fences stale observations from earlier ones.
+
+**Heartbeat**:
+The session-local liveness marker a runner touches while working. The host
+combines it with tool activity and claim age to detect a stalled container.
+
+**Interrupted-execution recovery**:
+The host's bounded response to unfinished work after a container stops
+unexpectedly: adopting or replacing execution, retrying an unfinished processing
+claim with limited backoff, and reaching an explicit failed state.
+
 **Follow-up**:
 A user message intended for a subsequent Agent turn after the current turn ends.
 

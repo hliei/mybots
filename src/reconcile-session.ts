@@ -87,15 +87,15 @@ export interface RecoveryOutcome {
   failed: string[];
 }
 
-/**
- * Reschedule or fail input whose container abandoned a `processing` claim.
- * Completed and failed input keeps its terminal state; only unfinished
- * claims are recovered. Orphan claims are removed once a container stopped.
- */
-export function recoverAbandonedClaims(mailbox: RecoveryMailbox, now: number): RecoveryOutcome {
+/** Reschedule or fail the given pending inputs under the bounded recovery policy. */
+function rescheduleInputs(
+  mailbox: RecoveryMailbox,
+  now: number,
+  messageIds: string[],
+): RecoveryOutcome {
   const outcome: RecoveryOutcome = { retried: [], failed: [] };
-  for (const claim of mailbox.processingClaims()) {
-    const input = mailbox.inputs().find((candidate) => candidate.id === claim.message_id);
+  for (const id of messageIds) {
+    const input = mailbox.inputs().find((candidate) => candidate.id === id);
     if (input?.status !== "pending") continue;
     const scheduled = input.process_after ? Date.parse(input.process_after) : undefined;
     // Already rescheduled for a future attempt; do not count it twice.
@@ -109,6 +109,37 @@ export function recoverAbandonedClaims(mailbox: RecoveryMailbox, now: number): R
       outcome.retried.push(input.id);
     }
   }
+  return outcome;
+}
+
+/**
+ * Reschedule or fail input whose container abandoned a `processing` claim.
+ * Completed and failed input keeps its terminal state; only unfinished
+ * claims are recovered. Orphan claims are removed once a container stopped.
+ */
+export function recoverAbandonedClaims(mailbox: RecoveryMailbox, now: number): RecoveryOutcome {
+  const outcome = rescheduleInputs(
+    mailbox,
+    now,
+    mailbox.processingClaims().map((claim) => claim.message_id),
+  );
   mailbox.clearProcessingClaims();
   return outcome;
+}
+
+/**
+ * Reschedule or fail due pending input a container never claimed, typically
+ * because it exited before starting the exchange. This bounds a crash loop
+ * that the claim-based policy alone would restart indefinitely.
+ */
+export function recoverUnclaimedInput(mailbox: RecoveryMailbox, now: number): RecoveryOutcome {
+  const claimed = new Set(mailbox.processingClaims().map((claim) => claim.message_id));
+  return rescheduleInputs(
+    mailbox,
+    now,
+    mailbox
+      .inputs()
+      .filter((input) => !claimed.has(input.id))
+      .map((input) => input.id),
+  );
 }

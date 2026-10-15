@@ -303,3 +303,51 @@ it("upgrades an existing host store to the recovery schema", async () => {
   ).toEqual([{ name: "host_instances" }, { name: "session_claims" }]);
   upgraded.close();
 });
+
+it("bounds repeated container crashes that happen before any claim", async () => {
+  const current = await temporaryRoot();
+  let now = Date.parse("2026-02-01T00:00:00.000Z");
+  let launches = 0;
+  const driver: SessionDriver = {
+    async start() {
+      launches += 1;
+      return {
+        ref: `crasher-${launches}`,
+        stop: async () => {},
+        wait: async () => {
+          throw new Error("Controlled crash before claiming input");
+        },
+      };
+    },
+  };
+  const host = await Host.start({
+    root: current,
+    configuration,
+    driver,
+    now: () => now,
+    reconcileMs: Number.MAX_SAFE_INTEGER,
+  });
+  hosts.push(host);
+  const accepted = await host.accept({
+    destinationId: "terminal",
+    userId: "cli:local",
+    text: "Crash loop",
+  });
+  await vi.waitFor(() => expect(launches).toBe(1));
+  for (const [index, wait] of [5000, 10000, 20000, 40000, 80000].entries()) {
+    await vi.waitFor(async () =>
+      expect((await host.inspect(accepted.sessionId))?.inputs[0].tries).toBe(index + 1),
+    );
+    now += wait;
+    await host.reconcile();
+    await vi.waitFor(() => expect(launches).toBe(index + 2));
+  }
+  await vi.waitFor(async () =>
+    expect((await host.inspect(accepted.sessionId))?.inputs[0].status).toBe("failed"),
+  );
+  expect(launches).toBe(6);
+  // Exhausted work is not restarted indefinitely, even after a long wait.
+  now += 3600000;
+  await host.reconcile();
+  expect(launches).toBe(6);
+});

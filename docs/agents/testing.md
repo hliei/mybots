@@ -154,7 +154,8 @@ against a real mailbox. `tests/host-recovery.test.ts` drives the public host
 lifecycle with a controlled clock and real stores: adopting an observed running
 container instead of starting another, adopting an abandoned host lock,
 recovering an abandoned claim across restart through the exact wait sequence,
-leaving completed and provider-failed input terminal, replacing a container whose
+leaving completed and provider-failed input terminal, bounding repeated crashes
+that happen before any claim, replacing a container whose
 claim went silent, fencing a superseded handle's late exit, and upgrading an
 existing version-2 store. `tests/mailbox-runner.test.ts` adds the repeated
 tool-effect retry: a controlled effect performed before an interruption occurs

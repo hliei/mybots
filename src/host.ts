@@ -15,7 +15,12 @@ import type {
 import { observesSessions } from "./drivers/types.ts";
 import { HostMailbox } from "./mailbox/node.ts";
 import type { AgentResources, OutboundMessage } from "./mailbox/types.ts";
-import { decideStallAction, recoverAbandonedClaims } from "./reconcile-session.ts";
+import {
+  decideStallAction,
+  type RecoveryOutcome,
+  recoverAbandonedClaims,
+  recoverUnclaimedInput,
+} from "./reconcile-session.ts";
 
 export interface HostConfiguration {
   /** Namespaced platform identities of the single personal owner, e.g. `cli:local` or `telegram:42`. */
@@ -69,6 +74,8 @@ interface SessionExecution {
   starting?: Promise<void>;
   replacing?: Promise<void>;
   handle?: SessionHandle;
+  /** Handles deliberately stopped by replacement, whose exit is not a crash. */
+  superseded: Set<SessionHandle>;
   cleanups: Set<Promise<void>>;
   delivering?: Promise<void>;
 }
@@ -199,7 +206,7 @@ export class Host {
       options.driver,
       instanceId,
       options.now ?? Date.now,
-      options.reconcileMs ?? 1000,
+      options.reconcileMs ?? 60000,
     );
     try {
       store.stopOpenHostInstances(host.timestamp());
@@ -220,7 +227,12 @@ export class Host {
    */
   private async reconcileStartup(): Promise<void> {
     const signal = this.controller.signal;
-    const observations = observesSessions(this.driver) ? await this.driver.list(signal) : [];
+    let observations: SessionObservation[] = [];
+    if (observesSessions(this.driver)) {
+      // An unavailable runtime observation must not prevent the host from
+      // starting; accepted input stays persisted and a failed start is observable.
+      observations = await this.driver.list(signal).catch(() => []);
+    }
     for (const session of this.store.sessions()) {
       const execution = await this.prepare(this.store.route(session));
       const incarnation = this.store.tryClaimSession({
@@ -260,6 +272,7 @@ export class Host {
         mailbox: new HostMailbox(material.directory),
         incarnation: 0,
         startedAtMs: 0,
+        superseded: new Set<SessionHandle>(),
         cleanups: new Set<Promise<void>>(),
       }));
       this.prepared.set(route.session.id, pending);
@@ -404,10 +417,10 @@ export class Host {
         .wait()
         .then(
           () => {
-            this.settle(execution, incarnation, undefined);
+            this.settle(execution, incarnation, handle, undefined);
           },
           () => {
-            this.settle(execution, incarnation, "Agent runner exited unsuccessfully");
+            this.settle(execution, incarnation, handle, "Agent runner exited unsuccessfully");
           },
         )
         .catch(() => {});
@@ -415,19 +428,39 @@ export class Host {
         if (!this.stopped && execution.incarnation === incarnation)
           this.emit({ type: "failure", sessionId: id, error: "Agent runner cleanup failed" });
       });
+      execution.superseded.delete(handle);
       if (execution.handle === handle) execution.handle = undefined;
     })();
     execution.cleanups.add(cleanup);
     void cleanup.then(() => execution.cleanups.delete(cleanup));
   }
 
-  private settle(execution: SessionExecution, incarnation: number, error?: string): void {
+  private settle(
+    execution: SessionExecution,
+    incarnation: number,
+    handle: SessionHandle,
+    error?: string,
+  ): void {
     if (this.stopped) return;
     if (execution.incarnation !== incarnation) return;
     const id = execution.route.session.id;
     this.store.containerStatus(id, "stopped");
     this.store.markContainerRef(id, null, this.timestamp());
-    if (error) this.emit({ type: "failure", sessionId: id, error });
+    // A deliberate replacement is not a crash, and unclaimed work keeps its
+    // bounded recovery schedule instead of restarting forever.
+    if (!execution.superseded.has(handle)) {
+      if (error) this.emit({ type: "failure", sessionId: id, error });
+      this.recordRecovery(execution, recoverUnclaimedInput(execution.mailbox, this.clock()));
+    }
+  }
+
+  private recordRecovery(execution: SessionExecution, outcome: RecoveryOutcome): void {
+    if (outcome.failed.length === 0) return;
+    this.emit({
+      type: "failure",
+      sessionId: execution.route.session.id,
+      error: "Unfinished Agent work exhausted its recovery retries",
+    });
   }
 
   /** Reconcile every prepared session against observed runtime and mailbox state. */
@@ -456,12 +489,7 @@ export class Host {
         return;
       }
       const outcome = recoverAbandonedClaims(execution.mailbox, now);
-      if (outcome.failed.length > 0)
-        this.emit({
-          type: "failure",
-          sessionId: id,
-          error: "Unfinished Agent work exhausted its recovery retries",
-        });
+      this.recordRecovery(execution, outcome);
       const due = execution.mailbox
         .inputs()
         .some(
@@ -509,11 +537,14 @@ export class Host {
           : "Agent execution stopped responding after claiming input; replacing the session container",
     });
     execution.replacing = (async () => {
-      // Do not wait for the old container's exit: a later incarnation may already
-      // own the session, and the superseded handle's settle is fenced by incarnation.
+      // Stop the old container before touching runner-owned state, then recover
+      // its claims. The incarnation fence ignores the superseded handle's exit.
       const handle = execution.handle;
       execution.handle = undefined;
-      void handle?.stop().catch(() => {});
+      if (handle) {
+        execution.superseded.add(handle);
+        await handle.stop().catch(() => {});
+      }
       this.store.containerStatus(id, "stopped");
       this.store.markContainerRef(id, null, this.timestamp());
       await this.reconcileSession(execution, now);
@@ -525,7 +556,7 @@ export class Host {
 
   private async poll(): Promise<void> {
     const signal = this.controller.signal;
-    let nextReconcile = this.clock();
+    let nextReconcile = this.clock() + this.reconcileMs;
     while (!signal.aborted) {
       if (this.clock() >= nextReconcile) {
         nextReconcile = this.clock() + this.reconcileMs;
