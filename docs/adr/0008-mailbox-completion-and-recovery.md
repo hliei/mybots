@@ -2,8 +2,8 @@
 
 Status: accepted
 Implementation: mailbox acknowledgement/output separation, FIFO follow-up
-acknowledgement and independent host delivery delivered; retry accounting and
-bounded interrupted-execution recovery planned
+acknowledgement, independent host delivery and bounded interrupted-execution
+recovery delivered; outbound delivery retry accounting planned
 
 Processing acknowledgements and outbound messages remain separate container-owned
 mailbox records. Additional inputs pushed into an active SDK query are marked

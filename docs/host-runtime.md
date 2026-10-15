@@ -34,8 +34,10 @@ model configuration. Optional `agent.resources.skills` selects directory IDs und
 `write`, `edit`, `bash`, `grep`, `find`, `ls`). Omitted Skills select none; omitted
 tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
 The execution harness is Pi; the model backend is specified
-separately by `model.provider` and `model.id`. The central store uses schema version 2 with an additive resource-selection column.
-The central store saves the model
+separately by `model.provider` and `model.id`. The central store uses schema
+version 3: host routing, resource selection, and the `host_instances` and
+`session_claims` lifecycle records. It migrates an existing version-2 store
+additively. The central store saves the model
 selector as `provider/id` plus its endpoint and token limits. Endpoints must use
 HTTPS without URL credentials. Host configuration and gateway management material
 are outside runner mounts.
@@ -126,8 +128,8 @@ independently delivers persisted outbound rows to their original destination.
 `Host.inspect(sessionId)` reports input, output, continuation and delivery state.
 An output with a missing input correlation or changed reply address is rejected.
 Completion does not imply output persistence or delivery. Basic channel failure
-is terminal for this slice; retry accounting and interrupted-execution recovery
-are separate policies. Accepted loss windows are described in
+is terminal for this slice; outbound delivery retry accounting remains a
+separate policy. Accepted loss windows are described in
 [ADR 0008](adr/0008-mailbox-completion-and-recovery.md).
 
 The CLI wire format is one JSON line each way: input `{"text":"hello"}` and
@@ -149,6 +151,41 @@ ordinary reply/delivery path and makes no model request. Previous private logs,
 other sessions, mailbox records and shared working files are preserved; the saved
 continuation selects only the new conversation on reconnect or host restart.
 Other slash input remains ordinary Agent text.
+
+## Interrupted-execution recovery
+
+The host owns `data/host.lock` with a recorded instance identity and process ID.
+A second host refuses a lock whose recorded process is still alive. When an
+abnormal exit leaves the lock behind, the next host adopts the data directory,
+marks the abandoned instance stopped, and reconciles persisted state rather than
+assuming its own in-memory view is complete.
+
+Startup reconciliation reads every persisted Agent session and the runtime state
+the driver actually observes. It takes a fenced claim on each session and then
+either adopts a container the runtime still reports as running for that session,
+or recovers what that session left unfinished. Each claim carries an incarnation;
+a superseded host or container handle whose late exit or cleanup arrives after a
+newer incarnation owns the session cannot change its status, deliver into it, or
+clean it up.
+
+The host mirrors terminal processing acknowledgements into inbound status and
+reschedules an abandoned `processing` claim for unfinished work. The recovery
+baseline allows the initial attempt and up to five retries with waits of five,
+ten, twenty, forty and eighty seconds; exhausted work reaches an explicit failed
+state and reports a host failure event. Completed input is never redelivered,
+including an early-acknowledged follow-up, and an ordinary provider failure keeps
+its separate terminal failure path rather than becoming a crash claim.
+
+A running container is replaced when it shows no progress: its heartbeat file is
+older than the absolute ceiling, or it claimed input and then went silent past
+the claim tolerance. A tool's declared timeout widens both the ceiling and the
+claim tolerance while that tool is active. Replacing a container stops it and
+recovers its unfinished claims under the same bounded policy. Retrying unfinished
+input can repeat an already-performed tool effect; the host does not provide
+exactly-once execution or delivery, and the accepted crash loss windows remain.
+
+Reconciliation runs periodically and on demand through `Host.reconcile()`. Offline
+tests use a controlled clock so backoff and stall timing are deterministic.
 
 ## Local WebSocket interface
 

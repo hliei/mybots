@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
@@ -465,6 +465,94 @@ test("cancellation awaits provider cleanup and leaves unfinished input for host 
     expect(host.activity()?.current_tool).toBeNull();
   } finally {
     abort.abort();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a recovered retry may repeat an already-performed tool effect", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mybots-runner-effect-"));
+  const interruption = new AbortController();
+  const held = Promise.withResolvers<void>();
+  const applied: string[] = [];
+  const apply = async () => {
+    await appendFile(join(directory, "effects.log"), "applied\n");
+    applied.push("applied");
+  };
+  try {
+    initializeMailbox(directory);
+    const host = new HostMailbox(directory);
+    host.submit({
+      id: "effect",
+      content: "Apply the effect",
+      channel_type: "cli",
+      platform_id: "owner",
+      thread_id: null,
+    });
+    const interrupted: AgentProvider = {
+      query: () => ({
+        push: () => false,
+        end: () => {},
+        abort: async () => {
+          held.resolve();
+        },
+        events: (async function* (): AsyncGenerator<ProviderEvent> {
+          await apply();
+          yield { type: "tool", name: "bash", timeoutMs: 1000 };
+          interruption.abort();
+          await held.promise;
+        })(),
+      }),
+    };
+    await runMailbox({
+      mailbox: new RunnerMailbox(directory),
+      provider: interrupted,
+      cwd: directory,
+      sessionDir: join(directory, "pi"),
+      signal: interruption.signal,
+    });
+    // The interruption left the input unfinished after the effect took place.
+    expect(applied).toEqual(["applied"]);
+    expect(host.acknowledgements()).toContainEqual(
+      expect.objectContaining({ message_id: "effect", status: "processing" }),
+    );
+    expect(host.outputs()).toEqual([]);
+
+    // Host recovery clears the abandoned claim; the retry runs the input again.
+    host.clearProcessingClaims();
+    const done = new AbortController();
+    const mailbox = new RunnerMailbox(directory);
+    const reply = mailbox.reply.bind(mailbox);
+    mailbox.reply = (input, content, kind) => {
+      reply(input, content, kind);
+      done.abort();
+    };
+    const retried: AgentProvider = {
+      query: () => ({
+        push: () => false,
+        end: () => {},
+        abort: async () => {},
+        events: (async function* (): AsyncGenerator<ProviderEvent> {
+          await apply();
+          yield { type: "result", text: "Effect applied" };
+        })(),
+      }),
+    };
+    await runMailbox({
+      mailbox,
+      provider: retried,
+      cwd: directory,
+      sessionDir: join(directory, "pi"),
+      signal: done.signal,
+    });
+    // The same effect ran twice; no exactly-once behavior is claimed or provided.
+    expect(applied).toEqual(["applied", "applied"]);
+    expect(host.outputs()).toEqual([
+      expect.objectContaining({ in_reply_to: "effect", content: "Effect applied" }),
+    ]);
+    expect(JSON.stringify(host.outputs())).not.toMatch(/exactly.once/i);
+  } finally {
+    interruption.abort();
+    held.resolve();
     await rm(directory, { recursive: true, force: true });
   }
 });

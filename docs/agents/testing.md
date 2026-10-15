@@ -119,7 +119,9 @@ controlled TLS streaming upstream. A mounted stress regression additionally
 checks both directions under concurrent reads and one thousand writer operations.
 It checks a tool round, credential injection,
 forbidden/read-only mount behavior and exact Pi continuation after container
-recreation. It owns temporary Compose resources and generated fixture keys;
+recreation. While a container runs it also confirms runtime observation reports
+it, adoption takes over the same container without a duplicate, and observed
+termination removes it. It owns temporary Compose resources and generated fixture keys;
 no personal or paid services are used. See [container runtime](../container-runtime.md)
 for pins, prerequisites and the fixture-only upstream trust exception.
 
@@ -144,6 +146,21 @@ results, late success after cancellation, awaited cleanup and the accepted
 queued-work loss window. Host tests hold both execution and channel delivery
 at explicit checkpoints while another session writes shared materials and replies.
 All waits are bounded; no live credentials or workspace-wide lock are required.
+
+`tests/reconcile-session.test.ts` covers the recovery policy directly: the
+doubling waits before five bounded retries, exhaustion to a failed state, and
+stall decisions from heartbeat age, claim age and a tool's declared timeout
+against a real mailbox. `tests/host-recovery.test.ts` drives the public host
+lifecycle with a controlled clock and real stores: adopting an observed running
+container instead of starting another, adopting an abandoned host lock,
+recovering an abandoned claim across restart through the exact wait sequence,
+leaving completed and provider-failed input terminal, replacing a container whose
+claim went silent, fencing a superseded handle's late exit, and upgrading an
+existing version-2 store. `tests/mailbox-runner.test.ts` adds the repeated
+tool-effect retry: a controlled effect performed before an interruption occurs
+again on recovery, and neither the test nor the reply claims exactly-once
+execution. These fixtures use controlled external execution, not Pi, Docker or
+gateway behavior.
 
 `tests/cli.test.ts` uses actual local Unix sockets and CLI/host child processes
 for input/reply, reconnect, first-input client replacement, malformed input,

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
   ContainerState,
@@ -13,6 +13,32 @@ import { clearMailboxLocks } from "./lock.ts";
 import { INBOUND_SCHEMA, OUTBOUND_SCHEMA } from "./schema.ts";
 
 export function createMailbox(withDatabase: WithDatabase) {
+  /**
+   * Session-local liveness marker. The container touches it on mailbox work so
+   * the host can observe a stalled container without trusting private maps.
+   */
+  function heartbeatPath(directory: string): string {
+    return join(directory, ".heartbeat");
+  }
+
+  function touchHeartbeat(directory: string): void {
+    const file = heartbeatPath(directory);
+    const now = new Date();
+    try {
+      utimesSync(file, now, now);
+    } catch {
+      writeFileSync(file, "", { mode: 0o600 });
+    }
+  }
+
+  function readHeartbeat(directory: string): number | undefined {
+    try {
+      return statSync(heartbeatPath(directory)).mtimeMs;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Bootstrap only, before a runner owns outbound.db. */
   function initializeMailbox(directory: string): void {
     mkdirSync(directory, { recursive: true });
@@ -88,6 +114,44 @@ export function createMailbox(withDatabase: WithDatabase) {
         true,
         (db) => db.all("SELECT * FROM processing_ack ORDER BY rowid") as ProcessingAck[],
       );
+    }
+
+    /** Unfinished claims left by a container that stopped without settling them. */
+    processingClaims(): ProcessingAck[] {
+      return this.acknowledgements().filter((ack) => ack.status === "processing");
+    }
+
+    /**
+     * Drop abandoned claims. The host only writes to outbound.db while no
+     * container runs, so the next incarnation starts from a clean claim set.
+     */
+    clearProcessingClaims(): void {
+      withDatabase(this.directory, "outbound", false, (db) =>
+        db.run("DELETE FROM processing_ack WHERE status = 'processing'"),
+      );
+    }
+
+    /** Reschedule a pending input for the next bounded recovery attempt. */
+    retryInput(id: string, processAfter: string): void {
+      withDatabase(this.directory, "inbound", false, (db) =>
+        db.run(
+          "UPDATE messages_in SET tries = tries + 1, process_after = ?, status = 'pending' WHERE id = ? AND status = 'pending'",
+          processAfter,
+          id,
+        ),
+      );
+    }
+
+    /** Terminal recovery exhaustion for a pending input. */
+    failInput(id: string): void {
+      withDatabase(this.directory, "inbound", false, (db) =>
+        db.run("UPDATE messages_in SET status = 'failed' WHERE id = ? AND status = 'pending'", id),
+      );
+    }
+
+    /** Last observed container heartbeat, or undefined when never written. */
+    heartbeat(): number | undefined {
+      return readHeartbeat(this.directory);
     }
 
     continuation(): string | undefined {
@@ -235,6 +299,7 @@ export function createMailbox(withDatabase: WithDatabase) {
     }
 
     touch(): void {
+      touchHeartbeat(this.directory);
       withDatabase(this.directory, "outbound", false, (db) =>
         db.run("UPDATE container_state SET updated_at = ? WHERE id = 1", new Date().toISOString()),
       );
@@ -242,6 +307,7 @@ export function createMailbox(withDatabase: WithDatabase) {
 
     activity(tool: string | null, timeoutMs: number | null = null): void {
       const now = new Date().toISOString();
+      touchHeartbeat(this.directory);
       withDatabase(this.directory, "outbound", false, (db) =>
         db.run(
           "INSERT OR REPLACE INTO container_state VALUES (1, ?, ?, ?, ?)",

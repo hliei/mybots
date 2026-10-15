@@ -5,7 +5,26 @@ import type { HostConfiguration } from "../host.ts";
 import type { AgentResources } from "../mailbox/types.ts";
 import { schema } from "./migrations/001-initial.ts";
 import { resourceSchema } from "./migrations/002-agent-resources.ts";
+import { recoverySchema } from "./migrations/003-session-recovery.ts";
 
+export interface HostInstance {
+  instance_id: string;
+  pid: number;
+  started_at: string;
+  heartbeat_at: string;
+  stopped_at: string | null;
+}
+
+export interface SessionClaim {
+  session_id: string;
+  incarnation: number;
+  claimed_by: string | null;
+  claimed_at: string | null;
+  container_ref: string | null;
+  updated_at: string;
+}
+
+/** Session routing plus the persisted lifecycle observed for it. */
 export interface SavedSession {
   id: string;
   agent_group_id: string;
@@ -40,9 +59,10 @@ export class HostStore {
       const { user_version } = this.db.prepare("PRAGMA user_version").get() as {
         user_version: number;
       };
+      if (user_version > 3) throw new Error("Unsupported host schema version");
       if (user_version === 0) this.db.exec(schema);
-      if (user_version === 0 || user_version === 1) this.db.exec(resourceSchema);
-      else if (user_version !== 2) throw new Error("Unsupported host schema version");
+      if (user_version <= 1) this.db.exec(resourceSchema);
+      if (user_version <= 2) this.db.exec(recoverySchema);
       this.seed(configuration);
     } catch (error) {
       this.db.close();
@@ -189,6 +209,107 @@ export class HostStore {
 
   containerStatus(id: string, status: "starting" | "running" | "stopped" | "failed"): void {
     this.db.prepare("UPDATE sessions SET container_status = ? WHERE id = ?").run(status, id);
+  }
+
+  containerStatusOf(id: string): string | undefined {
+    return (
+      this.db.prepare("SELECT container_status FROM sessions WHERE id = ?").get(id) as
+        | { container_status: string }
+        | undefined
+    )?.container_status;
+  }
+
+  registerHostInstance(instanceId: string, pid: number, now: string): void {
+    this.db
+      .prepare(
+        "INSERT INTO host_instances VALUES (?, ?, ?, ?, NULL) ON CONFLICT(instance_id) DO UPDATE SET pid = excluded.pid, heartbeat_at = excluded.heartbeat_at, stopped_at = NULL",
+      )
+      .run(instanceId, pid, now, now);
+  }
+
+  touchHostInstance(instanceId: string, now: string): void {
+    this.db
+      .prepare(
+        "UPDATE host_instances SET heartbeat_at = ? WHERE instance_id = ? AND stopped_at IS NULL",
+      )
+      .run(now, instanceId);
+  }
+
+  stopHostInstance(instanceId: string, now: string): void {
+    this.db
+      .prepare(
+        "UPDATE host_instances SET stopped_at = ? WHERE instance_id = ? AND stopped_at IS NULL",
+      )
+      .run(now, instanceId);
+  }
+
+  /** Records instances left open by an abnormal exit; the new host owns the data directory. */
+  stopOpenHostInstances(now: string): void {
+    this.db.prepare("UPDATE host_instances SET stopped_at = ? WHERE stopped_at IS NULL").run(now);
+  }
+
+  currentClaim(sessionId: string): SessionClaim | undefined {
+    return this.db.prepare("SELECT * FROM session_claims WHERE session_id = ?").get(sessionId) as
+      | SessionClaim
+      | undefined;
+  }
+
+  /**
+   * Fenced claim of one session. Bumps the incarnation only when the caller's
+   * expected incarnation still holds, so a superseded host cannot take over.
+   */
+  tryClaimSession(input: {
+    sessionId: string;
+    instanceId: string;
+    expectedIncarnation: number;
+    containerRef: string | null;
+    now: string;
+  }): number | undefined {
+    const next = input.expectedIncarnation + 1;
+    if (input.expectedIncarnation === 0) {
+      const inserted = this.db
+        .prepare(
+          "INSERT INTO session_claims VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(session_id) DO NOTHING",
+        )
+        .run(input.sessionId, next, input.instanceId, input.now, input.containerRef, input.now);
+      if (inserted.changes > 0) return next;
+    }
+    const updated = this.db
+      .prepare(
+        "UPDATE session_claims SET incarnation = ?, claimed_by = ?, claimed_at = ?, container_ref = ?, updated_at = ? WHERE session_id = ? AND incarnation = ?",
+      )
+      .run(
+        next,
+        input.instanceId,
+        input.now,
+        input.containerRef,
+        input.now,
+        input.sessionId,
+        input.expectedIncarnation,
+      );
+    return updated.changes > 0 ? next : undefined;
+  }
+
+  markContainerRef(sessionId: string, containerRef: string | null, now: string): void {
+    this.db
+      .prepare("UPDATE session_claims SET container_ref = ?, updated_at = ? WHERE session_id = ?")
+      .run(containerRef, now, sessionId);
+  }
+
+  releaseSessionClaim(sessionId: string, instanceId: string, now: string): void {
+    this.db
+      .prepare(
+        "UPDATE session_claims SET claimed_by = NULL, claimed_at = NULL, container_ref = NULL, updated_at = ? WHERE session_id = ? AND claimed_by = ?",
+      )
+      .run(now, sessionId, instanceId);
+  }
+
+  releaseClaims(instanceId: string, now: string): void {
+    this.db
+      .prepare(
+        "UPDATE session_claims SET claimed_by = NULL, claimed_at = NULL, container_ref = NULL, updated_at = ? WHERE claimed_by = ?",
+      )
+      .run(now, instanceId);
   }
 
   close(): void {
