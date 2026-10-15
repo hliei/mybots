@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { setTimeout } from "node:timers/promises";
 import { validateHostConfiguration } from "./config/host.ts";
 import { provisionSession } from "./container-runner.ts";
@@ -10,9 +12,17 @@ import type {
   SessionDriver,
   SessionHandle,
   SessionMaterial,
+  SessionObservation,
 } from "./drivers/types.ts";
+import { observesSessions } from "./drivers/types.ts";
 import { HostMailbox } from "./mailbox/node.ts";
 import type { AgentResources, OutboundMessage } from "./mailbox/types.ts";
+import {
+  decideStallAction,
+  type RecoveryOutcome,
+  recoverAbandonedClaims,
+  recoverUnclaimedInput,
+} from "./reconcile-session.ts";
 
 /** Total platform-delivery attempts for one outbound reply, including the first. */
 const MAX_DELIVERY_ATTEMPTS = 3;
@@ -68,16 +78,87 @@ interface SessionExecution {
   route: SessionRoute;
   material: SessionMaterial;
   mailbox: HostMailbox;
+  /** Fencing token for this host's ownership of the session. */
+  incarnation: number;
+  /** Clock time at which the current container incarnation began. */
+  startedAtMs: number;
   starting?: Promise<void>;
+  replacing?: Promise<void>;
   handle?: SessionHandle;
-  exited?: Promise<void>;
+  /** Handles deliberately stopped by replacement, whose exit is not a crash. */
+  superseded: Set<SessionHandle>;
+  cleanups: Set<Promise<void>>;
   delivering?: Promise<void>;
+}
+
+interface LockOwner {
+  instanceId: string;
+  pid: number;
+  startedAt: string;
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function readLockOwner(lock: string): LockOwner | undefined {
+  try {
+    const value: unknown = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
+    if (
+      value &&
+      typeof value === "object" &&
+      "pid" in value &&
+      typeof value.pid === "number" &&
+      Number.isSafeInteger(value.pid) &&
+      value.pid > 0
+    )
+      return value as LockOwner;
+  } catch {
+    /* A lock without a readable owner record is an abandoned lock. */
+  }
+  return undefined;
+}
+
+/**
+ * Claim the data directory for one live host. An existing lock whose recorded
+ * process is gone is an abandoned host from an abnormal exit; the new host
+ * adopts its persisted state during reconciliation.
+ */
+function acquireHostLock(lock: string, owner: LockOwner): void {
+  // Serialize owner inspection/publication across processes with the host-local
+  // SQLite write lock. A crash releases that lock before another takeover.
+  const guard = new DatabaseSync(join(dirname(lock), "host.db"));
+  try {
+    guard.exec("PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE;");
+    try {
+      mkdirSync(lock, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const previous = readLockOwner(lock);
+      if (previous && processAlive(previous.pid))
+        throw new Error(
+          "Host state is already owned; verify the previous host has stopped before clearing data/host.lock",
+        );
+    }
+    writeFileSync(join(lock, "owner.json"), `${JSON.stringify(owner)}\n`, { mode: 0o600 });
+    guard.exec("COMMIT");
+  } finally {
+    guard.close();
+  }
 }
 
 export class Host {
   private readonly store: HostStore;
   private readonly root: string;
   private readonly driver: SessionDriver;
+  private readonly instanceId: string;
+  private readonly clock: () => number;
+  private readonly reconcileMs: number;
   private readonly controller = new AbortController();
   private readonly prepared = new Map<string, Promise<SessionExecution>>();
   private readonly channels = new Map<string, HostChannel>();
@@ -87,17 +168,35 @@ export class Host {
   private polling?: Promise<void>;
   private stopping?: Promise<void>;
   private stopped = false;
-  private closed = false;
-  private constructor(root: string, store: HostStore, driver: SessionDriver) {
+
+  private constructor(
+    root: string,
+    store: HostStore,
+    driver: SessionDriver,
+    instanceId: string,
+    clock: () => number,
+    reconcileMs: number,
+  ) {
     this.root = root;
     this.store = store;
     this.driver = driver;
+    this.instanceId = instanceId;
+    this.clock = clock;
+    this.reconcileMs = reconcileMs;
+  }
+
+  private timestamp(): string {
+    return new Date(this.clock()).toISOString();
   }
 
   static async start(options: {
     root: string;
     configuration: HostConfiguration;
     driver: SessionDriver;
+    /** Controlled clock; defaults to the system clock. */
+    now?: () => number;
+    /** Interval of the background reconciliation pass. */
+    reconcileMs?: number;
   }): Promise<Host> {
     const configuration = validateHostConfiguration(options.configuration);
     await mkdir(resolve(options.root), { recursive: true });
@@ -107,39 +206,73 @@ export class Host {
     if ((await lstat(data)).isSymbolicLink())
       throw new Error("Host data must use a real directory");
     await chmod(data, 0o700);
-    await mkdir(join(data, "host.lock"), { mode: 0o700 }).catch(() => {
-      throw new Error(
-        "Host state is already owned; verify the previous host has stopped before clearing data/host.lock",
-      );
+    const instanceId = randomUUID();
+    const lock = join(data, "host.lock");
+    await acquireHostLock(lock, {
+      instanceId,
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
     });
     let store: HostStore;
     try {
       store = new HostStore(join(data, "host.db"), configuration);
     } catch (error) {
-      await rm(join(data, "host.lock"), { recursive: true });
+      await rm(lock, { recursive: true });
       throw error;
     }
-    const host = new Host(root, store, options.driver);
+    const host = new Host(
+      root,
+      store,
+      options.driver,
+      instanceId,
+      options.now ?? Date.now,
+      options.reconcileMs ?? 60000,
+    );
     try {
-      for (const session of host.store.sessions()) {
-        const execution = await host.prepare(host.store.route(session));
-        host.store.containerStatus(session.id, "stopped");
-        // Pre-existing outbound rows are delivered, not replayed as observations.
-        host.observed.set(session.id, execution.mailbox.outputs().at(-1)?.seq ?? 0);
-        // Wake only unclaimed input. Abandoned processing recovery is a separate policy.
-        const claimed = new Set(execution.mailbox.acknowledgements().map((ack) => ack.message_id));
-        if (
-          execution.mailbox
-            .inputs()
-            .some((input) => input.status === "pending" && !claimed.has(input.id))
-        )
-          host.wake(execution);
-      }
+      store.stopOpenHostInstances(host.timestamp());
+      store.registerHostInstance(instanceId, process.pid, host.timestamp());
+      await host.reconcileStartup();
       host.polling = host.poll();
       return host;
     } catch (error) {
       await host.stop();
       throw error;
+    }
+  }
+
+  /**
+   * Startup reconciliation: discover persisted sessions and the runtime
+   * containers actually running, take over each session's claim, then adopt
+   * observed execution or recover what was abandoned.
+   */
+  private async reconcileStartup(): Promise<void> {
+    const signal = this.controller.signal;
+    const sessions = this.store.sessions();
+    let observations: SessionObservation[] = [];
+    if (sessions.length > 0 && observesSessions(this.driver)) {
+      // Unknown runtime state cannot authorize writes to runner-owned claims.
+      observations = await this.driver.list(signal);
+    }
+    for (const session of sessions) {
+      const execution = await this.prepare(this.store.route(session));
+      const incarnation = this.store.tryClaimSession({
+        sessionId: session.id,
+        instanceId: this.instanceId,
+        expectedIncarnation: this.store.currentClaim(session.id)?.incarnation ?? 0,
+        containerRef: null,
+        now: this.timestamp(),
+      });
+      if (incarnation === undefined) continue;
+      execution.incarnation = incarnation;
+      this.store.containerStatus(session.id, "stopped");
+      // Pre-existing outbound rows are delivered, not replayed as observations.
+      this.observed.set(session.id, execution.mailbox.outputs().at(-1)?.seq ?? 0);
+      const observation = observations.find(
+        (item) =>
+          item.key.sessionId === session.id && item.key.agentGroupId === session.agent_group_id,
+      );
+      if (observation) await this.adopt(execution, observation);
+      else await this.reconcileSession(execution);
     }
   }
 
@@ -157,6 +290,10 @@ export class Host {
         route,
         material,
         mailbox: new HostMailbox(material.directory),
+        incarnation: 0,
+        startedAtMs: 0,
+        superseded: new Set<SessionHandle>(),
+        cleanups: new Set<Promise<void>>(),
       }));
       this.prepared.set(route.session.id, pending);
       void pending.catch(() => this.prepared.delete(route.session.id));
@@ -210,56 +347,243 @@ export class Host {
       content: message.content,
       timestamp: message.timestamp,
     });
-    this.wake(execution);
+    this.wake(execution, { force: true });
     return { sessionId: route.session.id, messageId };
   }
 
-  private wake(execution: SessionExecution): void {
-    if (this.stopped || execution.starting || execution.handle) return;
+  /** Adopt a container the runtime already reports as running for this session. */
+  private async adopt(execution: SessionExecution, observation: SessionObservation): Promise<void> {
+    const driver = this.driver;
+    if (!observesSessions(driver)) return;
     const id = execution.route.session.id;
-    this.store.containerStatus(id, "starting");
+    if (this.stopped || execution.starting || execution.handle) return;
     execution.starting = (async () => {
+      try {
+        const handle = await driver.adopt(observation, execution.material, this.controller.signal);
+        if (this.stopped) {
+          await handle.stop().catch(() => {});
+          return;
+        }
+        this.install(execution, handle, this.clock());
+        this.store.markContainerRef(id, handle.ref ?? observation.ref, this.timestamp());
+      } catch {
+        throw new Error("Observed session container is unavailable; runtime state is uncertain");
+      }
+    })().finally(() => {
+      execution.starting = undefined;
+    });
+    await execution.starting;
+  }
+
+  /** Start a fresh container for a session with no live execution. */
+  private wake(execution: SessionExecution, options: { force?: boolean } = {}): void {
+    if (this.stopped || execution.starting || execution.replacing || execution.handle) return;
+    const id = execution.route.session.id;
+    if (!options.force && this.store.containerStatusOf(id) === "failed") return;
+    execution.starting = (async () => {
+      const incarnation = this.store.tryClaimSession({
+        sessionId: id,
+        instanceId: this.instanceId,
+        expectedIncarnation: execution.incarnation,
+        containerRef: null,
+        now: this.timestamp(),
+      });
+      if (incarnation === undefined) return;
+      execution.incarnation = incarnation;
+      this.store.containerStatus(id, "starting");
       try {
         const handle = await this.driver.start(execution.material, this.controller.signal);
         if (this.stopped) {
-          await handle.stop();
+          await handle.stop().catch(() => {});
           return;
         }
-        execution.handle = handle;
-        this.store.containerStatus(id, "running");
-        execution.exited = handle
-          .wait()
-          .then(
-            () => {
-              if (!this.stopped) this.store.containerStatus(id, "stopped");
-            },
-            () => {
-              if (!this.stopped) this.fail(id, "Agent runner exited unsuccessfully");
-            },
-          )
-          .finally(async () => {
-            await handle.stop().catch(() => {
-              if (!this.stopped) this.fail(id, "Agent runner cleanup failed");
-            });
-            execution.handle = undefined;
-          });
+        this.install(execution, handle, this.clock());
+        this.store.markContainerRef(id, handle.ref ?? null, this.timestamp());
       } catch {
-        if (!this.stopped)
-          this.fail(id, "Session driver unavailable; check container and gateway configuration");
-      } finally {
-        execution.starting = undefined;
+        if (!this.stopped) {
+          this.store.containerStatus(id, "failed");
+          this.emit({
+            type: "failure",
+            sessionId: id,
+            error: "Session driver unavailable; check container and gateway configuration",
+          });
+        }
       }
-    })();
+    })().finally(() => {
+      execution.starting = undefined;
+    });
   }
 
-  private fail(sessionId: string, error: string): void {
-    this.store.containerStatus(sessionId, "failed");
-    this.emit({ type: "failure", sessionId, error });
+  /**
+   * Register a live container and fence its later exit to this incarnation.
+   * A superseded incarnation must not change status or clear a newer handle.
+   */
+  private install(execution: SessionExecution, handle: SessionHandle, startedAtMs: number): void {
+    const id = execution.route.session.id;
+    const incarnation = execution.incarnation;
+    execution.handle = handle;
+    execution.startedAtMs = startedAtMs;
+    this.store.containerStatus(id, "running");
+    const cleanup = (async () => {
+      await handle
+        .wait()
+        .then(
+          () => {
+            this.settle(execution, incarnation, handle, undefined);
+          },
+          () => {
+            this.settle(execution, incarnation, handle, "Agent runner exited unsuccessfully");
+          },
+        )
+        .catch(() => {});
+      await handle.stop().catch(() => {
+        if (!this.stopped && execution.incarnation === incarnation)
+          this.emit({ type: "failure", sessionId: id, error: "Agent runner cleanup failed" });
+      });
+      execution.superseded.delete(handle);
+      if (execution.handle === handle) execution.handle = undefined;
+    })();
+    execution.cleanups.add(cleanup);
+    void cleanup.then(() => execution.cleanups.delete(cleanup));
+  }
+
+  private settle(
+    execution: SessionExecution,
+    incarnation: number,
+    handle: SessionHandle,
+    error?: string,
+  ): void {
+    if (this.stopped) return;
+    if (execution.incarnation !== incarnation) return;
+    const id = execution.route.session.id;
+    this.store.containerStatus(id, "stopped");
+    this.store.markContainerRef(id, null, this.timestamp());
+    // A deliberate replacement is not a crash, and unclaimed work keeps its
+    // bounded recovery schedule instead of restarting forever.
+    if (!execution.superseded.has(handle)) {
+      if (error) this.emit({ type: "failure", sessionId: id, error });
+      this.recordRecovery(execution, recoverUnclaimedInput(execution.mailbox, this.clock()));
+    }
+  }
+
+  private recordRecovery(execution: SessionExecution, outcome: RecoveryOutcome): void {
+    if (outcome.failed.length === 0) return;
+    this.emit({
+      type: "failure",
+      sessionId: execution.route.session.id,
+      error: "Unfinished Agent work exhausted its recovery retries",
+    });
+  }
+
+  /** Reconcile every prepared session against observed runtime and mailbox state. */
+  async reconcile(): Promise<void> {
+    this.store.touchHostInstance(this.instanceId, this.timestamp());
+    for (const pending of [...this.prepared.values()]) {
+      try {
+        const execution = await pending;
+        if (this.stopped) return;
+        await this.reconcileSession(execution);
+      } catch {
+        if (!this.stopped) this.emit({ type: "failure", error: "Session mailbox unavailable" });
+      }
+    }
+  }
+
+  private async reconcileSession(
+    execution: SessionExecution,
+    now: number = this.clock(),
+  ): Promise<void> {
+    const id = execution.route.session.id;
+    try {
+      execution.mailbox.syncAcknowledgements();
+      if (execution.handle) {
+        await this.enforceStall(execution, now);
+        return;
+      }
+      const outcome = recoverAbandonedClaims(execution.mailbox, now);
+      this.recordRecovery(execution, outcome);
+      const due = execution.mailbox
+        .inputs()
+        .some(
+          (input) =>
+            input.status === "pending" &&
+            (!input.process_after || Date.parse(input.process_after) <= now),
+        );
+      if (due) this.wake(execution);
+    } catch {
+      if (!this.stopped)
+        this.emit({ type: "failure", sessionId: id, error: "Session mailbox unavailable" });
+    }
+  }
+
+  /** Replace a running container whose heartbeat and claims show no progress. */
+  private async enforceStall(execution: SessionExecution, now: number): Promise<void> {
+    if (execution.replacing) return;
+    const id = execution.route.session.id;
+    const heartbeatAtMs = execution.mailbox.heartbeat() ?? 0;
+    const state = execution.mailbox.activity();
+    const activeTool = state?.current_tool
+      ? { name: state.current_tool, declaredTimeoutMs: state.tool_declared_timeout_ms ?? null }
+      : null;
+    const claims = execution.mailbox
+      .processingClaims()
+      .map((claim) => ({
+        messageId: claim.message_id,
+        claimedAtMs: Date.parse(claim.status_changed),
+      }))
+      .filter((claim) => Number.isFinite(claim.claimedAtMs));
+    const decision = decideStallAction({
+      now,
+      heartbeatAtMs,
+      startedAtMs: execution.startedAtMs,
+      activeTool,
+      claims,
+    });
+    if (decision.action === "keep") return;
+    this.emit({
+      type: "failure",
+      sessionId: id,
+      error:
+        decision.reason === "stalled"
+          ? "Agent execution stalled; replacing the session container"
+          : "Agent execution stopped responding after claiming input; replacing the session container",
+    });
+    execution.replacing = (async () => {
+      // Stop the old container before touching runner-owned state, then recover
+      // its claims. The incarnation fence ignores the superseded handle's exit.
+      const handle = execution.handle;
+      if (handle) {
+        execution.superseded.add(handle);
+        try {
+          await handle.stop();
+        } catch {
+          execution.superseded.delete(handle);
+          this.emit({
+            type: "failure",
+            sessionId: id,
+            error: "Session container could not be stopped; recovery deferred",
+          });
+          return;
+        }
+        if (execution.handle === handle) execution.handle = undefined;
+      }
+      this.store.containerStatus(id, "stopped");
+      this.store.markContainerRef(id, null, this.timestamp());
+    })().finally(() => {
+      execution.replacing = undefined;
+    });
+    await execution.replacing;
+    if (!execution.handle) await this.reconcileSession(execution, now);
   }
 
   private async poll(): Promise<void> {
     const signal = this.controller.signal;
+    let nextReconcile = this.clock() + this.reconcileMs;
     while (!signal.aborted) {
+      if (this.clock() >= nextReconcile) {
+        nextReconcile = this.clock() + this.reconcileMs;
+        await this.reconcile();
+      }
       for (const pending of this.prepared.values()) {
         if (signal.aborted) break;
         try {
@@ -268,6 +592,7 @@ export class Host {
           execution.mailbox.syncAcknowledgements();
           // Observe new rows even while an earlier channel delivery remains pending.
           const route = execution.route;
+          if (!this.owned(route.session.id)) continue;
           for (const message of execution.mailbox.outputs()) {
             if (message.seq <= (this.observed.get(route.session.id) ?? 0)) continue;
             this.observed.set(route.session.id, message.seq);
@@ -296,6 +621,7 @@ export class Host {
     try {
       for (const message of execution.mailbox.outputs()) {
         if (signal.aborted) break;
+        if (!this.owned(execution.route.session.id)) break;
         if (execution.mailbox.deliveryStatus(message.id)) continue;
         const route = execution.route;
         const attempt = this.store.deliveryAttempt(message.id);
@@ -370,6 +696,11 @@ export class Host {
     return JSON.stringify([channelType, instance]);
   }
 
+  /** A session's persisted claim decides which host instance may act on it. */
+  private owned(sessionId: string): boolean {
+    return this.store.currentClaim(sessionId)?.claimed_by === this.instanceId;
+  }
+
   attachChannel(channel: HostChannel): () => void {
     if (this.stopped) throw new Error("Host is stopped");
     const key = this.channelKey(channel.channelType, channel.instance);
@@ -409,6 +740,7 @@ export class Host {
       inputs: execution.mailbox.inputs(),
       outputs: execution.mailbox.outputs(),
       continuation: execution.mailbox.continuation(),
+      claim: this.store.currentClaim(sessionId),
       deliveries: execution.mailbox.outputs().map((message) => {
         const attempt = this.store.deliveryAttempt(message.id);
         return {
@@ -444,10 +776,11 @@ export class Host {
               if (result.status !== "fulfilled") return;
               const execution = result.value;
               await execution.starting;
+              await execution.replacing;
               if (execution.handle) await execution.handle.stop();
-              await execution.exited;
+              await Promise.allSettled([...execution.cleanups]);
               await execution.delivering;
-              if (!this.closed) this.store.containerStatus(execution.route.session.id, "stopped");
+              this.store.containerStatus(execution.route.session.id, "stopped");
             }),
           );
           await this.polling;
@@ -459,7 +792,10 @@ export class Host {
       deadline.abort();
       this.channels.clear();
       this.observers.clear();
-      this.closed = true;
+      if (clean) {
+        this.store.releaseClaims(this.instanceId, this.timestamp());
+        this.store.stopHostInstance(this.instanceId, this.timestamp());
+      }
       this.store.close();
       if (clean) await rm(join(this.root, "data", "host.lock"), { recursive: true });
     }

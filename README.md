@@ -792,6 +792,7 @@ container drivers and channel clients from the remaining embedded bot runtime:
 src/
 ├── index.ts               # Persistent host entry point
 ├── host.ts                # Routing, mailbox observation, session lifecycle and delivery
+├── reconcile-session.ts   # Bounded recovery policy and stall decisions
 ├── db/                    # Central SQLite entities and schema migrations
 ├── channels/
 │   ├── cli.ts             # Owner-local Unix socket listener

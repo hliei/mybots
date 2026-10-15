@@ -178,10 +178,18 @@ test("actual mounted runner uses OneCLI injection and reopens its explicit Pi co
       kind: "message",
       content: "Reopened the saved conversation and read the shared note.",
     });
+    // The runtime reports the live container and adoption takes it over without
+    // creating a duplicate.
+    const live = (await driver.list(signal)).find((item) => item.key.sessionId === "cli");
+    if (!live) throw new Error("The runtime did not report the live session container");
+    const adopted = await driver.adopt(live, material, signal);
+    expect(adopted.ref).toBe(live.ref);
     // Stop also settles the driver wait resource.
     await handle.stop();
     await stopped.catch(() => {});
     handle = undefined;
+    // Termination is visible in the observed runtime state.
+    expect((await driver.list(signal)).some((item) => item.ref === live.ref)).toBe(false);
     const reopened = new HostMailbox(material.directory);
     reopened.submit({
       id: "second",
@@ -230,7 +238,7 @@ test("actual mounted runner uses OneCLI injection and reopens its explicit Pi co
     reopened.markDelivered(first.id, "delivered");
     expect(new HostMailbox(material.directory).deliveryStatus(first.id)).toBe("delivered");
     process.stdout.write(
-      "Infrastructure passed: mounted freshness, tool isolation, gateway injection, streaming reply and explicit Pi reopening.\n",
+      "Infrastructure passed: mounted freshness, tool isolation, gateway injection, streaming reply, explicit Pi reopening, runtime observation/adoption and observed container termination.\n",
     );
   } finally {
     try {
