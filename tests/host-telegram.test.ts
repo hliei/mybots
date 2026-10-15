@@ -131,6 +131,11 @@ it("keeps the Bot API token out of runner material and shared resources", async 
     ]),
   );
   expect(requests.some((url) => url.includes(token))).toBe(true);
+  expect(JSON.stringify(await host.inspect(accepted?.sessionId ?? ""))).not.toContain(token);
+  await channel.stop();
+  channel = undefined;
+  await host.stop();
+  host = undefined;
   const visible = [
     ...(await filesUnder(join(root, "data"))),
     ...(await filesUnder(join(root, "groups"))),
@@ -139,7 +144,6 @@ it("keeps the Bot API token out of runner material and shared resources", async 
   expect(visible.some((file) => file.includes(".context"))).toBe(true);
   for (const file of visible)
     expect(await readFile(file, "latin1"), `${file} must not hold the token`).not.toContain(token);
-  expect(JSON.stringify(await host.inspect(accepted?.sessionId ?? ""))).not.toContain(token);
 });
 
 it("keeps Telegram and CLI conversations separate within one shared workspace across restart", async () => {
