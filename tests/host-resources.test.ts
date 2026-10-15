@@ -48,7 +48,7 @@ test("owner reset waits for idle, preserves other sessions and shared files, and
     },
   };
   const configuration: HostConfiguration = {
-    owner: "cli:local",
+    owners: ["cli:local"],
     agent: {
       id: "personal",
       name: "Personal",

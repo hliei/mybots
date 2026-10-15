@@ -11,7 +11,7 @@ import { waitForCheckpoint } from "./checkpoint.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 
 const configuration: HostConfiguration = {
-  owner: "local:owner",
+  owners: ["telegram:42", "cli:local"],
   agent: {
     id: "personal",
     name: "Personal",
@@ -178,7 +178,7 @@ it("keeps WebSocket and CLI conversations separate while sharing the Agent works
 
   const viaCli = await host.accept({
     destinationId: "terminal",
-    userId: "local:owner",
+    userId: "cli:local",
     text: "From the terminal",
   });
   client.send({ type: "input", destination: "desktop", content: "From the desktop" });
@@ -237,7 +237,7 @@ it("observes another channel's output without acknowledging its delivery", async
 
   const accepted = await host.accept({
     destinationId: "chat",
-    userId: "local:owner",
+    userId: "cli:local",
     text: "Telegram input",
   });
   await waitForCheckpoint(started.promise, "held Telegram delivery");
@@ -267,7 +267,7 @@ it("observes another channel's output without acknowledging its delivery", async
 
   const next = await host.accept({
     destinationId: "chat",
-    userId: "local:owner",
+    userId: "cli:local",
     text: "Next Telegram input",
   });
   const nextOutbound = await observer.waitFor(
@@ -576,7 +576,7 @@ it("cancels in-flight WebSocket delivery promptly when the host stops", async ()
   host.observe((event) => {
     if (event.type === "output") emitted.resolve();
   });
-  await host.accept({ destinationId: "desktop", userId: "local:owner", text: "Held" });
+  await host.accept({ destinationId: "desktop", userId: "cli:local", text: "Held" });
   await waitForCheckpoint(emitted.promise, "held WebSocket output");
 
   const started = Date.now();

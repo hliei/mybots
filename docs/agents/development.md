@@ -39,6 +39,9 @@ details and scope. See
 - Keep agent execution, terminal interaction, and message-platform handling in
   separate modules. The CLI is a client of the persistent host and the owner-local
   WebSocket interface is a host channel; the bot still embeds its existing runtime.
+  The Telegram Bot API boundary in `src/channels/telegram-api.ts` is shared by the
+  host's owner-only private-chat channel and the embedded bot; the host channel
+  routes accepted input through the common host path and keeps the token host-side.
 - Keep platform SDK details at the platform boundary and model SDK details at
   the model boundary. Core behavior must be testable without live credentials.
 - Prefer explicit types at module boundaries. Use `unknown` for unvalidated

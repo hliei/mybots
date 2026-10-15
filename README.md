@@ -96,8 +96,10 @@ npm run dev:cli -- --root ./workspace
 ```
 
 Configure the existing runner image, isolated Docker network and OneCLI gateway
-in `host.json`; real model credentials remain gateway-owned. The terminal connects
-to the owner-only `data/cli.sock`. Enter one message per line; `quit`, `exit`, `q`,
+in `host.json`; real model credentials remain gateway-owned. `owners` lists the
+owner's namespaced platform identities, with exactly one `cli:` identity for the
+terminal. The terminal connects to the owner-only `data/cli.sock`. Enter one
+message per line; `quit`, `exit`, `q`,
 EOF or Ctrl+C disconnect the client while Agent work stays on the host. A newer
 client replaces the old terminal on its first valid message. CLI reconnect and
 host restart reuse the saved conversation. `/reset` queues a fresh Pi conversation
@@ -105,6 +107,16 @@ at the next idle boundary, preserving other sessions and shared files. Configure
 `agent.resources` to select Skills and SDK built-in tools; shared instructions live
 in `groups/<folder>/AGENTS.md`. Disconnected replies remain in the
 mailbox without guaranteed terminal replay.
+
+Add one `telegram` destination for the owner's private chat (its `platformId` is
+the chat/user ID), the matching `telegram:<user-id>` owner identity and a
+`telegram` block naming the host environment variable that holds the Bot API
+token. The host polls Telegram only when that configuration is present; the token
+stays host-side and unknown senders never reach Agent work. Telegram and CLI use
+the same Agent workspace with separate persistent conversations, and replies are
+split to Telegram's message limit. See
+[persistent host](docs/host-runtime.md#telegram-private-chat) for the configuration
+shape and optional infrastructure.
 
 An optional `websocket` section exposes the same host to trusted local WebSocket
 clients on a loopback address. Clients submit `{"type":"input","destination":"desktop","content":"hello"}`
@@ -683,7 +695,7 @@ and `allowed_user_ids` are restart-only settings; edit them and restart the
 process.
 
 The Telegram Bot API is called directly over HTTPS; its request and response
-shapes stay in `src/bot/telegram-api.ts`, so no Telegram SDK dependency is added.
+shapes stay in `src/channels/telegram-api.ts`, so no Telegram SDK dependency is added.
 User and chat identifiers are carried as digit strings and sent back as strings,
 so routing, allowlist checks and delivery never depend on JavaScript numeric
 precision. A numeric identifier that cannot be represented exactly at the JSON
@@ -781,7 +793,10 @@ src/
 ├── index.ts               # Persistent host entry point
 ├── host.ts                # Routing, mailbox observation, session lifecycle and delivery
 ├── db/                    # Central SQLite entities and schema migrations
-├── channels/cli.ts        # Owner-local Unix socket listener
+├── channels/
+│   ├── cli.ts             # Owner-local Unix socket listener
+│   ├── telegram.ts        # Owner-only Telegram private-chat channel for the host
+│   └── telegram-api.ts    # Telegram Bot API request/response boundary
 ├── mailbox/               # Directional SQLite mailbox package
 ├── drivers/               # Session-driver contract and Docker execution
 ├── gateway-providers/     # OneCLI credential gateway boundary
@@ -818,8 +833,7 @@ src/
 │   └── protocol.ts        # Input-frame validation and event/error serialization
 └── bot/
     ├── startup.ts         # Bot arguments, shared runtime ownership, and shutdown
-    ├── telegram.ts        # Telegram channel lifecycle and reply transport
-    └── telegram-api.ts    # Telegram Bot API request/response boundary
+    └── telegram.ts        # Embedded-runtime Telegram channel lifecycle and reply transport
 ```
 
 The Agent supplies the available tool schemas to the provider. The provider

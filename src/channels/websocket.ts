@@ -159,7 +159,9 @@ export class WebSocketChannel {
     if (!Number.isSafeInteger(sendTimeoutMs) || sendTimeoutMs <= 0)
       throw new Error("WebSocket send timeout must be a positive integer");
     this.host = options.host;
-    this.owner = options.configuration.owner;
+    const owner = options.configuration.owners.find((owner) => owner.startsWith("cli:"));
+    if (!owner) throw new Error("WebSocket interface requires a CLI owner identity");
+    this.owner = owner;
     this.instance = [...instances][0];
     this.destinations = new Set(destinations.map((destination) => destination.id));
     this.platformIds = new Set(destinations.map((destination) => destination.platformId));

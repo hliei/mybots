@@ -1,11 +1,11 @@
 import { setTimeout as delay } from "node:timers/promises";
+import type { TelegramApi, TelegramPollResult, TelegramUpdate } from "../channels/telegram-api.ts";
+import { TELEGRAM_CHUNK_LIMIT } from "../channels/telegram-api.ts";
 import type { DeliveryChunk, DeliveryTransport } from "../core/delivery.ts";
 import { chunkContent } from "../core/delivery.ts";
 import type { EventRuntime, RuntimeResult } from "../core/runtime.ts";
-import type { TelegramApi, TelegramPollResult, TelegramUpdate } from "./telegram-api.ts";
 
-/** Telegram's text-message length limit, in Unicode code points. */
-export const TELEGRAM_CHUNK_LIMIT = 4096;
+export { TELEGRAM_CHUNK_LIMIT } from "../channels/telegram-api.ts";
 
 export function telegramSource(identity: { userId: string; chatId: string }): string {
   return `platform-telegram:${identity.userId}:${identity.chatId}`;

@@ -155,6 +155,17 @@ the same controlled mailbox driver and removes its processes, sockets and state.
 The replaced embedded CLI tests are retired; embedded Agent, bot, tools and
 context behavior retain their own tests until their responsibilities move.
 
+`tests/host-telegram.test.ts` connects `TelegramChannel` and `runHost` to the real
+host/store/mailbox path with a controlled Bot API. It covers owner routing,
+unknown-sender and non-private/unconfigured-chat rejection, ordered message
+splitting at the Telegram limit, polling-offset advance and ignored updates,
+cancellation and bounded shutdown, Telegram/CLI separation within one shared
+workspace, restart affinity with exact continuation, token containment outside
+runner material, coherent `telegram` settings and entry-point start/stop. The
+`createTelegramApi` boundary is exercised separately with a mock `fetch`; no test
+contacts Telegram or uses a real token. Live Telegram acceptance remains part of
+the separate actual-service pass.
+
 `tests/websocket-channel.test.ts` binds the owner-local WebSocket channel to a
 real host, central store and per-session mailboxes with the controlled mailbox
 driver and actual local sockets. It verifies validated input and rejection,

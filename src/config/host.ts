@@ -58,11 +58,17 @@ export function validateHostConfiguration(value: unknown): HostConfiguration {
     ).size !== destinations.length
   )
     throw new Error("Messaging destinations must be unique");
-  const owner = text(source.owner);
-  if (!/^[a-zA-Z0-9_-]+:.+$/.test(owner))
-    throw new Error("Owner identity must be platform-qualified");
+  if (!Array.isArray(source.owners) || source.owners.length === 0)
+    throw new Error("Configure at least one owner identity");
+  const owners = source.owners.map((value) => {
+    const owner = text(value);
+    if (!/^[a-zA-Z0-9_-]+:.+$/.test(owner))
+      throw new Error("Owner identity must be platform-qualified");
+    return owner;
+  });
+  if (new Set(owners).size !== owners.length) throw new Error("Owner identities must be unique");
   return {
-    owner,
+    owners,
     agent: {
       id: name(agent.id),
       name: text(agent.name),
@@ -81,12 +87,20 @@ export function validateHostConfiguration(value: unknown): HostConfiguration {
   };
 }
 
+export interface TelegramSettings {
+  /** Messaging-group instance served by one Telegram polling channel. */
+  instance: string;
+  /** Host environment variable holding the Bot API token; never persisted or mounted. */
+  botTokenEnv: string;
+}
+
 export interface HostSettings {
   configuration: HostConfiguration;
   image: string;
   network: string;
   gateway: { url: string; proxyHost: string };
   cliDestinationId: string;
+  telegram?: TelegramSettings;
   websocket?: { host: string; port: number; path: string };
 }
 
@@ -135,6 +149,24 @@ export async function loadHostSettings(file: string): Promise<HostSettings> {
       (destination) => destination.id === cliDestinationId,
     );
     if (destination?.channelType !== "cli" || destination.platformId !== "local") throw new Error();
+    if (configuration.owners.filter((owner) => owner.startsWith("cli:")).length !== 1)
+      throw new Error();
+    const telegramDestinations = configuration.destinations.filter(
+      (destination) => destination.channelType === "telegram",
+    );
+    let telegram: TelegramSettings | undefined;
+    if (source.telegram !== undefined || telegramDestinations.length > 0) {
+      const settings = object(source.telegram);
+      const instance = name(settings.instance);
+      const botTokenEnv = text(settings.botTokenEnv);
+      if (!/^[A-Z][A-Z0-9_]*$/.test(botTokenEnv)) throw new Error();
+      if (telegramDestinations.length === 0) throw new Error();
+      for (const destination of telegramDestinations) {
+        if (destination.instance !== instance) throw new Error();
+        if (!configuration.owners.includes(`telegram:${destination.platformId}`)) throw new Error();
+      }
+      telegram = { instance, botTokenEnv };
+    }
     return {
       configuration,
       image: text(container.image),
@@ -144,10 +176,11 @@ export async function loadHostSettings(file: string): Promise<HostSettings> {
       ...(source.websocket === undefined
         ? {}
         : { websocket: websocketSettings(source.websocket, configuration) }),
+      ...(telegram ? { telegram } : {}),
     };
   } catch {
     throw new Error(
-      "Invalid host configuration; check the host JSON file, model endpoint, CLI destination, container and gateway settings",
+      "Invalid host configuration; check the host JSON file, model endpoint, CLI destination, container, gateway and Telegram settings",
     );
   }
 }

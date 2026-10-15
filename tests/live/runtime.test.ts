@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { stringify } from "yaml";
 import { TelegramChannel, telegramTransport } from "../../src/bot/telegram.ts";
-import { createTelegramApi, type TelegramUpdate } from "../../src/bot/telegram-api.ts";
+import { createTelegramApi, type TelegramUpdate } from "../../src/channels/telegram-api.ts";
 import { loadSettings, type WorkspaceSettings } from "../../src/config/workspace.ts";
 import { parseEvent, type RuntimeEvent } from "../../src/core/events.ts";
 import { ConversationHistory } from "../../src/core/history.ts";

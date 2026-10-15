@@ -54,13 +54,15 @@ export class HostStore {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const now = new Date().toISOString();
-      const { agent, owner } = configuration;
-      this.db
-        .prepare("INSERT INTO users VALUES (?, ?, NULL, ?) ON CONFLICT(id) DO NOTHING")
-        .run(owner, owner.split(":")[0], now);
-      this.db
-        .prepare("INSERT INTO user_roles VALUES (?, 'owner', NULL, ?, ?) ON CONFLICT DO NOTHING")
-        .run(owner, owner, now);
+      const { agent, owners } = configuration;
+      for (const owner of owners) {
+        this.db
+          .prepare("INSERT INTO users VALUES (?, ?, NULL, ?) ON CONFLICT(id) DO NOTHING")
+          .run(owner, owner.split(":")[0], now);
+        this.db
+          .prepare("INSERT INTO user_roles VALUES (?, 'owner', NULL, ?, ?) ON CONFLICT DO NOTHING")
+          .run(owner, owner, now);
+      }
       this.db
         .prepare(
           `INSERT INTO agent_groups VALUES (?, ?, ?, 'pi', ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, folder = excluded.folder`,

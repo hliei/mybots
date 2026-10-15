@@ -24,7 +24,10 @@ to the current directory. The host accepts `--config FILE` to select another JSO
 file; CLI only selects the installation root. `--help` requires no configuration
 or service. Missing/invalid configuration fails before opening the host.
 
-`owner` is a namespaced platform identity; the local example uses `cli:local`.
+`owners` lists the single owner's namespaced platform identities; the local
+example uses `["cli:local"]`. Exactly one identity must be a `cli:` identity for
+the terminal channel. Add the Telegram identity (`telegram:<user-id>`) when
+configuring a Telegram private chat.
 `agent` selects the Agent's ID, name, shared folder, instructions and explicit
 model configuration. Optional `agent.resources.skills` selects directory IDs under
 `groups/<folder>/skills/`; `agent.resources.tools` selects Pi built-ins (`read`,
@@ -43,6 +46,42 @@ mode, no threads and owner-only sender authorization. The `cliDestinationId` mus
 select a `cli` destination with platform ID `local`. Additional configured
 messaging destinations can use the same Agent workspace and different sessions
 through the host API; their channel adapters are separate deliveries.
+
+### Telegram private chat
+
+A Telegram private chat is one more destination. Its `platformId` is the chat
+ID, which for a private chat equals the owner's Telegram user ID. Configure the
+corresponding `telegram:<user-id>` owner identity, the destination and the
+host-side polling settings:
+
+```json
+{
+  "owners": ["cli:local", "telegram:42"],
+  "destinations": [
+    { "id": "terminal", "channelType": "cli", "platformId": "local", "instance": "cli" },
+    { "id": "owner-chat", "channelType": "telegram", "platformId": "42", "instance": "telegram" }
+  ],
+  "telegram": { "instance": "telegram", "botTokenEnv": "MYBOTS_TELEGRAM_BOT_TOKEN" }
+}
+```
+
+`telegram.instance` selects the messaging-group instance served by one polling
+channel; every `telegram` destination must use it. Each Telegram destination's
+`platformId` must match a configured `telegram:<user-id>` owner, so only the
+owner's private chat is admitted. `telegram.botTokenEnv` names the host
+environment variable holding the Bot API token; the token is read from the
+environment at startup, is used only by the host's Bot API client and never
+enters runner mounts, instructions, mailbox records or diagnostics. A configured
+Telegram destination with a missing token, a mismatched instance or an owner
+that is not configured fails startup before any service starts.
+
+The channel normalizes raw updates at the Bot API boundary, ignores non-text
+updates, non-private chats, unknown senders and unconfigured chats, and advances
+the polling offset past every returned update. Accepted input follows the same
+host/mailbox/runner path as CLI and replies to its own chat, split at Telegram's
+4096-code-point limit. Telegram and CLI share the Agent workspace but keep
+separate persistent conversations. Polling retries a failed long poll and stops
+with the host, aborting in-flight requests and awaiting dispatches.
 
 `container.image` and `container.network` select an existing runner image and
 internal Docker network. `gateway.url` is the host's OneCLI management endpoint;
@@ -171,8 +210,11 @@ interface before stopping the host.
 session material and an abort signal and returns an awaited stop/exit handle.
 `CliChannel.listen` and `close` own the local listener and its connected sockets.
 `WebSocketChannel.listen` and `close` own the owner-local WebSocket listener, its
-clients and their bounded frames. Importing these modules starts no services.
-Observers cannot prevent persistence;
+clients and their bounded frames. `TelegramChannel.listen`, `start` and `stop` own
+host delivery and Bot API polling for one Telegram instance; `dispatch` routes a
+single normalized update. `runHost` starts the Telegram channel when `telegram`
+settings are present. Importing these modules starts no services. Observers cannot
+prevent persistence;
 channels must settle delivery on shutdown cancellation.
 
 `SIGINT`/`SIGTERM` closes the production CLI listener, aborts polling and delivery,
@@ -190,7 +232,11 @@ mailbox driver fixture. It shows an input/reply, CLI reconnect and host restart
 with one saved session and its exact continuation. `verify` includes the same
 bounded demonstration and executable help/configuration-failure checks. Host
 integration tests use real central/session SQLite and the same driver boundary.
-These checks do not establish Docker, gateway, CA or live provider behavior. The
+`tests/host-telegram.test.ts` drives the channel with a controlled Bot API: owner
+routing, unknown-sender and unsupported-input rejection, chat splitting, offset
+advance, cancellation, restart affinity, token containment and entry-point
+wiring. No test contacts Telegram or uses a real token. These checks do not
+establish Docker, gateway, CA or live provider behavior. The
 opt-in infrastructure suite and actual-service acceptance remain separate.
 
 The bot entry point still uses its embedded runtime while its adapters are being

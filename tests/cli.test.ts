@@ -9,7 +9,7 @@ import { Host, type HostConfiguration } from "../src/host.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 
 const configuration: HostConfiguration = {
-  owner: "cli:local",
+  owners: ["cli:local"],
   agent: {
     id: "personal",
     name: "Personal",
@@ -64,7 +64,7 @@ async function setup() {
     host,
     root,
     destinationId: "terminal",
-    owner: configuration.owner,
+    owner: configuration.owners[0],
   });
   return driver;
 }
@@ -201,7 +201,7 @@ it("refuses a second CLI listener without disrupting the existing channel", asyn
       host: host as Host,
       root,
       destinationId: "terminal",
-      owner: configuration.owner,
+      owner: configuration.owners[0],
     }),
   ).rejects.toThrow("Channel already attached");
   const client = await terminal();

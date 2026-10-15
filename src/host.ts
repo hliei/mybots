@@ -15,7 +15,8 @@ import { HostMailbox } from "./mailbox/node.ts";
 import type { AgentResources, OutboundMessage } from "./mailbox/types.ts";
 
 export interface HostConfiguration {
-  owner: string;
+  /** Namespaced platform identities of the single personal owner, e.g. `cli:local` or `telegram:42`. */
+  owners: string[];
   agent: {
     id: string;
     name: string;

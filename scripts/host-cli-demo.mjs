@@ -15,7 +15,7 @@ const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const root = await realpath(await mkdtemp(join(tmpdir(), "mybots-host-demo-")));
 const driver = new MailboxDriver();
 const configuration = {
-  owner: "cli:local",
+  owners: ["cli:local"],
   agent: {
     id: "personal",
     name: "Personal",
@@ -43,7 +43,7 @@ async function open() {
     host,
     root,
     destinationId: "terminal",
-    owner: configuration.owner,
+    owner: configuration.owners[0],
   });
   webSocket = await WebSocketChannel.listen({ host, configuration, port: 0 });
 }
