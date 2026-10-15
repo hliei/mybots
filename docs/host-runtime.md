@@ -155,6 +155,8 @@ Other slash input remains ordinary Agent text.
 ## Interrupted-execution recovery
 
 The host owns `data/host.lock` with a recorded instance identity and process ID.
+A short host-local SQLite write transaction serializes lock inspection and owner
+publication, including concurrent attempts to take over an abandoned lock.
 A second host refuses a lock whose recorded process is still alive. When an
 abnormal exit leaves the lock behind, the next host adopts the data directory,
 marks the abandoned instance stopped, and reconciles persisted state rather than
@@ -163,8 +165,11 @@ assuming its own in-memory view is complete.
 Startup reconciliation reads every persisted Agent session and the runtime state
 the driver actually observes. It takes a fenced claim on each session and then
 either adopts a container the runtime still reports as running for that session,
-or recovers what that session left unfinished. Each claim carries an incarnation;
-a superseded host or container handle whose late exit or cleanup arrives after a
+or recovers what that session left unfinished.
+If runtime observation or adoption fails, startup fails without recovering claims
+from a container that may still be running. Restore runtime access before retrying.
+Each claim carries an incarnation; a superseded host or container handle whose
+late exit or cleanup arrives after a
 newer incarnation owns the session cannot change its status, deliver into it, or
 clean it up.
 
@@ -184,7 +189,9 @@ the claim tolerance. A tool's declared timeout widens both the ceiling and the
 claim tolerance while that tool is active. Replacing a container stops it and
 recovers its unfinished claims under the same bounded policy; the host waits for
 that stop before touching runner-owned claims, so a stopped incarnation cannot
-overwrite the recovered state. Retrying unfinished
+overwrite the recovered state. Failed stops retain the existing handle and claims
+and report a failure; new input cannot start another container while replacement
+is pending. Retrying unfinished
 input can repeat an already-performed tool effect; the host does not provide
 exactly-once execution or delivery, and the accepted crash loss windows remain.
 

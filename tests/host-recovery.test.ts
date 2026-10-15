@@ -280,6 +280,156 @@ it("adopts the data directory after an abnormal host exit", async () => {
   expect(host.sessions()).toEqual([]);
 });
 
+it.each([false, true])(
+  "admits only one concurrent host when the lock is stale: %s",
+  async (stale) => {
+    const current = await temporaryRoot();
+    if (stale) {
+      const lock = join(current, "data", "host.lock");
+      await mkdir(lock, { recursive: true });
+      await writeFile(join(lock, "owner.json"), JSON.stringify({ pid: 999999999 }));
+    }
+    const results = await Promise.allSettled(
+      [1, 2].map(() => Host.start({ root: current, configuration, driver: new MailboxDriver() })),
+    );
+    for (const result of results) if (result.status === "fulfilled") hosts.push(result.value);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+  },
+);
+
+it("preserves live claims when container termination fails", async () => {
+  const current = await temporaryRoot();
+  let now = Date.now();
+  const done = Promise.withResolvers<void>();
+  let launches = 0;
+  let rejectStop = true;
+  const driver: SessionDriver = {
+    async start(material) {
+      launches++;
+      const runner = new RunnerMailbox(material.directory);
+      runner.acknowledge(runner.pending()[0].id, "processing");
+      return {
+        ref: "still-running",
+        wait: () => done.promise,
+        async stop() {
+          if (rejectStop) throw new Error("Controlled stop failure");
+          done.resolve();
+        },
+      };
+    },
+  };
+  const host = await Host.start({ root: current, configuration, driver, now: () => now });
+  hosts.push(host);
+  const accepted = await host.accept({
+    destinationId: "terminal",
+    userId: "cli:local",
+    text: "Work",
+  });
+  await vi.waitFor(async () =>
+    expect((await host.inspect(accepted.sessionId)).session?.container_status).toBe("running"),
+  );
+  now += HEARTBEAT_CEILING_MS + 1;
+  try {
+    await host.reconcile();
+    await host.accept({ destinationId: "terminal", userId: "cli:local", text: "Later" });
+    expect(launches).toBe(1);
+    expect(
+      new HostMailbox(sessionDirectory(current, accepted.sessionId)).processingClaims(),
+    ).toHaveLength(1);
+    expect((await host.inspect(accepted.sessionId)).inputs[0].tries).toBe(0);
+  } finally {
+    rejectStop = false;
+  }
+});
+
+it("waits for replacement termination before admitting another container", async () => {
+  const current = await temporaryRoot();
+  let now = Date.now();
+  const stopping = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  let launches = 0;
+  const driver: SessionDriver = {
+    async start() {
+      launches++;
+      return {
+        ref: `runner-${launches}`,
+        wait: () => done.promise,
+        async stop() {
+          stopping.resolve();
+          await release.promise;
+          done.resolve();
+        },
+      };
+    },
+  };
+  const host = await Host.start({ root: current, configuration, driver, now: () => now });
+  hosts.push(host);
+  await host.accept({ destinationId: "terminal", userId: "cli:local", text: "Work" });
+  await vi.waitFor(() => expect(launches).toBe(1));
+  now += HEARTBEAT_CEILING_MS + 1;
+  const replacement = host.reconcile();
+  try {
+    await waitForCheckpoint(stopping.promise, "replacement stop");
+    await host.accept({ destinationId: "terminal", userId: "cli:local", text: "Later" });
+    expect(launches).toBe(1);
+  } finally {
+    release.resolve();
+    await replacement;
+  }
+});
+
+it.each(["list", "adopt"] as const)(
+  "does not recover claims when runtime %s is uncertain",
+  async (operation) => {
+    const current = await temporaryRoot();
+    const first = await Host.start({ root: current, configuration, driver: new MailboxDriver() });
+    hosts.push(first);
+    const accepted = await first.accept({
+      destinationId: "terminal",
+      userId: "cli:local",
+      text: "Work",
+    });
+    await vi.waitFor(async () =>
+      expect((await first.inspect(accepted.sessionId)).outputs).toHaveLength(1),
+    );
+    await first.stop();
+    const directory = sessionDirectory(current, accepted.sessionId);
+    const mailbox = new HostMailbox(directory);
+    const input = mailbox.submit({
+      id: "live",
+      content: "Still working",
+      channel_type: "cli",
+      platform_id: "local",
+      thread_id: null,
+    });
+    new RunnerMailbox(directory).acknowledge(input.id, "processing");
+    const driver = new MailboxDriver();
+    driver.observations = [
+      { key: { agentGroupId: "personal", sessionId: accepted.sessionId }, ref: "live-container" },
+    ];
+    driver[operation] = async () => {
+      throw new Error("Controlled observation failure");
+    };
+    let recovered: Host | undefined;
+    try {
+      await expect(
+        Host.start({ root: current, configuration, driver }).then((host) => {
+          recovered = host;
+          hosts.push(host);
+          return host;
+        }),
+      ).rejects.toThrow();
+      expect(mailbox.processingClaims()).toHaveLength(1);
+      expect(mailbox.inputs().find((message) => message.id === input.id)?.tries).toBe(0);
+      expect(driver.launches).toHaveLength(0);
+    } finally {
+      await recovered?.stop();
+    }
+  },
+);
+
 it("upgrades an existing host store to the recovery schema", async () => {
   const current = await temporaryRoot();
   const file = join(current, "data", "host.db");

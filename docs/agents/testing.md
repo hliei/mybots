@@ -130,6 +130,11 @@ container check does not establish a live DeepSeek or Telegram deployment.
 
 ## Persistent host and CLI
 
+Recovery regressions cover concurrent fresh/stale-lock acquisition, uncertain
+runtime observation/adoption, failed container termination with preserved claims,
+and input arriving during replacement. A controlled Docker executable at the
+process boundary verifies that failed termination can be retried successfully.
+
 `tests/host.test.ts` uses the public host input, observation, session inspection
 and lifecycle interfaces with real `data/host.db` entities and session mailbox
 stores. `tests/host-fixture.ts` replaces only isolated execution at the session

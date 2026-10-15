@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { setTimeout } from "node:timers/promises";
 import { validateHostConfiguration } from "./config/host.ts";
 import { provisionSession } from "./container-runner.ts";
@@ -95,9 +97,9 @@ function processAlive(pid: number): boolean {
   }
 }
 
-async function readLockOwner(lock: string): Promise<LockOwner | undefined> {
+function readLockOwner(lock: string): LockOwner | undefined {
   try {
-    const value: unknown = JSON.parse(await readFile(join(lock, "owner.json"), "utf8"));
+    const value: unknown = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
     if (
       value &&
       typeof value === "object" &&
@@ -118,18 +120,27 @@ async function readLockOwner(lock: string): Promise<LockOwner | undefined> {
  * process is gone is an abandoned host from an abnormal exit; the new host
  * adopts its persisted state during reconciliation.
  */
-async function acquireHostLock(lock: string, owner: LockOwner): Promise<void> {
+function acquireHostLock(lock: string, owner: LockOwner): void {
+  // Serialize owner inspection/publication across processes with the host-local
+  // SQLite write lock. A crash releases that lock before another takeover.
+  const guard = new DatabaseSync(join(dirname(lock), "host.db"));
   try {
-    await mkdir(lock, { mode: 0o700 });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    const previous = await readLockOwner(lock);
-    if (previous && processAlive(previous.pid))
-      throw new Error(
-        "Host state is already owned; verify the previous host has stopped before clearing data/host.lock",
-      );
+    guard.exec("PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE;");
+    try {
+      mkdirSync(lock, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const previous = readLockOwner(lock);
+      if (previous && processAlive(previous.pid))
+        throw new Error(
+          "Host state is already owned; verify the previous host has stopped before clearing data/host.lock",
+        );
+    }
+    writeFileSync(join(lock, "owner.json"), `${JSON.stringify(owner)}\n`, { mode: 0o600 });
+    guard.exec("COMMIT");
+  } finally {
+    guard.close();
   }
-  await writeFile(join(lock, "owner.json"), `${JSON.stringify(owner)}\n`, { mode: 0o600 });
 }
 
 export class Host {
@@ -227,13 +238,13 @@ export class Host {
    */
   private async reconcileStartup(): Promise<void> {
     const signal = this.controller.signal;
+    const sessions = this.store.sessions();
     let observations: SessionObservation[] = [];
-    if (observesSessions(this.driver)) {
-      // An unavailable runtime observation must not prevent the host from
-      // starting; accepted input stays persisted and a failed start is observable.
-      observations = await this.driver.list(signal).catch(() => []);
+    if (sessions.length > 0 && observesSessions(this.driver)) {
+      // Unknown runtime state cannot authorize writes to runner-owned claims.
+      observations = await this.driver.list(signal);
     }
-    for (const session of this.store.sessions()) {
+    for (const session of sessions) {
       const execution = await this.prepare(this.store.route(session));
       const incarnation = this.store.tryClaimSession({
         sessionId: session.id,
@@ -347,15 +358,7 @@ export class Host {
         this.install(execution, handle, this.clock());
         this.store.markContainerRef(id, handle.ref ?? observation.ref, this.timestamp());
       } catch {
-        if (!this.stopped) {
-          this.store.containerStatus(id, "stopped");
-          this.emit({
-            type: "failure",
-            sessionId: id,
-            error: "Observed session container is unusable; it will be replaced",
-          });
-          await this.reconcileSession(execution);
-        }
+        throw new Error("Observed session container is unavailable; runtime state is uncertain");
       }
     })().finally(() => {
       execution.starting = undefined;
@@ -365,7 +368,7 @@ export class Host {
 
   /** Start a fresh container for a session with no live execution. */
   private wake(execution: SessionExecution, options: { force?: boolean } = {}): void {
-    if (this.stopped || execution.starting || execution.handle) return;
+    if (this.stopped || execution.starting || execution.replacing || execution.handle) return;
     const id = execution.route.session.id;
     if (!options.force && this.store.containerStatusOf(id) === "failed") return;
     execution.starting = (async () => {
@@ -540,18 +543,28 @@ export class Host {
       // Stop the old container before touching runner-owned state, then recover
       // its claims. The incarnation fence ignores the superseded handle's exit.
       const handle = execution.handle;
-      execution.handle = undefined;
       if (handle) {
         execution.superseded.add(handle);
-        await handle.stop().catch(() => {});
+        try {
+          await handle.stop();
+        } catch {
+          execution.superseded.delete(handle);
+          this.emit({
+            type: "failure",
+            sessionId: id,
+            error: "Session container could not be stopped; recovery deferred",
+          });
+          return;
+        }
+        if (execution.handle === handle) execution.handle = undefined;
       }
       this.store.containerStatus(id, "stopped");
       this.store.markContainerRef(id, null, this.timestamp());
-      await this.reconcileSession(execution, now);
     })().finally(() => {
       execution.replacing = undefined;
     });
     await execution.replacing;
+    if (!execution.handle) await this.reconcileSession(execution, now);
   }
 
   private async poll(): Promise<void> {

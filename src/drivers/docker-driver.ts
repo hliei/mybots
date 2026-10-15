@@ -231,10 +231,10 @@ export class DockerDriver implements ObservingSessionDriver {
           await execute("docker", ["stop", "--time", "5", name], { timeout: 15000 });
           await execute("docker", ["rm", name], { timeout: 10000 });
           clearMailboxLocks(material.directory);
-        } catch {
-          throw new Error("Docker session cleanup failed");
-        } finally {
           signal.removeEventListener("abort", onAbort);
+        } catch {
+          stopping = undefined;
+          throw new Error("Docker session cleanup failed");
         }
       })());
     signal.addEventListener("abort", onAbort, { once: true });
