@@ -1,24 +1,115 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 
-for (const [entry, command] of [
-  ["cli", "cli"],
-  ["index", "host"],
-  ["server", "bot"],
+for (const [command, args, usage] of [
+  [process.execPath, ["packages/host/dist/cli/client.js", "--help"], "Usage: mbt"],
+  ["npm", ["start", "--", "--help"], "Usage: npm start"],
 ]) {
-  const result = spawnSync(process.execPath, [`dist/${entry}.js`, "--help"], {
+  const result = spawnSync(command, args, {
     cwd: projectRoot,
+    env: { ...process.env, NODE_OPTIONS: "--no-strip-types" },
     encoding: "utf8",
     timeout: 5000,
   });
 
   if (result.error) throw result.error;
-  assert.equal(result.status, 0, `${command} startup failed: ${result.stderr}`);
+  assert.equal(result.status, 0, `Startup failed: ${result.stderr}`);
   assert.equal(result.stderr, "");
-  assert.ok(result.stdout.includes(`Usage: npm run start:${command}`));
+  assert.ok(result.stdout.includes(usage));
+}
+
+// Exercise the built composition entry, including listener ownership and shutdown.
+const root = await mkdtemp(join(tmpdir(), "mybots-built-startup-"));
+let child;
+let exited;
+try {
+  const settings = JSON.parse(
+    await readFile(new URL("../examples/host/host.json", import.meta.url), "utf8"),
+  );
+  settings.websocket.port = 0;
+  await writeFile(join(root, "host.json"), JSON.stringify(settings));
+  child = spawn(
+    process.execPath,
+    ["--no-strip-types", "packages/host/dist/index.js", "--root", root],
+    {
+      cwd: projectRoot,
+      env: { ...process.env, NODE_OPTIONS: "" },
+      stdio: "pipe",
+    },
+  );
+  let stderr = "";
+  child.stderr.setEncoding("utf8").on("data", (chunk) => {
+    stderr += chunk;
+  });
+  exited = new Promise((resolve, reject) => {
+    child.once("close", resolve);
+    child.once("error", reject);
+  });
+  const timeout = setTimeout(() => child.kill("SIGKILL"), 5000);
+  try {
+    const listening = new Promise((resolve) => {
+      let stdout = "";
+      child.stdout.setEncoding("utf8").on("data", (chunk) => {
+        stdout += chunk;
+        if (stdout.includes("Mybots host listening")) resolve();
+      });
+    });
+    await Promise.race([
+      listening,
+      exited.then(() => {
+        throw new Error(`Built host stopped before listening: ${stderr}`);
+      }),
+    ]);
+    assert.equal((await stat(join(root, "data", "cli.sock"))).mode & 0o777, 0o600);
+    child.kill("SIGTERM");
+    assert.equal(await exited, 0, `Built host shutdown failed: ${stderr}`);
+    assert.equal(stderr, "");
+    for (const file of ["cli.sock", "host.lock"])
+      await assert.rejects(stat(join(root, "data", file)), { code: "ENOENT" });
+  } finally {
+    clearTimeout(timeout);
+  }
+} finally {
+  if (child && child.exitCode === null) child.kill("SIGKILL");
+  await exited;
+  await rm(root, { recursive: true, force: true });
+}
+
+// The root entry must remain usable without loading either native SQLite driver.
+for (const source of [false, true]) {
+  const result = spawnSync(
+    process.execPath,
+    [
+      ...(source ? ["--conditions=mybots-source"] : ["--no-strip-types"]),
+      "--input-type=module",
+      "-e",
+      `import assert from "node:assert/strict";
+       import { registerHooks } from "node:module";
+       registerHooks({ resolve(specifier, context, nextResolve) {
+         assert.ok(!["node:sqlite", "bun:sqlite"].includes(specifier), "SQLite imported by root entry");
+         return nextResolve(specifier, context);
+       }});
+       const expected = ${source ? '"/src/index.ts"' : '"/dist/index.js"'};
+       assert.ok(import.meta.resolve("@mybots/mailbox").endsWith(expected));
+       const mailbox = await import("@mybots/mailbox");
+       assert.equal(typeof mailbox.clearMailboxLocks, "function");`,
+    ],
+    {
+      cwd: projectRoot,
+      env: { ...process.env, NODE_OPTIONS: "" },
+      encoding: "utf8",
+      timeout: 5000,
+    },
+  );
+  if (result.error) throw result.error;
+  assert.equal(result.status, 0, `Mailbox package boundary failed: ${result.stderr}`);
+  assert.equal(result.stderr, "");
 }
 
 const runner = spawnSync(process.execPath, ["scripts/pi-session-demo.mjs"], {
@@ -31,7 +122,7 @@ assert.equal(runner.status, 0, `Pi runner demo failed: ${runner.stderr}`);
 assert.equal(runner.stderr, "");
 assert.ok(runner.stdout.includes("Workspace tool effect and selected-session reopening passed."));
 
-const isolatedRunner = spawnSync(process.execPath, ["container/agent-runner/dist/index.js"], {
+const isolatedRunner = spawnSync(process.execPath, ["packages/agent-runner/dist/index.js"], {
   cwd: projectRoot,
   encoding: "utf8",
   timeout: 5000,
@@ -52,10 +143,10 @@ assert.equal(host.status, 0, `Host CLI demo failed: ${host.stderr}`);
 assert.equal(host.stderr, "");
 assert.ok(host.stdout.includes("Persistent host routing, CLI/WebSocket conversations"));
 
-for (const entry of ["index", "cli"]) {
+for (const entry of ["index", "cli/client"]) {
   const failure = spawnSync(
     process.execPath,
-    [`dist/${entry}.js`, "--root", "/__mybots_missing_host_root__"],
+    [`packages/host/dist/${entry}.js`, "--root", "/__mybots_missing_host_root__"],
     {
       cwd: projectRoot,
       encoding: "utf8",
@@ -67,8 +158,8 @@ for (const entry of ["index", "cli"]) {
   assert.equal(failure.stdout, "");
   assert.ok(
     failure.stderr.includes(
-      entry === "index" ? "Invalid host configuration" : "start the host first",
+      entry !== "cli/client" ? "Invalid host configuration" : "start the host first",
     ),
   );
 }
-console.log("Host, CLI, bot, Pi provider and isolated runner startup smoke checks passed.");
+console.log("Host, CLI, Pi provider and isolated runner startup smoke checks passed.");

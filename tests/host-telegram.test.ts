@@ -4,16 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
-import { TelegramChannel, type TelegramDestination } from "../src/channels/telegram.ts";
+import {
+  TelegramChannel,
+  type TelegramDestination,
+} from "../packages/host/src/channels/telegram.ts";
 import {
   createTelegramApi,
   TELEGRAM_CHUNK_LIMIT,
   type TelegramApi,
   type TelegramUpdate,
-} from "../src/channels/telegram-api.ts";
-import { loadHostSettings } from "../src/config/host.ts";
-import { Host, type HostConfiguration } from "../src/host.ts";
-import { runHost } from "../src/index.ts";
+} from "../packages/host/src/channels/telegram-api.ts";
+import { loadHostSettings } from "../packages/host/src/config/host.ts";
+import { Host, type HostConfiguration } from "../packages/host/src/host.ts";
+import { runHost } from "../packages/host/src/index.ts";
 import { waitForCheckpoint } from "./checkpoint.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 
@@ -131,6 +134,11 @@ it("keeps the Bot API token out of runner material and shared resources", async 
     ]),
   );
   expect(requests.some((url) => url.includes(token))).toBe(true);
+  expect(JSON.stringify(await host.inspect(accepted?.sessionId ?? ""))).not.toContain(token);
+  await channel.stop();
+  channel = undefined;
+  await host.stop();
+  host = undefined;
   const visible = [
     ...(await filesUnder(join(root, "data"))),
     ...(await filesUnder(join(root, "groups"))),
@@ -139,7 +147,6 @@ it("keeps the Bot API token out of runner material and shared resources", async 
   expect(visible.some((file) => file.includes(".context"))).toBe(true);
   for (const file of visible)
     expect(await readFile(file, "latin1"), `${file} must not hold the token`).not.toContain(token);
-  expect(JSON.stringify(await host.inspect(accepted?.sessionId ?? ""))).not.toContain(token);
 });
 
 it("keeps Telegram and CLI conversations separate within one shared workspace across restart", async () => {

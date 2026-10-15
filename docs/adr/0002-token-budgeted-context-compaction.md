@@ -1,7 +1,15 @@
 # Token-budgeted context compaction
 
 Status: accepted
-Implementation: delivered (manual and automatic compaction, context reporting, long-turn prefix summaries, and incremental summary updates)
+Historical implementation: delivered (manual and automatic compaction, context reporting, long-turn prefix summaries, and incremental summary updates)
+
+Implementation note: the embedded execution, configuration, conversation and
+completion/delivery mechanisms described below are historical and have been
+retired. Current ownership and behavior are defined by ADRs
+[0006](0006-sdk-managed-agent-execution.md),
+[0007](0007-shared-agent-workspace.md) and
+[0008](0008-mailbox-completion-and-recovery.md). Use
+[host runtime](../host-runtime.md) for current setup and interfaces.
 
 Long conversations need to fit the model's input budget while retaining recent
 work and valid tool exchanges. Compaction replaces older active context with an

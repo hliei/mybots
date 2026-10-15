@@ -3,9 +3,9 @@
 The container runner consumes persisted input and produces a persisted reply
 through directional SQLite mailboxes. `provisionSession` prepares the selected
 Agent session; `DockerDriver.start` launches its Pi runner with a `OneCliGateway`.
-The persistent host uses these production boundaries for its CLI sessions.
+The persistent host uses these boundaries for CLI, Telegram and WebSocket sessions.
 See [host runtime](host-runtime.md) for entity routing, startup and the local
-socket client. The bot remains on its embedded runtime until channel integration.
+socket client. `packages/host/src/index.ts` composes all host-side channel services.
 
 ## Runtime and configuration
 
@@ -24,12 +24,38 @@ uses a static `node:sqlite` import, and `@mybots/mailbox/bun` uses a static
 without loading either SQLite driver. Both runtime entries share the schema,
 mailbox operations and per-database concurrency protection.
 
-The runner declares Bun 1.4.0 and pins `@types/bun` 1.4.0 as a development
-dependency. Only its TypeScript project enables `types: ["bun"]`; the host keeps
-`types: ["node"]` and excludes the Bun entry from its source discovery and build.
-Host compilation emits the Node entry and shared mailbox code alongside host
-output. The container executes TypeScript source with Bun; npm installs its
-runtime dependencies, while the image supplies Bun and its built-in SQLite.
+## Mailbox package resolution
+
+Both host and runner depend on `@mybots/mailbox` by package name; no consumer
+imports mailbox internals. The root entry and explicit `/node` and `/bun` entries
+use the same export arrangement:
+
+| Consumer | Export selection | Files |
+| --- | --- | --- |
+| TypeScript checking and compilation | `types` | `packages/mailbox/src/*.ts` |
+| Source host and offline tests | `mybots-source` | `packages/mailbox/src/*.ts` |
+| Built host and Node demos | default | `packages/mailbox/dist/*.js` |
+| Production Bun runner | `mybots-source`, explicit `/bun` | `packages/mailbox/src/*.ts` |
+
+`npm run dev` passes `--conditions=mybots-source` to Node. Vitest selects the
+same condition and passes it to spawned source processes through `NODE_OPTIONS`.
+The container passes the condition directly to Bun. The source CLI and `bin/mbt`
+need no condition because they depend only on Node built-ins and CLI modules.
+No global resolver hooks or TypeScript path aliases are used.
+
+The root build cleans output and compiles mailbox, host and runner in workspace
+order. Each package emits only its own source into its own `dist/`; package imports
+remain package imports. The mailbox's `types` entries let clean-checkout type
+checking and compilation read source without requiring generated declarations.
+The host project enables Node types and never imports the Bun entry; mailbox and
+runner projects pin `@types/bun` 1.4.0 for their Bun API checks. A Node smoke check
+also verifies that the Bun entry fails instead of falling back to Node SQLite.
+
+The production image installs only runner production dependencies from the root
+lockfile. It copies `packages/agent-runner` and `packages/mailbox` source into the
+same workspace paths, preserves npm's package symlinks, and runs
+`/app/packages/agent-runner/src/index.ts` with Bun 1.4.0. Host source, host-only
+dependencies, repository tools and compiled artifacts stay out of that image.
 See [Bun TypeScript definitions](https://bun.sh/docs/typescript) and
 [SQLite](https://bun.sh/docs/runtime/sqlite) for the native API contracts.
 

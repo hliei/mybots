@@ -1,10 +1,10 @@
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { OutboundMessage } from "@mybots/mailbox";
 import { afterEach, expect, it, vi } from "vitest";
-import { HostStore } from "../src/db/index.ts";
-import { Host, type HostConfiguration } from "../src/host.ts";
-import type { OutboundMessage } from "../src/mailbox/types.ts";
+import { HostStore } from "../packages/host/src/db/index.ts";
+import { Host, type HostConfiguration } from "../packages/host/src/host.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 
 const configuration: HostConfiguration = {

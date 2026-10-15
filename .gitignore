@@ -11,15 +11,15 @@
 .DS_Store
 
 # Node.js dependencies, build output, and test reports.
-/node_modules/
+node_modules/
 /dist/
 /coverage/
 
 # Local application state.
 /workspace/
 
-# Agent runner build output.
-/container/agent-runner/dist/
+# Workspace build output.
+/packages/*/dist/
 
 # Host state and shared Agent material.
 /data/

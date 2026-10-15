@@ -2,7 +2,8 @@
 
 Status: accepted
 Implementation: Pi runner, isolated execution and persistent host/CLI delivered;
-Agent resources, SDK compaction and reset delivered; bot channel cutover planned
+Agent resources, SDK compaction, reset and all entry-point cutovers delivered;
+custom execution/context engine retired
 
 Agent execution will move into isolated session containers, with the host
 responsible for channel routing, operational message persistence, container
@@ -27,11 +28,10 @@ SDK requirements and concrete compatibility or maintenance costs can justify
 adaptations; record their reasons in local planning. Existing schemas and paths
 are reusable where they fit, but preserving them is not a design constraint.
 
-This is the planned replacement for the custom execution and context ownership
+This replaces for the custom execution and context ownership
 in ADRs [0001](0001-agent-runtime-and-data-contracts.md),
 [0002](0002-token-budgeted-context-compaction.md), and
-[0004](0004-persisted-active-context.md). Those records still describe delivered
-behavior until the transition. Completion and delivery persistence across the
+[0004](0004-persisted-active-context.md). Those records preserve the superseded implementation history. Completion and delivery persistence across the
 SDK boundary follow [ADR 0008](0008-mailbox-completion-and-recovery.md), replacing
 the combined completion record from ADRs 0004 and
 [0005](0005-durable-outbound-delivery.md).

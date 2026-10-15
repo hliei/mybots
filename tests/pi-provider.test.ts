@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { PiProvider } from "../container/agent-runner/src/providers/pi.ts";
-import type { ProviderEvent } from "../container/agent-runner/src/providers/types.ts";
+import { PiProvider } from "../packages/agent-runner/src/providers/pi.ts";
+import type { ProviderEvent } from "../packages/agent-runner/src/providers/types.ts";
 import { waitForCheckpoint } from "./checkpoint.ts";
 import { startPiService } from "./pi-fixture.ts";
 

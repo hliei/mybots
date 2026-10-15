@@ -1,8 +1,8 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { HostMailbox, initializeMailbox, RunnerMailbox } from "@mybots/mailbox/node";
 import { afterEach, expect, it, vi } from "vitest";
-import { HostMailbox, initializeMailbox, RunnerMailbox } from "../src/mailbox/node.ts";
 import {
   CLAIM_STALL_MS,
   decideStallAction,
@@ -10,7 +10,7 @@ import {
   RECOVERY_WAIT_SECONDS,
   recoverAbandonedClaims,
   recoveryWaitSeconds,
-} from "../src/reconcile-session.ts";
+} from "../packages/host/src/reconcile-session.ts";
 
 const directories: string[] = [];
 afterEach(async () => {

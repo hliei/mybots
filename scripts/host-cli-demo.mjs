@@ -6,9 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
-import { CliChannel } from "../dist/channels/cli.js";
-import { WebSocketChannel } from "../dist/channels/websocket.js";
-import { Host } from "../dist/host.js";
+import { WebSocketChannel } from "../packages/host/dist/channels/websocket.js";
+import { CliChannel } from "../packages/host/dist/cli/socket-server.js";
+import { Host } from "../packages/host/dist/host.js";
 import { MailboxDriver } from "../tests/host-fixture.ts";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -95,7 +95,7 @@ function waitFor(messages, predicate) {
   });
 }
 async function chat(text) {
-  const child = spawn(process.execPath, ["dist/cli.js", "--root", root], {
+  const child = spawn(process.execPath, ["bin/mbt", "--root", root], {
     cwd: projectRoot,
     stdio: "pipe",
   });

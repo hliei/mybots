@@ -1,15 +1,15 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
+import type { InboundMessage } from "@mybots/mailbox";
+import { RunnerMailbox } from "@mybots/mailbox/node";
 import type {
   ObservingSessionDriver,
   SessionDriver,
   SessionHandle,
   SessionMaterial,
   SessionObservation,
-} from "../src/drivers/types.ts";
-import { RunnerMailbox } from "../src/mailbox/node.ts";
-import type { InboundMessage } from "../src/mailbox/types.ts";
+} from "../packages/host/src/drivers/types.ts";
 
 /** External execution boundary: this fixture uses only the runner's mailbox API. */
 export class MailboxDriver implements SessionDriver, ObservingSessionDriver {

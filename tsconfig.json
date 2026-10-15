@@ -11,6 +11,5 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"],
-  "exclude": ["src/mailbox/bun.ts"]
+  "include": ["tests/**/*.ts", "vitest.config.ts"]
 }

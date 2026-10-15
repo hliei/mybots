@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
-import { provisionSession } from "../src/container-runner.ts";
-import { DockerDriver } from "../src/drivers/docker-driver.ts";
+import { provisionSession } from "../packages/host/src/container-runner.ts";
+import { DockerDriver } from "../packages/host/src/drivers/docker-driver.ts";
 
 test("an unavailable gateway fails before any session runtime is launched", async () => {
   const root = await mkdtemp(join(tmpdir(), "mybots-driver-"));

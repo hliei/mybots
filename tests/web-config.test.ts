@@ -2,18 +2,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { resolveWebTools, validateAgentResources, validateWebConfiguration } from "@mybots/mailbox";
 import { expect, test } from "vitest";
-import { validateHostConfiguration } from "../src/config/host.ts";
-import { HostStore } from "../src/db/index.ts";
-import { schema } from "../src/db/migrations/001-initial.ts";
-import { resourceSchema } from "../src/db/migrations/002-agent-resources.ts";
-import { deliveryAttemptSchema } from "../src/db/migrations/003-delivery-attempts.ts";
-import { recoverySchema } from "../src/db/migrations/004-session-recovery.ts";
-import {
-  resolveWebTools,
-  validateAgentResources,
-  validateWebConfiguration,
-} from "../src/mailbox/index.ts";
+import { validateHostConfiguration } from "../packages/host/src/config/host.ts";
+import { HostStore } from "../packages/host/src/db/index.ts";
+import { schema } from "../packages/host/src/db/migrations/001-initial.ts";
+import { resourceSchema } from "../packages/host/src/db/migrations/002-agent-resources.ts";
+import { deliveryAttemptSchema } from "../packages/host/src/db/migrations/003-delivery-attempts.ts";
+import { recoverySchema } from "../packages/host/src/db/migrations/004-session-recovery.ts";
 
 test("Agent resource selection includes the configured web tool names", () => {
   expect(validateAgentResources({ tools: ["read", "web_search", "fetch_content"] })).toEqual({

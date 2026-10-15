@@ -1,7 +1,7 @@
 # Web search and content fetching
 
 Status: accepted
-Implementation: delivered
+Implementation: delivered as Pi custom tools; embedded dispatch retired
 
 The web tools expose `web_search` and `fetch_content`, with
 explicit provider selection and bounded output. The design supersedes the
@@ -9,7 +9,16 @@ web-tool direction in [ADR 0001](0001-agent-runtime-and-data-contracts.md).
 The contracts below describe the delivered replacement. The original web
 contracts in ADR 0001 remain a historical record.
 
-## Accepted direction
+## Current execution ownership
+
+The argument/result and extraction contracts below remain implemented in
+`packages/agent-runner/src/tools/web.ts`. Pi owns schema validation, tool dispatch
+and model continuation. Configuration uses `agent.resources` and `agent.web` in
+`host.json`; search credentials stay gateway-owned. The original module placement,
+Toolbox and YAML configuration described below are historical and have been
+retired by [ADR 0006](0006-sdk-managed-agent-execution.md).
+
+## Original accepted direction
 
 Search supports SerpApi and Brave API adapters. Workspace configuration chooses
 one provider; the tool does not discover providers or switch to another provider
@@ -145,9 +154,7 @@ provider and endpoint or enables content fetching. Search requests use the
 gateway proxy with a placeholder credential; the real provider credential stays
 gateway-owned and is scoped to the configured endpoint hostname. Content
 fetching and HTML extraction execute in the container under the bounded request
-and response limits above. The embedded-runtime `web_search`/`fetch_content`
-configuration and delivery remain unchanged until the runtime transition retires
-them.
+and response limits above. The embedded-runtime configuration and dispatch have been retired.
 
 ## API and library documentation
 

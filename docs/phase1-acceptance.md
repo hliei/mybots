@@ -1,103 +1,10 @@
-# Phase 1 acceptance
+# Historical embedded-runtime acceptance
 
-This record preserves the earlier acceptance scope and dated results. Current
-runtime checks and the outstanding Telegram service gate are documented in
-[runtime acceptance](runtime-acceptance.md). The commands and scenario descriptions
-below use the current append-only compaction contract; historical evidence is
-retained under its original dates.
-
-Phase 1 includes the shared Agent, CLI conversations and inspection commands,
-DeepSeek thinking/tool continuation, local tools, Skills, append-only JSONL
-history, manual/automatic compaction, explicit-provider search and HTTP content
-fetching. The bot entry point was outside this Phase 1 acceptance; later-phase
-channels, routing, scheduling and long-term memory also remain outside it.
-
-Real-service acceptance completed on October 13, 2026: all four live cases
-passed with DeepSeek and SerpApi. Brave remains covered by offline tests only.
-The final successful run is recorded below alongside earlier failed checkpoints.
-
-## Offline verification
-
-Run `npm run verify` with Node.js 24.21.0: formatting/lint, type checking, the
-ordinary offline suite, compilation, and executable CLI/bot startup checks.
-Normal Vitest discovery explicitly excludes `tests/live/`, including watching.
-Credentials do not change ordinary test behavior.
-
-The [data contract fixtures](../tests/fixtures/contracts/README.md)
-cover Workspace, Agent, Skill, message and index contracts. Agent/CLI tests also
-cover tools, inspection without model calls, ordered results, thinking on/off,
-saved reasoning and new-reader history recovery. Compaction tests cover automatic
-thresholds, incremental summaries, long tool turns and atomic failure/cancellation.
-Web tests cover both adapters, HTML/Markdown/plain text, Unicode pagination,
-partial failures, deadlines, body limits and response cleanup on cancellation.
-
-## Separate live acceptance
-
-Configure the source Workspace and its selected Agent's DeepSeek credentials
-as described in the [README](../README.md). Configure `web_search` with an explicit
-Brave or SerpApi provider and its key. Then run:
-
-```sh
-MYBOTS_ACCEPTANCE_WORKSPACE=/absolute/path/to/workspace npm run test:live -- tests/live/phase1.test.ts
-```
-
-The source defaults to `./workspace`. Effective model settings, including Agent
-overrides, and selected search settings are copied to fresh temporary Workspaces.
-Source instructions, Skills and history are not used. Temporary configuration
-uses mode 0600; all temporary files are removed in cleanup. Do not publish raw
-configuration or history. Acceptance forces thinking on, an 8,192-token output
-allowance and a 100,000-token context budget for these cases only.
-
-1. Recall a fact across turns, then load a Skill and execute `write`, `edit`,
-   `read` and a fixed `printf` shell command. Check artifacts, replies, call/result
-   IDs and original saved reasoning through a fresh reader.
-2. Search for HTTP Semantics through the selected adapter, fetch the HTTP Working
-   Group source from the returned results, and continue the model answer. Require
-   nonempty sources and readable fetched text. This known public source avoids
-   making acceptance depend on the highest-ranked mirror's availability. Print
-   the exercised provider; untested adapters gain no live coverage claim.
-3. Fetch RFC 9110 from the RFC Editor, then fetch its next 400-character chunk
-   through the Agent. Check readable text, offsets, URL metadata, history and
-   model continuation.
-4. Send three archive turns exceeding the recent-context retention target,
-   request a real manual summary, restart the Agent and recall a fact found only
-   in the removed prefix. Check changed active context, an unchanged original log
-   prefix/index, one appended compaction record, saved context/ID reuse after
-   restart and subsequent append-only continuation.
-
-Cases run sequentially with four-minute cancellation deadlines and five-minute
-test timeouts; existing provider/tool deadlines still apply. Cleanup runs after
-failure as well as success. Successful command exit provides completed-request
-cleanup evidence; offline stalled-body/cancellation tests cover failure paths
-that a successful public request cannot prove.
-
-Missing configuration or failed checks fail acceptance rather than become passing
-skips. Focused runs, such as `npm run test:live -- -t "compacts"`, do not establish
-complete acceptance. Assertions check contracts and markers, not exact model
-wording. Logs print model/provider names and reasoning lengths, not keys or
-reasoning text. Empty reasoning strings on individual provider rounds are valid;
-the conversation case additionally requires some nonempty saved reasoning.
-
-## Data contracts and compatibility guarantees
-
-The delivered runtime, data formats, and tool behavior are covered as follows.
-
-| Area | Delivered contract | Decision and validation |
-| --- | --- | --- |
-| Runtime/provider | TypeScript/Node.js; DeepSeek is the sole initial provider, default `deepseek-flash` | [ADR 0001](adr/0001-agent-runtime-and-data-contracts.md); controlled requests and live effective settings |
-| Default paths | `.agents/bots` and `.agents/skills`; explicit `agents_path` and `skills_path` override defaults | ADR 0001; explicit-path fixtures |
-| Model settings | `thinking` defaults to true; `context_window` controls budgets without being sent to the API | ADRs 0001/0002; overrides and thinking on/off tests |
-| Messages | Optional original `reasoning_content`, including empty strings; absent values are never invented | ADR 0001; legacy fixtures and exact reasoning tests |
-| Unknown fields | Retain index extensions on rewrite; message files are append-only | ADR 0001; extension fixtures |
-| Skill inspection | Read discovered definitions through `SkillLoader`; inspection does not load context | ADR 0001; command/CLI tests |
-| Tool ordering | Execute multiple calls in order and preserve call/result pairing | README; ordered dependency tests |
-| Compaction | Incremental active-context summaries, reserve/usage budgets, UTF-8 estimates, safe tool boundaries, appended summary and retention boundary | [ADR 0002](adr/0002-token-budgeted-context-compaction.md), [ADR 0004](adr/0004-persisted-active-context.md); offline reconstruction and real summary/restart |
-| Web tools | `web_search`/`fetch_content` replace legacy names/configuration without aliases; explicit Brave/SerpApi choice | [ADR 0003](adr/0003-web-search-and-content-fetching.md); migration errors and both offline adapters |
-| Web content | Direct HTTP without JavaScript rendering; bounded JSON, Unicode pagination and refetching; chunks are not stable snapshots | ADR 0003 supersedes rendered-browser acceptance; extraction and pagination tests |
-| Dependencies | Native Node.js error wording and HTTP deadlines covering body consumption | ADRs 0001/0003 and README; errors, deadline and cleanup tests |
-
-No guarantee covers legacy web settings, thinking replay from records that never
-saved reasoning, or later-phase capabilities.
+This record preserves dated results for the retired embedded execution runtime.
+Its commands, settings, data contracts and counts below are historical evidence;
+the corresponding live harness has been retired. They do not establish acceptance
+of the current host/container deployment. Current checks and the separate pending
+DeepSeek/Telegram gate are described in [runtime acceptance](runtime-acceptance.md).
 
 ## Executed evidence
 

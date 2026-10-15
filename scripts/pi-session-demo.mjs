@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PiProvider } from "../container/agent-runner/dist/providers/pi.js";
+import { PiProvider } from "../packages/agent-runner/dist/providers/pi.js";
 import { startPiService } from "../tests/pi-fixture.ts";
 
 const root = await mkdtemp(join(tmpdir(), "mybots-pi-demo-"));
