@@ -14,6 +14,9 @@ import type {
 import { HostMailbox } from "./mailbox/node.ts";
 import type { AgentResources, OutboundMessage } from "./mailbox/types.ts";
 
+/** Total platform-delivery attempts for one outbound reply, including the first. */
+const MAX_DELIVERY_ATTEMPTS = 3;
+
 export interface HostConfiguration {
   /** Namespaced platform identities of the single personal owner, e.g. `cli:local` or `telegram:42`. */
   owners: string[];
@@ -289,6 +292,20 @@ export class Host {
         if (signal.aborted) break;
         if (execution.mailbox.deliveryStatus(message.id)) continue;
         const route = execution.route;
+        const attempt = this.store.deliveryAttempt(message.id);
+        if (attempt?.next_attempt_at && attempt.next_attempt_at > new Date().toISOString())
+          continue;
+        // A crash can persist the final attempt before its terminal state; do not send again.
+        if (attempt && attempt.attempts >= MAX_DELIVERY_ATTEMPTS) {
+          execution.mailbox.markDelivered(message.id, "failed");
+          this.store.clearDeliveryAttempt(message.id);
+          this.emit({
+            type: "failure",
+            sessionId: route.session.id,
+            error: "Channel delivery failed permanently",
+          });
+          continue;
+        }
         const input = execution.mailbox.inputs().find((input) => input.id === message.in_reply_to);
         if (
           !input ||
@@ -296,6 +313,7 @@ export class Host {
           message.platform_id !== input.platform_id ||
           message.thread_id !== input.thread_id
         ) {
+          this.store.clearDeliveryAttempt(message.id);
           execution.mailbox.markDelivered(message.id, "failed");
           this.emit({
             type: "failure",
@@ -305,6 +323,7 @@ export class Host {
           continue;
         }
         const channel = this.channels.get(this.channelKey(route.channel_type, route.instance));
+        // A destination whose channel is not attached yet is not a failed send.
         if (!channel) continue;
         try {
           await channel.deliver(message, signal, {
@@ -313,20 +332,31 @@ export class Host {
           });
           if (signal.aborted) break;
           execution.mailbox.markDelivered(message.id, "delivered");
+          this.store.clearDeliveryAttempt(message.id);
         } catch {
-          if (!signal.aborted) {
-            execution.mailbox.markDelivered(message.id, "failed");
-            this.emit({
-              type: "failure",
-              sessionId: route.session.id,
-              error: "Channel delivery failed",
-            });
-          }
+          if (signal.aborted) break;
+          this.recordDeliveryFailure(execution, message);
         }
       }
     } catch {
       if (!signal.aborted) this.emit({ type: "failure", error: "Session mailbox unavailable" });
     }
+  }
+
+  /** Count a failed platform attempt; exhaustion records explicit failed delivery. */
+  private recordDeliveryFailure(execution: SessionExecution, message: OutboundMessage): void {
+    const sessionId = execution.route.session.id;
+    const attempts = this.store.recordDeliveryAttempt({
+      messageId: message.id,
+      sessionId,
+      at: new Date().toISOString(),
+      nextAttemptAt: null,
+      error: "Channel delivery failed",
+    });
+    if (attempts < MAX_DELIVERY_ATTEMPTS) return;
+    execution.mailbox.markDelivered(message.id, "failed");
+    this.store.clearDeliveryAttempt(message.id);
+    this.emit({ type: "failure", sessionId, error: "Channel delivery failed permanently" });
   }
 
   private channelKey(channelType: string, instance: string): string {

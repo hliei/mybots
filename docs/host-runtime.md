@@ -125,10 +125,24 @@ The host mirrors terminal processing acknowledgements into inbound status and
 independently delivers persisted outbound rows to their original destination.
 `Host.inspect(sessionId)` reports input, output, continuation and delivery state.
 An output with a missing input correlation or changed reply address is rejected.
-Completion does not imply output persistence or delivery. Basic channel failure
-is terminal for this slice; retry accounting and interrupted-execution recovery
-are separate policies. Accepted loss windows are described in
-[ADR 0008](adr/0008-mailbox-completion-and-recovery.md).
+Completion does not imply output persistence or delivery.
+
+Each platform-delivery failure records a `delivery_attempts` row in
+`data/host.db`, keyed by the outbound message, so counts survive a host restart
+and are not per-process memory. A message gets at most three attempts (including
+the first); a successful send clears its attempt row and records terminal
+`delivered` state in the session's `inbound.db`. A third failed attempt records
+terminal `failed` state and clears the row, so an exhausted message is never
+presented as sent and is not retried by a later host instance. Attempts are
+independent of processing completion, and a failing destination only affects its
+own messages: later replies in the same session and other sessions keep
+delivering. The host does not block a whole session on an exhausted reply and
+keeps no chunk-count projection. A destination whose channel is not attached yet
+stays pending—no attempt is counted—and becomes eligible once its channel is
+available, including after restart. Delivery is still not exactly-once: when the
+platform accepts a send but the host stops before recording durable
+acknowledgement, a later instance can send the same reply again. Accepted loss
+windows are described in [ADR 0008](adr/0008-mailbox-completion-and-recovery.md).
 
 The CLI wire format is one JSON line each way: input `{"text":"hello"}` and
 reply `{"text":"answer"}`. The data directory is mode 0700 and socket is mode
