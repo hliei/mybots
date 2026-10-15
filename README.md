@@ -686,7 +686,7 @@ and `allowed_user_ids` are restart-only settings; edit them and restart the
 process.
 
 The Telegram Bot API is called directly over HTTPS; its request and response
-shapes stay in `src/bot/telegram-api.ts`, so no Telegram SDK dependency is added.
+shapes stay in `src/channels/telegram-api.ts`, so no Telegram SDK dependency is added.
 User and chat identifiers are carried as digit strings and sent back as strings,
 so routing, allowlist checks and delivery never depend on JavaScript numeric
 precision. A numeric identifier that cannot be represented exactly at the JSON
@@ -784,7 +784,10 @@ src/
 ├── index.ts               # Persistent host entry point
 ├── host.ts                # Routing, mailbox observation, session lifecycle and delivery
 ├── db/                    # Central SQLite entities and schema migrations
-├── channels/cli.ts        # Owner-local Unix socket listener
+├── channels/
+│   ├── cli.ts             # Owner-local Unix socket listener
+│   ├── telegram.ts        # Owner-only Telegram private-chat channel for the host
+│   └── telegram-api.ts    # Telegram Bot API request/response boundary
 ├── mailbox/               # Directional SQLite mailbox package
 ├── drivers/               # Session-driver contract and Docker execution
 ├── gateway-providers/     # OneCLI credential gateway boundary
@@ -821,8 +824,7 @@ src/
 │   └── protocol.ts        # Input-frame validation and event/error serialization
 └── bot/
     ├── startup.ts         # Bot arguments, shared runtime ownership, and shutdown
-    ├── telegram.ts        # Telegram channel lifecycle and reply transport
-    └── telegram-api.ts    # Telegram Bot API request/response boundary
+    └── telegram.ts        # Embedded-runtime Telegram channel lifecycle and reply transport
 ```
 
 The Agent supplies the available tool schemas to the provider. The provider
