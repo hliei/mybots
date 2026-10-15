@@ -21,15 +21,13 @@ export interface WebSocketChannelOptions {
   path?: string;
   /** Bounded wait for one client frame before that peer is dropped. */
   sendTimeoutMs?: number;
-  /** Pending observation frames allowed per peer before it is dropped. */
-  maxQueuedFrames?: number;
 }
 
 interface Peer {
   socket: WebSocket;
-  queue: Promise<void>;
-  queued: number;
-  handling: Promise<void>;
+  writes: Promise<void>;
+  pendingWrites: number;
+  inputs: Promise<void>;
   closed: boolean;
 }
 
@@ -120,7 +118,6 @@ export class WebSocketChannel {
   private readonly port: number;
   private readonly path: string;
   private readonly sendTimeoutMs: number;
-  private readonly maxQueuedFrames: number;
   private readonly peers = new Set<Peer>();
   private server: Server | undefined;
   private webSocketServer: WebSocketServer | undefined;
@@ -160,9 +157,6 @@ export class WebSocketChannel {
     const sendTimeoutMs = options.sendTimeoutMs ?? DEFAULT_SEND_TIMEOUT_MS;
     if (!Number.isSafeInteger(sendTimeoutMs) || sendTimeoutMs <= 0)
       throw new Error("WebSocket send timeout must be a positive integer");
-    const maxQueuedFrames = options.maxQueuedFrames ?? DEFAULT_MAX_QUEUED_FRAMES;
-    if (!Number.isSafeInteger(maxQueuedFrames) || maxQueuedFrames <= 0)
-      throw new Error("WebSocket queued-frame limit must be a positive integer");
     this.host = options.host;
     this.owner = options.configuration.owner;
     this.instance = [...instances][0];
@@ -172,7 +166,6 @@ export class WebSocketChannel {
     this.port = options.port;
     this.path = path;
     this.sendTimeoutMs = sendTimeoutMs;
-    this.maxQueuedFrames = maxQueuedFrames;
   }
 
   static async listen(options: WebSocketChannelOptions): Promise<WebSocketChannel> {
@@ -249,7 +242,7 @@ export class WebSocketChannel {
     });
     server.closeAllConnections();
     await Promise.all([webSocketClosed, serverClosed]);
-    await Promise.allSettled(peers.map((peer) => peer.queue));
+    await Promise.allSettled(peers.map((peer) => peer.writes));
   }
 
   private handleRequest(request: IncomingMessage, response: ServerResponse): void {
@@ -268,9 +261,9 @@ export class WebSocketChannel {
     }
     const peer: Peer = {
       socket,
-      queue: Promise.resolve(),
-      queued: 0,
-      handling: Promise.resolve(),
+      writes: Promise.resolve(),
+      pendingWrites: 0,
+      inputs: Promise.resolve(),
       closed: false,
     };
     this.peers.add(peer);
@@ -289,7 +282,7 @@ export class WebSocketChannel {
         return;
       }
       const raw = textFrame(data);
-      peer.handling = peer.handling.then(() => this.handleMessage(peer, raw));
+      peer.inputs = peer.inputs.then(() => this.handleMessage(peer, raw));
     });
   }
 
@@ -358,34 +351,36 @@ export class WebSocketChannel {
     const peers = [...this.peers];
     if (peers.length === 0) return;
     const payload = serializeOutbound(context.sessionId, context.destinationId, message);
-    const results = await Promise.allSettled(peers.map((peer) => this.dispatch(peer, payload)));
+    const results = await Promise.allSettled(
+      peers.map((peer) => this.dispatch(peer, payload, signal)),
+    );
     if (signal.aborted) return;
     if (!results.some((result) => result.status === "fulfilled"))
       throw new Error("WebSocket delivery failed");
   }
 
-  private dispatch(peer: Peer, payload: string): Promise<void> {
+  private dispatch(peer: Peer, payload: string, signal?: AbortSignal): Promise<void> {
     if (peer.closed || peer.socket.readyState !== WebSocket.OPEN) {
       this.drop(peer);
       return Promise.reject(new Error("WebSocket peer is not connected"));
     }
-    if (peer.queued >= this.maxQueuedFrames) {
+    if (peer.pendingWrites >= DEFAULT_MAX_QUEUED_FRAMES) {
       this.drop(peer);
       return Promise.reject(new Error("WebSocket peer is not consuming frames"));
     }
-    peer.queued += 1;
-    const result = peer.queue.catch(() => {}).then(() => this.write(peer, payload));
-    peer.queue = result
+    peer.pendingWrites += 1;
+    const result = peer.writes.catch(() => {}).then(() => this.write(peer, payload, signal));
+    peer.writes = result
       .catch(() => {
         this.drop(peer);
       })
       .finally(() => {
-        peer.queued -= 1;
+        peer.pendingWrites -= 1;
       });
     return result;
   }
 
-  private write(peer: Peer, payload: string): Promise<void> {
+  private write(peer: Peer, payload: string, signal?: AbortSignal): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       if (peer.closed || peer.socket.readyState !== WebSocket.OPEN) {
         reject(new Error("WebSocket peer is not connected"));
@@ -396,13 +391,20 @@ export class WebSocketChannel {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
         if (error) reject(error);
         else resolve();
       };
+      const abort = () => finish(new Error("WebSocket delivery cancelled"));
       const timer = setTimeout(
         () => finish(new Error("Client send timed out")),
         this.sendTimeoutMs,
       );
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) {
+        abort();
+        return;
+      }
       try {
         peer.socket.send(payload, (error) => finish(error ?? undefined));
       } catch (error) {

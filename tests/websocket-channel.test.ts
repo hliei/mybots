@@ -377,20 +377,23 @@ it("closes clients and admission within a bounded shutdown", async () => {
 });
 
 it("refuses a non-loopback bind and invalid options", async () => {
+  root = await realpath(await mkdtemp(join(tmpdir(), "mybots-ws-")));
+  host = await Host.start({ root, configuration, driver: new MailboxDriver() });
+  const running = host;
   await expect(
     WebSocketChannel.listen({
-      host: {} as Host,
+      host: running,
       configuration,
       bindHost: "0.0.0.0",
       port: 0,
     }),
   ).rejects.toThrow(/loopback/u);
   await expect(
-    WebSocketChannel.listen({ host: {} as Host, configuration, port: 0, sendTimeoutMs: 0 }),
+    WebSocketChannel.listen({ host: running, configuration, port: 0, sendTimeoutMs: 0 }),
   ).rejects.toThrow(/send timeout/u);
   await expect(
     WebSocketChannel.listen({
-      host: {} as Host,
+      host: running,
       configuration: {
         ...configuration,
         destinations: [
@@ -454,6 +457,31 @@ it("preserves the order of rapid inputs from one client", async () => {
   expect(outbounds.map((message) => message.in_reply_to)).toEqual(
     inbounds.map((message) => message.message_id),
   );
+});
+
+it("cancels in-flight WebSocket delivery promptly when the host stops", async () => {
+  root = await realpath(await mkdtemp(join(tmpdir(), "mybots-ws-")));
+  const driver = new MailboxDriver();
+  host = await Host.start({ root, configuration, driver });
+  channel = await WebSocketChannel.listen({
+    host,
+    configuration,
+    port: 0,
+    sendTimeoutMs: 5000,
+  });
+  const client = await openClient(channel.address);
+  client.socket.pause();
+  const emitted = Promise.withResolvers<void>();
+  host.observe((event) => {
+    if (event.type === "output") emitted.resolve();
+  });
+  await host.accept({ destinationId: "desktop", userId: "local:owner", text: "Held" });
+  await waitForCheckpoint(emitted.promise, "held WebSocket output");
+
+  const started = Date.now();
+  await host.stop({ timeoutMs: 1000 });
+  expect(Date.now() - started).toBeLessThan(1000);
+  host = undefined;
 });
 
 async function openClient(address: WebSocketChannelAddress): Promise<Client> {

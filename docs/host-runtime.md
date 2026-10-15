@@ -120,7 +120,11 @@ interface for configured `websocket` destinations:
 "websocket": { "host": "127.0.0.1", "port": 8787, "path": "/ws" }
 ```
 
-`host` must be a loopback address; this is not an Internet-facing endpoint. Omit
+`host` must be a loopback address; this is not an Internet-facing endpoint. The
+interface is owner-local by machine rather than by operating-system account: any
+local process that can reach the loopback port is trusted as the configured
+owner, matching the retained local WebSocket capability. Account isolation stays
+with the CLI's mode-0600 socket. Omit
 the section to run the host without it. Every configured `websocket` destination
 must share one channel instance; the interface serves them all and resolves input
 through the same central messaging-destination, Agent and session records as CLI.
@@ -136,8 +140,10 @@ A client sends one JSON text frame per input:
 `destination` must name a configured `websocket` destination. Invalid JSON, a
 wrong frame type, missing or blank destination/content, and an unconfigured
 destination produce an `error` frame on that connection and create no host work.
-Accepted input is ordinary persisted mailbox input; no parallel local routing
-store is created.
+An `error` frame is `{"type":"error","message"}`; it is connection-scoped and
+carries no correlation identifier, so a client that pipelines frames should not
+rely on matching one error to one submission. Accepted input is ordinary persisted
+mailbox input; no parallel local routing store is created.
 
 Every connected client observes live host envelopes: `inbound` for accepted input
 (`session_id`, `message_id`, `destination`, `channel_type`, `platform_id`,

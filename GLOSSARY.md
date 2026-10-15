@@ -37,9 +37,10 @@ A message requesting work in an Agent session.
 An Agent response produced for delivery to the session's destination.
 
 **WebSocket interface**:
-The local trusted control and observation endpoint that submits client input as
-WebSocket-sourced events and broadcasts every inbound and outbound event to
-connected clients.
+The owner-local trusted control and observation endpoint of the persistent host.
+It accepts validated client input for a configured WebSocket messaging destination,
+resolves it through the same Agent and Agent session records as other channels, and
+broadcasts live inbound, outbound, and failure envelopes to connected clients.
 
 **Conversation history**:
 The complete recorded sequence of messages in an Agent session.
