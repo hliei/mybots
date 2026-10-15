@@ -166,6 +166,14 @@ runner material, coherent `telegram` settings and entry-point start/stop. The
 contacts Telegram or uses a real token. Live Telegram acceptance remains part of
 the separate actual-service pass.
 
+`tests/websocket-channel.test.ts` binds the owner-local WebSocket channel to a
+real host, central store and per-session mailboxes with the controlled mailbox
+driver and actual local sockets. It verifies validated input and rejection,
+correlated inbound/outbound envelopes with destination meaning, separate
+WebSocket/CLI conversations sharing one workspace, passive observation of another
+channel's undelivered output, slow-peer dropping, reconnect without event replay,
+host failure envelopes, loopback-only binding and bounded shutdown.
+
 ## Agent resources and conversation controls
 
 `tests/pi-resources.test.ts` uses the real SDK with a controlled streaming service

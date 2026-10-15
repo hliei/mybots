@@ -101,6 +101,30 @@ export interface HostSettings {
   gateway: { url: string; proxyHost: string };
   cliDestinationId: string;
   telegram?: TelegramSettings;
+  websocket?: { host: string; port: number; path: string };
+}
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+function websocketSettings(
+  value: unknown,
+  configuration: HostConfiguration,
+): { host: string; port: number; path: string } {
+  const section = object(value);
+  const host = text(section.host);
+  if (!LOOPBACK_HOSTS.has(host)) throw new Error();
+  const port = section.port;
+  if (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65535)
+    throw new Error();
+  const path = section.path === undefined ? "/ws" : text(section.path);
+  if (!path.startsWith("/") || /\s/u.test(path)) throw new Error();
+  const destinations = configuration.destinations.filter(
+    (destination) => destination.channelType === "websocket",
+  );
+  if (destinations.length === 0) throw new Error();
+  if (new Set(destinations.map((destination) => destination.instance)).size !== 1)
+    throw new Error();
+  return { host, port, path };
 }
 
 export async function loadHostSettings(file: string): Promise<HostSettings> {
@@ -149,6 +173,9 @@ export async function loadHostSettings(file: string): Promise<HostSettings> {
       network: name(container.network),
       gateway: { url: url.href, proxyHost },
       cliDestinationId,
+      ...(source.websocket === undefined
+        ? {}
+        : { websocket: websocketSettings(source.websocket, configuration) }),
       ...(telegram ? { telegram } : {}),
     };
   } catch {

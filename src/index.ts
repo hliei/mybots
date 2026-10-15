@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import { CliChannel } from "./channels/cli.ts";
 import { TelegramChannel, type TelegramDestination } from "./channels/telegram.ts";
 import { createTelegramApi, type TelegramApi } from "./channels/telegram-api.ts";
+import { WebSocketChannel } from "./channels/websocket.ts";
 import { loadHostSettings } from "./config/host.ts";
 import { DockerDriver } from "./drivers/docker-driver.ts";
 import { OneCliGateway } from "./gateway-providers/onecli.ts";
@@ -25,6 +26,7 @@ export async function runHost(
 ): Promise<number> {
   let host: Host | undefined;
   let cli: CliChannel | undefined;
+  let webSocket: WebSocketChannel | undefined;
   let telegram: TelegramChannel | undefined;
   let status = 0;
   const controller = new AbortController();
@@ -90,6 +92,15 @@ export async function runHost(
       owner: cliOwner,
       instance: cliDestination?.instance,
     });
+    if (settings.websocket) {
+      webSocket = await WebSocketChannel.listen({
+        host,
+        configuration: settings.configuration,
+        bindHost: settings.websocket.host,
+        port: settings.websocket.port,
+        path: settings.websocket.path,
+      });
+    }
     host.observe((event) => {
       if (event.type === "failure") console.error(`Error: ${event.error}`);
     });
@@ -107,6 +118,12 @@ export async function runHost(
       });
     }
     console.log(`Mybots host listening on ${join(root, "data", "cli.sock")}`);
+    if (webSocket) {
+      const address = webSocket.address;
+      console.log(
+        `Local WebSocket interface on ws://${address.host}:${address.port}${address.path}`,
+      );
+    }
     if (telegram) console.log(`Telegram bot${botName} is polling.`);
     await finished.promise;
   } catch (error) {
@@ -115,7 +132,12 @@ export async function runHost(
       status = 1;
     }
   } finally {
-    for (const cleanup of [() => cli?.close(), () => telegram?.stop(), () => host?.stop()]) {
+    for (const cleanup of [
+      () => webSocket?.close(),
+      () => cli?.close(),
+      () => telegram?.stop(),
+      () => host?.stop(),
+    ]) {
       try {
         await cleanup();
       } catch (error) {

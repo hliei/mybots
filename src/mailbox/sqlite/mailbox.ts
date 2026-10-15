@@ -40,8 +40,8 @@ export function createMailbox(withDatabase: WithDatabase) {
 
     submit(
       message: { id: string; content: string; kind?: InboundMessage["kind"] } & Routing,
-    ): void {
-      withDatabase(this.directory, "inbound", false, (db) => {
+    ): InboundMessage {
+      return withDatabase(this.directory, "inbound", false, (db) => {
         db.run(
           `INSERT INTO messages_in (id, seq, kind, timestamp, platform_id, channel_type, thread_id, content)
         VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 2 FROM messages_in), ?, ?, ?, ?, ?, ?)`,
@@ -59,6 +59,7 @@ export function createMailbox(withDatabase: WithDatabase) {
           message.platform_id,
           message.thread_id,
         );
+        return db.get("SELECT * FROM messages_in WHERE id = ?", message.id) as InboundMessage;
       });
     }
 

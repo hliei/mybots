@@ -31,12 +31,28 @@ export interface HostConfiguration {
 export interface HostChannel {
   channelType: string;
   instance: string;
-  deliver(message: OutboundMessage, signal: AbortSignal): Promise<void>;
+  deliver(message: OutboundMessage, signal: AbortSignal, context: ChannelDelivery): Promise<void>;
+}
+
+/** Routing identity of one outbound delivery, independent of the mailbox row. */
+export interface ChannelDelivery {
+  sessionId: string;
+  destinationId: string;
 }
 
 export type HostEvent =
-  | { type: "input"; sessionId: string; messageId: string; destinationId: string }
-  | { type: "output"; sessionId: string; message: OutboundMessage }
+  | {
+      type: "input";
+      sessionId: string;
+      messageId: string;
+      destinationId: string;
+      channelType: string;
+      platformId: string;
+      threadId: string | null;
+      content: string;
+      timestamp: string;
+    }
+  | { type: "output"; sessionId: string; destinationId: string; message: OutboundMessage }
   | { type: "failure"; sessionId?: string; error: string };
 
 interface SessionExecution {
@@ -57,6 +73,8 @@ export class Host {
   private readonly prepared = new Map<string, Promise<SessionExecution>>();
   private readonly channels = new Map<string, HostChannel>();
   private readonly observers = new Set<(event: HostEvent) => void>();
+  /** Highest outbound sequence already observed per session; seeded at startup. */
+  private readonly observed = new Map<string, number>();
   private polling?: Promise<void>;
   private stopping?: Promise<void>;
   private stopped = false;
@@ -97,6 +115,8 @@ export class Host {
       for (const session of host.store.sessions()) {
         const execution = await host.prepare(host.store.route(session));
         host.store.containerStatus(session.id, "stopped");
+        // Pre-existing outbound rows are delivered, not replayed as observations.
+        host.observed.set(session.id, execution.mailbox.outputs().at(-1)?.seq ?? 0);
         // Wake only unclaimed input. Abandoned processing recovery is a separate policy.
         const claimed = new Set(execution.mailbox.acknowledgements().map((ack) => ack.message_id));
         if (
@@ -162,7 +182,7 @@ export class Host {
     const execution = await this.prepare(route);
     if (this.stopped) throw new Error("Host is stopped");
     const messageId = randomUUID();
-    execution.mailbox.submit({
+    const message = execution.mailbox.submit({
       id: messageId,
       kind,
       content: input.text,
@@ -173,8 +193,13 @@ export class Host {
     this.emit({
       type: "input",
       sessionId: route.session.id,
-      messageId,
+      messageId: message.id,
       destinationId: input.destinationId,
+      channelType: message.channel_type,
+      platformId: message.platform_id,
+      threadId: message.thread_id,
+      content: message.content,
+      timestamp: message.timestamp,
     });
     this.wake(execution);
     return { sessionId: route.session.id, messageId };
@@ -232,6 +257,18 @@ export class Host {
           const execution = await pending;
           if (signal.aborted) break;
           execution.mailbox.syncAcknowledgements();
+          // Observe new rows even while an earlier channel delivery remains pending.
+          const route = execution.route;
+          for (const message of execution.mailbox.outputs()) {
+            if (message.seq <= (this.observed.get(route.session.id) ?? 0)) continue;
+            this.observed.set(route.session.id, message.seq);
+            this.emit({
+              type: "output",
+              sessionId: route.session.id,
+              destinationId: route.session.messaging_group_id,
+              message,
+            });
+          }
           execution.delivering ??= this.deliver(execution).finally(() => {
             execution.delivering = undefined;
           });
@@ -270,10 +307,12 @@ export class Host {
         const channel = this.channels.get(this.channelKey(route.channel_type, route.instance));
         if (!channel) continue;
         try {
-          await channel.deliver(message, signal);
+          await channel.deliver(message, signal, {
+            sessionId: route.session.id,
+            destinationId: route.session.messaging_group_id,
+          });
           if (signal.aborted) break;
           execution.mailbox.markDelivered(message.id, "delivered");
-          this.emit({ type: "output", sessionId: route.session.id, message });
         } catch {
           if (!signal.aborted) {
             execution.mailbox.markDelivered(message.id, "failed");

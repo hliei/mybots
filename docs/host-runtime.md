@@ -150,16 +150,71 @@ other sessions, mailbox records and shared working files are preserved; the save
 continuation selects only the new conversation on reconnect or host restart.
 Other slash input remains ordinary Agent text.
 
+## Local WebSocket interface
+
+The optional `websocket` section starts an owner-local control and observation
+interface for configured `websocket` destinations:
+
+```json
+"websocket": { "host": "127.0.0.1", "port": 8787, "path": "/ws" }
+```
+
+`host` must be a loopback address; this is not an Internet-facing endpoint. The
+interface is owner-local by machine rather than by operating-system account: any
+local process that can reach the loopback port is trusted as the configured
+owner, matching the retained local WebSocket capability. Account isolation stays
+with the CLI's mode-0600 socket. Omit
+the section to run the host without it. Every configured `websocket` destination
+must share one channel instance; the interface serves them all and resolves input
+through the same central messaging-destination, Agent and session records as CLI.
+A WebSocket destination therefore shares the Agent workspace and keeps its own
+persistent conversation.
+
+A client sends one JSON text frame per input:
+
+```json
+{ "type": "input", "destination": "desktop", "content": "hello" }
+```
+
+`destination` must name a configured `websocket` destination. Invalid JSON, a
+wrong frame type, missing or blank destination/content, and an unconfigured
+destination produce an `error` frame on that connection and create no host work.
+An `error` frame is `{"type":"error","message"}`; it is connection-scoped and
+carries no correlation identifier, so a client that pipelines frames should not
+rely on matching one error to one submission. Accepted input is ordinary persisted
+mailbox input; no parallel local routing store is created.
+
+Every connected client observes live host envelopes: `inbound` for accepted input
+(`session_id`, `message_id`, `destination`, `channel_type`, `platform_id`,
+`thread_id`, `content`, `timestamp`), `outbound` for a not-yet-delivered output
+(`message_id`, `in_reply_to`, `kind`, routing and `timestamp`), and `failure` for
+host failures. Observation is live and passive: it reports another channel's
+outbound row before that channel acknowledges delivery and never marks that row
+delivered or changes its reply destination. A WebSocket destination's own output
+is sent by the WebSocket sender, not the observation path. Each outbound row is
+observed at most once per host process; delivered events are not replayed to a
+reconnecting client, and a fresh host does not broadcast rows that already
+existed at startup.
+
+A slow or failed peer is bounded by the configured send timeout, is dropped, and
+does not delay other clients, observation or session execution. With no connected
+client, WebSocket delivery is a no-op: the outbound row remains persisted and is
+marked delivered without guaranteed replay, matching CLI. `WebSocketChannel.listen`
+and `close` own the listener and its clients; the host entry point closes the
+interface before stopping the host.
+
 ## Public lifecycle and verification
 
 `Host.start({ root, configuration, driver })`, `accept`, `sessions`, `inspect`,
 `reset({ destinationId, userId })`, `observe`, `attachChannel` and `stop` are the host boundary. The driver accepts
 session material and an abort signal and returns an awaited stop/exit handle.
 `CliChannel.listen` and `close` own the local listener and its connected sockets.
-`TelegramChannel.listen`, `start` and `stop` own host delivery and Bot API polling
-for one Telegram instance; `dispatch` routes a single normalized update.
-`runHost` starts the Telegram channel when `telegram` settings are present.
-Importing these modules starts no services. Observers cannot prevent persistence;
+`WebSocketChannel.listen` and `close` own the owner-local WebSocket listener, its
+clients and their bounded frames. `TelegramChannel.listen`, `start` and `stop` own
+host delivery and Bot API polling for one Telegram instance; `dispatch` routes a
+single normalized update. `runHost` starts the Telegram channel when `telegram`
+settings are present. Importing these modules starts no services. Observers cannot
+prevent persistence;
 channels must settle delivery on shutdown cancellation.
 
 `SIGINT`/`SIGTERM` closes the production CLI listener, aborts polling and delivery,

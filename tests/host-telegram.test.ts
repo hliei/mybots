@@ -1,7 +1,9 @@
+import { once } from "node:events";
 import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { WebSocket } from "ws";
 import { TelegramChannel, type TelegramDestination } from "../src/channels/telegram.ts";
 import {
   createTelegramApi,
@@ -393,46 +395,80 @@ it("cancels Telegram identity lookup when shutdown arrives during host startup",
   }
 });
 
-it("starts and stops the configured Telegram channel through the host entry point", async () => {
-  root = await realpath(await mkdtemp(join(tmpdir(), "mybots-telegram-")));
-  const file = await settingsFile("wiring", settings);
-  vi.stubEnv("MYBOTS_TEST_TELEGRAM_TOKEN", "offline-token");
-  const controller = new AbortController();
-  const polling = Promise.withResolvers<void>();
-  const api: TelegramApi = {
-    async getMe() {
-      return { id: "1", username: "test_bot" };
-    },
-    async getUpdates(_offset, signal) {
-      polling.resolve();
-      return await new Promise<never>((_resolve, reject) => {
-        const abort = () => reject(signal.reason ?? new Error("aborted"));
-        if (signal.aborted) abort();
-        else signal.addEventListener("abort", abort, { once: true });
-      });
-    },
-    async sendMessage() {},
-  };
-  const createTelegramApi = vi.fn(() => api);
-  const log = vi.spyOn(console, "log").mockImplementation(() => {});
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  try {
+it.each([false, true])(
+  "starts and stops Telegram through the host with WebSocket enabled=%s",
+  async (withWebSocket) => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "mybots-telegram-")));
+    const file = await settingsFile(
+      "wiring",
+      withWebSocket
+        ? {
+            ...settings,
+            destinations: [
+              ...settings.destinations,
+              {
+                id: "desktop",
+                channelType: "websocket",
+                platformId: "desktop",
+                instance: "ws",
+              },
+            ],
+            websocket: { host: "127.0.0.1", port: 0, path: "/ws" },
+          }
+        : settings,
+    );
+    vi.stubEnv("MYBOTS_TEST_TELEGRAM_TOKEN", "offline-token");
+    const controller = new AbortController();
+    const polling = Promise.withResolvers<void>();
+    const api: TelegramApi = {
+      async getMe() {
+        return { id: "1", username: "test_bot" };
+      },
+      async getUpdates(_offset, signal) {
+        polling.resolve();
+        return await new Promise<never>((_resolve, reject) => {
+          const abort = () => reject(signal.reason ?? new Error("aborted"));
+          if (signal.aborted) abort();
+          else signal.addEventListener("abort", abort, { once: true });
+        });
+      },
+      async sendMessage() {},
+    };
+    const createTelegramApi = vi.fn(() => api);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    let socket: WebSocket | undefined;
     const running = runHost(["--root", root, "--config", file], {
       createTelegramApi,
       signal: controller.signal,
     });
-    await polling.promise;
-    controller.abort();
-    await expect(running).resolves.toBe(0);
-    expect(createTelegramApi).toHaveBeenCalledWith({ token: "offline-token" });
-    expect(log.mock.calls.flat().join("\n")).toContain("Telegram bot @test_bot is polling.");
-    expect(error).not.toHaveBeenCalled();
-  } finally {
-    vi.unstubAllEnvs();
-    log.mockRestore();
-    error.mockRestore();
-  }
-});
+    try {
+      await waitForCheckpoint(polling.promise, "Telegram polling startup");
+      let closed: Promise<unknown> | undefined;
+      if (withWebSocket) {
+        const prefix = "Local WebSocket interface on ";
+        const address = log.mock.calls.flat().find((value) => String(value).startsWith(prefix));
+        expect(address).toBeDefined();
+        socket = new WebSocket(String(address).slice(prefix.length));
+        await waitForCheckpoint(once(socket, "open"), "WebSocket connection");
+        closed = once(socket, "close");
+      }
+      controller.abort();
+      await expect(waitForCheckpoint(running, "host channel shutdown")).resolves.toBe(0);
+      if (closed) await waitForCheckpoint(closed, "WebSocket shutdown");
+      expect(createTelegramApi).toHaveBeenCalledWith({ token: "offline-token" });
+      expect(log.mock.calls.flat().join("\n")).toContain("Telegram bot @test_bot is polling.");
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      controller.abort();
+      socket?.terminate();
+      await running;
+      vi.unstubAllEnvs();
+      log.mockRestore();
+      error.mockRestore();
+    }
+  },
+);
 
 it("normalizes raw Bot API updates before routing and drops unsupported input", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-telegram-")));
