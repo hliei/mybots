@@ -125,7 +125,18 @@ if [[ -f data/service-proxy.env ]]; then
   set +a
 fi
 if [[ -f mybots.pid ]] && kill -0 "$(cat mybots.pid)" 2>/dev/null; then
-  kill "$(cat mybots.pid)" || true
+  previous_pid="$(cat mybots.pid)"
+  kill "$previous_pid" || true
+  for ((attempt = 0; attempt < 300; attempt++)); do
+    if ! kill -0 "$previous_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  if kill -0 "$previous_pid" 2>/dev/null; then
+    echo "The previous Mybots host did not stop within 30 seconds." >&2
+    exit 1
+  fi
 fi
 nohup ${shellQuote(input.nodePath)} packages/host/dist/index.js >> logs/mybots.log 2>> logs/mybots.error.log &
 echo $! > mybots.pid
