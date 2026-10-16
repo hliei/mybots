@@ -756,6 +756,11 @@ export class Host {
     };
   }
 
+  /** Record the single Telegram owner. The pairing message itself is not Agent input. */
+  registerTelegramOwner(platformId: string, instance = "telegram"): void {
+    this.store.registerTelegramOwner(platformId, instance);
+  }
+
   stop(options: { timeoutMs?: number } = {}): Promise<void> {
     this.stopping ??= this.shutdown(options.timeoutMs ?? 10000);
     return this.stopping;

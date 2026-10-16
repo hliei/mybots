@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AgentResources, WebConfiguration } from "@mybots/mailbox";
 import type { ModelConfiguration } from "../drivers/types.ts";
@@ -252,6 +254,51 @@ export class HostStore {
       .run(now, instanceId);
   }
 
+  /** Replace the single Telegram owner and the `owner-chat` destination. */
+  registerTelegramOwner(platformId: string, instance: string): void {
+    if (!/^\d+$/u.test(platformId)) throw new Error("Telegram owner must be a numeric user id");
+    const now = new Date().toISOString();
+    const owner = `telegram:${platformId}`;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const agent = this.db.prepare("SELECT id FROM agent_groups").get() as
+        | { id: string }
+        | undefined;
+      if (!agent) throw new Error("Telegram pairing requires the personal Agent");
+      this.db.prepare("DELETE FROM user_roles WHERE user_id LIKE 'telegram:%'").run();
+      this.db.prepare("DELETE FROM users WHERE id LIKE 'telegram:%'").run();
+      this.db.prepare("INSERT INTO users VALUES (?, 'telegram', NULL, ?)").run(owner, now);
+      this.db
+        .prepare("INSERT INTO user_roles VALUES (?, 'owner', NULL, ?, ?)")
+        .run(owner, owner, now);
+      const existing = this.db
+        .prepare("SELECT id FROM messaging_groups WHERE id = 'owner-chat'")
+        .get();
+      if (existing) {
+        this.db
+          .prepare(
+            "UPDATE messaging_groups SET channel_type = 'telegram', platform_id = ?, instance = ? WHERE id = 'owner-chat'",
+          )
+          .run(platformId, instance);
+      } else {
+        this.db
+          .prepare(
+            "INSERT INTO messaging_groups (id, channel_type, platform_id, instance, created_at) VALUES ('owner-chat', 'telegram', ?, ?, ?)",
+          )
+          .run(platformId, instance, now);
+      }
+      this.db
+        .prepare(
+          "INSERT INTO messaging_group_agents (id, messaging_group_id, agent_group_id, created_at) VALUES (?, 'owner-chat', ?, ?) ON CONFLICT(messaging_group_id, agent_group_id) DO NOTHING",
+        )
+        .run(randomUUID(), agent.id, now);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   stopHostInstance(instanceId: string, now: string): void {
     this.db
       .prepare(
@@ -357,5 +404,29 @@ export class HostStore {
 
   close(): void {
     this.db.close();
+  }
+}
+
+/** The paired Telegram private chat, when host state already has one. */
+export function readPairedTelegram(
+  root: string,
+): { platformId: string; instance: string } | undefined {
+  const file = join(root, "data", "host.db");
+  if (!existsSync(file)) return undefined;
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    const row = db
+      .prepare(
+        "SELECT platform_id, instance FROM messaging_groups WHERE id = 'owner-chat' AND channel_type = 'telegram'",
+      )
+      .get() as { platform_id: string; instance: string } | undefined;
+    if (!row || !/^\d+$/u.test(row.platform_id)) return undefined;
+    const owner = db
+      .prepare("SELECT 1 AS ok FROM user_roles WHERE user_id = ? AND role = 'owner'")
+      .get(`telegram:${row.platform_id}`) as { ok: number } | undefined;
+    if (!owner) return undefined;
+    return { platformId: row.platform_id, instance: row.instance };
+  } finally {
+    db.close();
   }
 }

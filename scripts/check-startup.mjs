@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -34,12 +34,18 @@ try {
   );
   settings.websocket.port = 0;
   await writeFile(join(root, "host.json"), JSON.stringify(settings));
+  await writeFile(join(root, "docker"), "#!/bin/sh\necho true\n", { mode: 0o755 });
+  await chmod(join(root, "docker"), 0o755);
   child = spawn(
     process.execPath,
     ["--no-strip-types", "packages/host/dist/index.js", "--root", root],
     {
       cwd: projectRoot,
-      env: { ...process.env, NODE_OPTIONS: "" },
+      env: {
+        ...process.env,
+        NODE_OPTIONS: "",
+        PATH: `${root}${delimiter}${process.env.PATH ?? ""}`,
+      },
       stdio: "pipe",
     },
   );
@@ -158,7 +164,7 @@ for (const entry of ["index", "cli/client"]) {
   assert.equal(failure.stdout, "");
   assert.ok(
     failure.stderr.includes(
-      entry !== "cli/client" ? "Invalid host configuration" : "start the host first",
+      entry !== "cli/client" ? "Run setup before starting the host." : "start the host first",
     ),
   );
 }

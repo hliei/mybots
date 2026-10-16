@@ -93,8 +93,6 @@ export function validateHostConfiguration(value: unknown): HostConfiguration {
 export interface TelegramSettings {
   /** Messaging-group instance served by one Telegram polling channel. */
   instance: string;
-  /** Host environment variable holding the Bot API token; never persisted or mounted. */
-  botTokenEnv: string;
 }
 
 export interface HostSettings {
@@ -161,14 +159,12 @@ export async function loadHostSettings(file: string): Promise<HostSettings> {
     if (source.telegram !== undefined || telegramDestinations.length > 0) {
       const settings = object(source.telegram);
       const instance = name(settings.instance);
-      const botTokenEnv = text(settings.botTokenEnv);
-      if (!/^[A-Z][A-Z0-9_]*$/.test(botTokenEnv)) throw new Error();
-      if (telegramDestinations.length === 0) throw new Error();
+      if ("botTokenEnv" in settings) throw new Error();
       for (const destination of telegramDestinations) {
         if (destination.instance !== instance) throw new Error();
         if (!configuration.owners.includes(`telegram:${destination.platformId}`)) throw new Error();
       }
-      telegram = { instance, botTokenEnv };
+      telegram = { instance };
     }
     return {
       configuration,
@@ -181,7 +177,10 @@ export async function loadHostSettings(file: string): Promise<HostSettings> {
         : { websocket: websocketSettings(source.websocket, configuration) }),
       ...(telegram ? { telegram } : {}),
     };
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("host.json is missing. Run setup before starting the host.");
+    }
     throw new Error(
       "Invalid host configuration; check the host JSON file, model endpoint, CLI destination, container, gateway and Telegram settings",
     );

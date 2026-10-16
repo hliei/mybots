@@ -107,10 +107,11 @@ version leaves P incomplete.
 4. Use `examples/host/host.json` as a fresh-root configuration reference. Configure
    the chosen DeepSeek model, `read`, `write` and `bash` tools, CLI `terminal`,
    WebSocket `desktop`, and Telegram `owner-chat` destinations. Follow the exact
-   owner identity, private `platformId`, instance and `botTokenEnv` contracts in
-   [Telegram setup](host-runtime.md#telegram-private-chat). Supply the token and
-   optional gateway management environment only to the host from private storage.
-   Do not print their values or put them in shell command arguments/history.
+   owner identity, private `platformId`, and instance contracts in
+   [Telegram setup](host-runtime.md#telegram-private-chat). Put `TELEGRAM_BOT_TOKEN`
+   and optional `ONECLI_API_KEY` / `ONECLI_PROJECT_ID` in the install-root `.env`.
+   The host reads that file itself. Do not print their values or put them in
+   shell command arguments or history.
 5. In each terminal set `ACCEPT_ROOT` to the same absolute approved installation
    path. Run `npm start -- --root "$ACCEPT_ROOT"` in a foreground terminal; retain
    that terminal for shutdown. Within 30 seconds verify the CLI socket and local

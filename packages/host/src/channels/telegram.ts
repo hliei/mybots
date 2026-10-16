@@ -8,6 +8,7 @@ import {
   type TelegramPollResult,
   type TelegramUpdate,
 } from "./telegram-api.ts";
+import { completePairing, takePairingAttempt } from "./telegram-pairing.ts";
 
 export interface TelegramDestination {
   id: string;
@@ -23,6 +24,10 @@ export interface TelegramChannelOptions {
   destinations: TelegramDestination[];
   /** Namespaced owner identities; only `telegram:<user>` senders are admitted. */
   owners: string[];
+  /** Install root holding the in-progress pairing file. Absent disables pairing. */
+  pairingRoot?: string;
+  /** Persist the paired owner. The code-bearing message is not Agent input. */
+  registerOwner?: (platformId: string) => void;
   pollRetryMs?: number;
   onError?: (error: unknown) => void;
 }
@@ -53,8 +58,17 @@ export class TelegramChannel {
         .filter((owner) => owner.startsWith("telegram:"))
         .map((owner) => owner.slice("telegram:".length)),
     );
-    if (!this.destinations.size || !this.telegramOwners.size)
+    const pairing = !this.destinations.size && !this.telegramOwners.size;
+    if (!pairing && (!this.destinations.size || !this.telegramOwners.size))
       throw new Error("Telegram requires a configured private chat and Telegram owner identity");
+  }
+
+  /** Admit the single owner after a successful pairing code. */
+  admitOwner(platformId: string): void {
+    this.destinations.clear();
+    this.telegramOwners.clear();
+    this.telegramOwners.add(platformId);
+    this.destinations.set(platformId, { id: "owner-chat", platformId });
   }
 
   /** Attach host delivery; opens no Bot API connection until `start`. */
@@ -95,6 +109,22 @@ export class TelegramChannel {
     update: TelegramUpdate,
   ): Promise<{ sessionId: string; messageId: string } | undefined> {
     if (this.controller.signal.aborted) throw new Error("Telegram channel is stopping.");
+    if (update.chatId !== update.userId) return undefined;
+    if (this.options.pairingRoot && update.text.trim()) {
+      const attempt = await takePairingAttempt(this.options.pairingRoot, update.text);
+      if (attempt.kind === "matched") {
+        this.options.registerOwner?.(update.userId);
+        this.admitOwner(update.userId);
+        await completePairing(this.options.pairingRoot);
+        await this.options.api.sendMessage(
+          update.chatId,
+          "Pairing success!",
+          this.controller.signal,
+        );
+        return undefined;
+      }
+      if (attempt.kind === "replaced" || attempt.kind === "exhausted") return undefined;
+    }
     if (!this.telegramOwners.has(update.userId)) return undefined;
     // Telegram private chats expose the peer user ID as the chat ID; groups are out of scope.
     if (update.chatId !== update.userId) return undefined;
