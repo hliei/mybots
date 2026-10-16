@@ -71,6 +71,9 @@ Run live-service checks only when explicitly requested. Keep credentials out of
 fixtures and output, and report live checks separately from ordinary validation.
 An offline suite passing does not establish that a real provider or platform
 connection works.
+Use the manual [macOS acceptance procedure](../macos-service-acceptance.md) for
+explicitly requested current-runtime live checks; record each bounded gate and
+cleanup separately. Missing human inputs or credentials leave acceptance open.
 
 ## Pi Agent session exchanges
 

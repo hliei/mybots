@@ -33,14 +33,35 @@ fixture cleanup and trust exception. This is separate from ordinary verification
 
 ## Actual-service acceptance
 
-The current host/container architecture still requires an explicitly selected
-macOS acceptance pass with real DeepSeek and Telegram. That work must verify a
-gateway-backed model request and tool exchange, container and host restart,
-persistent per-entry affinity, shared workspace material and correctly addressed
-Telegram delivery. Configuration follows [host setup](host-runtime.md) and
-[configuration](configuration.md). No current live harness or `test:live` command
-is provided; the embedded-runtime live harness has been retired. Do not treat
-prior account connectivity or the controlled checks as this deployment's live pass.
+Use the [macOS actual-service procedure](macos-service-acceptance.md) for the
+explicitly requested real DeepSeek/OneCLI/Docker/Telegram deployment pass. It
+provides bounded input/reply checkpoints, CLI and WebSocket commands, read-only
+continuation/delivery queries, credential-boundary checks, cleanup and an evidence
+form. This is a manual opt-in procedure; no `test:live` command is provided.
+
+### Current deployment evidence: October 16, 2026
+
+The procedure is delivered; actual-service acceptance is **incomplete**. No live
+service request was authorized or attempted in this documentation delivery. Real
+credentials, gateway policy/topology and the owner's exact Telegram inputs must
+be checked during a separately requested execution. Their availability was not
+inspected. The following gates are all **not run** for the current deployment:
+
+| Gate | Required actual evidence |
+| --- | --- |
+| P | macOS deployment prerequisites and actual dependency/runtime versions |
+| M | DeepSeek through Pi/OneCLI plus workspace tool round |
+| K | Credential absence from runner-visible surfaces and fixed mount boundary |
+| C | Recreated container continuing the exact saved CLI Pi conversation |
+| T | Real owner Telegram reply, separate conversations and shared file access |
+| W | WebSocket input/events and independent Telegram delivery acknowledgement |
+| H | New host, same saved conversations and destination affinity at all entries |
+| X | Attempt-owned process/container/client/file cleanup |
+
+Passing ordinary or controlled infrastructure checks does not change these gate
+statuses. Historical embedded-runtime evidence below cannot close them. Normal
+continuation would not remove the accepted early-completion loss windows,
+possible repeated tool effects or duplicate platform delivery.
 
 ## Historical embedded-runtime evidence
 

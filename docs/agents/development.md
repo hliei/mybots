@@ -104,8 +104,10 @@ failures. Run `npm run demo:host` for visible evidence. It does not require Dock
 or model credentials.
 
 The retired embedded-runtime live harness and `test:live` command are removed.
-Introduce a separate live-test script when current live-service checks are implemented;
-keep it outside `test`, `test:watch`, and `verify`.
+Actual-service checks use the manual opt-in
+[macOS acceptance procedure](../macos-service-acceptance.md), outside `test`,
+`test:watch`, and `verify`. The procedure does not establish a live pass until
+its deployment evidence is recorded.
 
 ## Validation and completion
 
