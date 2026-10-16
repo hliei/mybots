@@ -1,8 +1,18 @@
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, realpath, rm, stat, unlink } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { CliChannel } from "../packages/host/src/cli/socket-server.ts";
 import { Host, type HostConfiguration } from "../packages/host/src/host.ts";
@@ -217,12 +227,24 @@ it("refuses a second CLI listener without disrupting the existing channel", asyn
   await vi.waitFor(() => expect(client.replies).toEqual([{ text: "Reply: Still available" }]));
 });
 
+async function spawnHost(root: string): Promise<ChildProcessWithoutNullStreams> {
+  const settings = JSON.parse(await readFile(join(root, "host.json"), "utf8")) as {
+    websocket: { port: number };
+  };
+  settings.websocket.port = 0;
+  await writeFile(join(root, "host.json"), JSON.stringify(settings));
+  const docker = join(root, "docker");
+  await writeFile(docker, "#!/bin/sh\necho true\n", { mode: 0o755 });
+  return spawn(process.execPath, ["packages/host/src/index.ts", "--root", root], {
+    stdio: "pipe",
+    env: { ...process.env, PATH: `${root}${delimiter}${process.env.PATH ?? ""}` },
+  });
+}
+
 it("starts the host executable with valid settings and removes its socket and ownership on SIGTERM", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-cli-")));
   await copyFile("examples/host/host.json", join(root, "host.json"));
-  const child = spawn(process.execPath, ["packages/host/src/index.ts", "--root", root], {
-    stdio: "pipe",
-  });
+  const child = await spawnHost(root);
   children.push(child);
   let stdout = "";
   let stderr = "";
@@ -233,9 +255,15 @@ it("starts the host executable with valid settings and removes its socket and ow
     stderr += chunk;
   });
   const exit = new Promise<number | null>((resolve) => child.once("close", resolve));
-  const timeout = setTimeout(() => child.kill("SIGKILL"), 5000);
+  const timeout = setTimeout(() => child.kill("SIGKILL"), 8000);
   try {
-    await vi.waitFor(() => expect(stdout).toContain("Mybots host listening"));
+    await vi.waitFor(
+      () => {
+        if (stdout.includes("Mybots host listening")) return;
+        throw new Error(stderr || "host has not started");
+      },
+      { timeout: 7000 },
+    );
     expect((await stat(join(root, "data", "cli.sock"))).mode & 0o777).toBe(0o600);
     child.kill("SIGTERM");
     expect(await exit).toBe(0);
@@ -252,9 +280,7 @@ it("starts the host executable with valid settings and removes its socket and ow
 it("stops the host even when removing the CLI socket fails during shutdown", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-cli-")));
   await copyFile("examples/host/host.json", join(root, "host.json"));
-  const child = spawn(process.execPath, ["packages/host/src/index.ts", "--root", root], {
-    stdio: "pipe",
-  });
+  const child = await spawnHost(root);
   children.push(child);
   let stdout = "";
   let stderr = "";
@@ -265,9 +291,15 @@ it("stops the host even when removing the CLI socket fails during shutdown", asy
     stderr += chunk;
   });
   const exit = new Promise<number | null>((resolve) => child.once("close", resolve));
-  const timeout = setTimeout(() => child.kill("SIGKILL"), 3000);
+  const timeout = setTimeout(() => child.kill("SIGKILL"), 8000);
   try {
-    await vi.waitFor(() => expect(stdout).toContain("Mybots host listening"));
+    await vi.waitFor(
+      () => {
+        if (stdout.includes("Mybots host listening")) return;
+        throw new Error(stderr || "host has not started");
+      },
+      { timeout: 7000 },
+    );
     await unlink(join(root, "data", "cli.sock"));
     await mkdir(join(root, "data", "cli.sock"));
     child.kill("SIGTERM");

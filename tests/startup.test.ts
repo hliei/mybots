@@ -42,7 +42,7 @@ describe("host startup", () => {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("Invalid host configuration");
+    expect(result.stderr).toContain("Run setup before starting the host.");
   });
 
   it("requires host settings even when an old workspace configuration exists", async () => {
@@ -53,7 +53,7 @@ describe("host startup", () => {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("Invalid host configuration");
+    expect(result.stderr).toContain("Run setup before starting the host.");
   });
 
   it("rejects unsupported arguments with a failing exit status", () => {
@@ -81,15 +81,12 @@ it("imports runtime, CLI, and WebSocket modules without reading configuration or
   expect(result.stderr).toBe("");
 });
 
-it.each(["--missing-file", "--invalid-json", "--invalid-settings"])(
+it.each(["--invalid-json", "--invalid-settings"])(
   "rejects unusable host startup settings (%s) before opening services",
   (mode) => {
     const file = join(temporaryRoot, `${mode}.json`);
-    if (mode !== "--missing-file")
-      writeFileSync(
-        file,
-        mode === "--invalid-json" ? "{" : '{"gateway":{"apiKey":"synthetic-secret-marker"}}',
-      );
+    if (mode === "--invalid-json") writeFileSync(file, "{");
+    else writeFileSync(file, '{"gateway":{"apiKey":"synthetic-secret-marker"}}');
     const result = spawnSync(
       process.execPath,
       ["packages/host/src/index.ts", "--root", temporaryRoot, "--config", file],
@@ -150,9 +147,12 @@ it("rolls back the CLI listener and host after WebSocket binding fails, then sta
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   const log = vi.spyOn(console, "log").mockImplementation(() => controller.abort());
   try {
-    await expect(waitForCheckpoint(runHost(["--root", root]), "failed host startup")).resolves.toBe(
-      1,
-    );
+    await expect(
+      waitForCheckpoint(
+        runHost(["--root", root], { inspectNetwork: async () => "internal" }),
+        "failed host startup",
+      ),
+    ).resolves.toBe(1);
     expect(error.mock.calls.flat().join("\n")).toContain("EADDRINUSE");
     for (const path of ["host.lock", "cli.sock"])
       await expect(access(join(root, "data", path))).rejects.toMatchObject({ code: "ENOENT" });
@@ -161,7 +161,10 @@ it("rolls back the CLI listener and host after WebSocket binding fails, then sta
     error.mockClear();
     await expect(
       waitForCheckpoint(
-        runHost(["--root", root], { signal: controller.signal }),
+        runHost(["--root", root], {
+          inspectNetwork: async () => "internal",
+          signal: controller.signal,
+        }),
         "restarted host shutdown",
       ),
     ).resolves.toBe(0);

@@ -24,3 +24,6 @@ node_modules/
 # Host state and shared Agent material.
 /data/
 /groups/
+/host.json
+/logs/
+/.tools/

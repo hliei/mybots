@@ -90,7 +90,7 @@ const settings = {
   cliDestinationId: "terminal",
   container: { image: "mybots-agent:mailbox", network: "mybots-isolated" },
   gateway: { url: "http://127.0.0.1:10254", proxyHost: "onecli" },
-  telegram: { instance: "telegram", botTokenEnv: "MYBOTS_TEST_TELEGRAM_TOKEN" },
+  telegram: { instance: "telegram" },
 };
 
 async function settingsFile(name: string, value: unknown): Promise<string> {
@@ -326,7 +326,7 @@ it("routes an owner private message through the host and replies to its chat", a
 it("requires coherent Telegram host settings before opening services", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-telegram-")));
   await expect(loadHostSettings(await settingsFile("valid", settings))).resolves.toMatchObject({
-    telegram: { instance: "telegram", botTokenEnv: "MYBOTS_TEST_TELEGRAM_TOKEN" },
+    telegram: { instance: "telegram" },
   });
   await expect(
     loadHostSettings(await settingsFile("missing", { ...settings, telegram: undefined })),
@@ -335,7 +335,7 @@ it("requires coherent Telegram host settings before opening services", async () 
     loadHostSettings(
       await settingsFile("instance", {
         ...settings,
-        telegram: { instance: "other", botTokenEnv: "MYBOTS_TEST_TELEGRAM_TOKEN" },
+        telegram: { instance: "other" },
       }),
     ),
   ).rejects.toThrow("Invalid host configuration");
@@ -347,13 +347,13 @@ it("requires coherent Telegram host settings before opening services", async () 
 it("fails host startup clearly when a configured Telegram token is absent", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-telegram-")));
   const file = await settingsFile("absent", settings);
-  vi.stubEnv("MYBOTS_TEST_TELEGRAM_TOKEN", undefined);
+  vi.stubEnv("TELEGRAM_BOT_TOKEN", undefined);
   const createTelegramApi = vi.fn();
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
     const status = await runHost(["--root", root, "--config", file], { createTelegramApi });
     expect(status).toBe(1);
-    expect(error.mock.calls.flat().join("\n")).toContain("MYBOTS_TEST_TELEGRAM_TOKEN");
+    expect(error.mock.calls.flat().join("\n")).toContain("TELEGRAM_BOT_TOKEN");
     expect(createTelegramApi).not.toHaveBeenCalled();
   } finally {
     error.mockRestore();
@@ -363,7 +363,7 @@ it("fails host startup clearly when a configured Telegram token is absent", asyn
 it("cancels Telegram identity lookup when shutdown arrives during host startup", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-telegram-")));
   const file = await settingsFile("startup-cancel", settings);
-  vi.stubEnv("MYBOTS_TEST_TELEGRAM_TOKEN", "offline-token");
+  vi.stubEnv("TELEGRAM_BOT_TOKEN", "offline-token");
   const controller = new AbortController();
   const lookup = Promise.withResolvers<AbortSignal>();
   const release = Promise.withResolvers<void>();
@@ -386,6 +386,7 @@ it("cancels Telegram identity lookup when shutdown arrives during host startup",
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   const running = runHost(["--root", root, "--config", file], {
     createTelegramApi: () => api,
+    inspectNetwork: async () => "internal",
     signal: controller.signal,
   });
   try {
@@ -424,7 +425,7 @@ it.each([false, true])(
           }
         : settings,
     );
-    vi.stubEnv("MYBOTS_TEST_TELEGRAM_TOKEN", "offline-token");
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "offline-token");
     const controller = new AbortController();
     const polling = Promise.withResolvers<void>();
     const api: TelegramApi = {
@@ -447,6 +448,7 @@ it.each([false, true])(
     let socket: WebSocket | undefined;
     const running = runHost(["--root", root, "--config", file], {
       createTelegramApi,
+      inspectNetwork: async () => "internal",
       signal: controller.signal,
     });
     try {

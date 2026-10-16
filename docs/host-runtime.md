@@ -8,28 +8,27 @@ isolated Pi runner through `DockerDriver` and `OneCliGateway`.
 
 ## Start and configure
 
-Use Node.js 24.21.0. Copy the credential-free example into an ignored local root:
+Use Node.js 24.21.0. From the checkout, `bash mybots.sh` is the install path.
+It generates `host.json`, writes `.env`, and starts one background service for
+this checkout. Do not hand-edit model, gateway, container, or token fields.
+Do not start a second host for the same install root.
 
 ```sh
-mkdir -p workspace
-cp examples/host/host.json workspace/host.json
-npm run dev -- --root ./workspace
-# In another terminal:
-npm run mbt -- --root ./workspace
+bash mybots.sh
+npm run mbt
 ```
 
-For the built host run `npm run build`, then `npm start -- --root
-./workspace`. The CLI continues to use source through `npm run mbt -- --root
-./workspace`. Both commands default
-to the current directory. The host accepts `--config FILE` to select another JSON
-file; CLI only selects the installation root. `--help` requires no configuration
-or service. Missing/invalid configuration fails before opening the host.
+Without a service, `npm run build && npm start` runs the compiled host in the
+foreground. `npm run dev` is the development entry. Both default `--root` to the
+current directory. The host accepts `--config FILE` to select another JSON file;
+CLI only selects the installation root. `--help` requires no configuration or
+service. Missing `host.json` fails and tells the operator to run setup. Invalid
+configuration fails before opening the host.
 
 `npm link --workspaces=false` exposes `mbt` from the root package's `bin/mbt`
 launcher. It resolves the linked checkout and invokes the same CLI source with
-Node.js; no build is needed for the client. Run `mbt --root /path/to/workspace`
-from any directory, or use the installation root as the current directory. The
-launcher preserves that directory and never starts the host automatically.
+Node.js; no build is needed for the client. Run `mbt` from the install root, or
+pass `--root`. The launcher never starts the host automatically.
 
 `owners` lists the single owner's namespaced platform identities; the local
 example uses `["cli:local"]`. Exactly one identity must be a `cli:` identity for
@@ -94,31 +93,26 @@ for the runner boundary.
 
 ### Telegram private chat
 
-A Telegram private chat is one more destination. Its `platformId` is the chat
-ID, which for a private chat equals the owner's Telegram user ID. Configure the
-corresponding `telegram:<user-id>` owner identity, the destination and the
-host-side polling settings:
+A Telegram private chat is enabled by a `telegram` section. Setup writes
+`{ "instance": "telegram" }` and `TELEGRAM_BOT_TOKEN` only after the token
+matches BotFather's format and `getMe` succeeds. The running host then pairs one
+private chat: the wizard prints a one-time 6-digit code, and a private message
+that is only those digits registers `telegram:<user-id>` and destination
+`owner-chat` in `data/host.db`. The reply is `Pairing success!`. That record
+survives restart. Regenerating `host.json` does not remove it.
 
 ```json
 {
-  "owners": ["cli:local", "telegram:42"],
-  "destinations": [
-    { "id": "terminal", "channelType": "cli", "platformId": "local", "instance": "cli" },
-    { "id": "owner-chat", "channelType": "telegram", "platformId": "42", "instance": "telegram" }
-  ],
-  "telegram": { "instance": "telegram", "botTokenEnv": "MYBOTS_TELEGRAM_BOT_TOKEN" }
+  "telegram": { "instance": "telegram" }
 }
 ```
 
 `telegram.instance` selects the messaging-group instance served by one polling
-channel; every `telegram` destination must use it. Each Telegram destination's
-`platformId` must match a configured `telegram:<user-id>` owner, so only the
-owner's private chat is admitted. `telegram.botTokenEnv` names the host
-environment variable holding the Bot API token; the token is read from the
-environment at startup, is used only by the host's Bot API client and never
-enters runner mounts, instructions, mailbox records or diagnostics. A configured
-Telegram destination with a missing token, a mismatched instance or an owner
-that is not configured fails startup before any service starts.
+channel. The token is read from `TELEGRAM_BOT_TOKEN` in the install `.env` at
+startup, is used only by the host's Bot API client, and never enters runner
+mounts, instructions, mailbox records, or diagnostics. Enabled Telegram without
+the token fails startup. Before pairing, unknown private chats, groups, and
+other updates create no Agent work. A wrong code invalidates the attempt.
 
 The channel normalizes raw updates at the Bot API boundary, ignores non-text
 updates, non-private chats, unknown senders and unconfigured chats, and advances
@@ -131,8 +125,8 @@ with the host, aborting in-flight requests and awaiting dispatches.
 `container.image` and `container.network` select an existing runner image and
 internal Docker network. `gateway.url` is the host's OneCLI management endpoint;
 `gateway.proxyHost` is the proxy-only hostname visible on the isolated runner
-network. Optional `MYBOTS_ONECLI_API_KEY` and `MYBOTS_ONECLI_PROJECT_ID` are host-only
-management settings. Put real model credentials and scoped policies in OneCLI,
+network. `ONECLI_URL`, `ONECLI_API_KEY`, and optional `ONECLI_PROJECT_ID` are
+host-only management settings in `.env`. Put real model credentials in OneCLI,
 not the JSON file. See [container execution](container-runtime.md) for gateway
 provisioning, mounts and network requirements. Dependencies are checked when a
 session starts; a driver failure is observable and leaves accepted input saved.

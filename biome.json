@@ -10,6 +10,7 @@
       "packages/**/*.ts",
       "packages/*/*.json",
       "tests/**/*.ts",
+      "setup/**/*.ts",
       "scripts/**/*.mjs",
       "*.json",
       "vitest.config.ts",

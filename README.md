@@ -7,28 +7,38 @@ Pi owns model/tool execution, Skills, conversation history and compaction.
 
 ## Install and start
 
-Use Node.js 24.21.0 and npm from the repository root:
+The git checkout is the install root. From that directory:
+
+```sh
+bash mybots.sh
+```
+
+The script checks memory, platform, and Docker, then installs Node.js 24.21.0 when the current `node` is not that version, installs dependencies, and runs the setup wizard. The wizard builds the runner image, prepares OneCLI, asks for the model API key, writes `.env` and a generated `host.json`, installs a background service, and can pair one Telegram private chat.
+
+`.env` holds operator settings and the Telegram bot token. Model and search API keys are registered in OneCLI and are not written to `.env`. See [configuration](docs/configuration.md) for the variable names. `.env.example` lists the names with empty values.
+
+The same second half, after Node.js 24.21.0 is on `PATH`:
 
 ```sh
 npm ci
-npm run prepare
-mkdir -p workspace
-cp examples/host/host.json workspace/host.json
-mkdir -p workspace/groups/personal
-cp examples/host/groups/personal/AGENTS.md workspace/groups/personal/AGENTS.md
+npm run setup:auto
 ```
 
-Before sending input, build the runner image and configure Docker and the
-credential gateway as described in [container execution](docs/container-runtime.md).
-The runner uses Bun 1.4.0. The gateway owns real model/search credentials; the
-host owns the Telegram token. The example contains no credentials.
+Rerun one wizard step with `npm run setup -- --step container|gateway|provider-auth|service|pair-telegram|verify`. `MYBOTS_SKIP` is a comma-separated list of those names for unattended runs.
+
+Without a service, the compiled host still starts in the foreground:
 
 ```sh
-docker build -t mybots-agent:mailbox -f container/Dockerfile .
-npm run dev -- --root ./workspace
-# In another terminal:
-npm run mbt -- --root ./workspace
+npm run build && npm start
 ```
+
+`npm run dev` is the development entry, not the documented default start. The CLI connects to the host that is already running:
+
+```sh
+npm run mbt
+```
+
+Changing `.env` applies after restarting the launchd job, systemd unit, or `start-mybots.sh`. The service runs `node packages/host/dist/index.js` with the checkout as its working directory and appends `logs/mybots.log` and `logs/mybots.error.log`.
 
 The installation root defaults to the current directory. `--help` starts no
 services. `dev` starts the CLI socket and configured Telegram/WebSocket
@@ -36,25 +46,18 @@ channels through `packages/host/src/index.ts`, the sole host startup entry point
 per installation root. A second host refuses the owned state directory. The CLI
 requires the host and never opens an independent execution runtime.
 
-For the compiled host:
-
-```sh
-npm run build
-npm start -- --root ./workspace
-# In another terminal:
-npm run mbt -- --root ./workspace
-```
-
-`npm run dev` runs host source once; restart manually after changes. `npm start`
-uses the existing host build. `npm run mbt` always runs the CLI TypeScript source
+For the compiled host started by hand, `npm start` uses the existing build.
+`npm run mbt` always runs the CLI TypeScript source
 with Node.js, including when the host runs from its build.
 
 To expose the same CLI as a shell command, link this installed checkout:
 
 ```sh
 npm link --workspaces=false
-mbt --root /absolute/path/to/workspace
+mbt
 ```
+
+`npm link --workspaces=false` is optional. The service step does not install `mbt` onto `PATH`.
 
 Ensure npm's global bin directory is on `PATH`. The executable launcher resolves
 its real location through npm symlinks and preserves the caller's working
@@ -67,8 +70,7 @@ Missing runtime, image, gateway or mount prerequisites fail execution explicitly
 [Configuration](docs/configuration.md) describes `host.json`, owner identities,
 Agent settings, resource selection and channel wiring. The default example enables
 CLI and loopback WebSocket. [The Telegram example](examples/host/host-telegram.json)
-adds an owner-only private chat: replace its numeric owner/chat identity and set
-`MYBOTS_TELEGRAM_BOT_TOKEN` in the host environment before starting.
+shows an already paired owner. The setup wizard writes `TELEGRAM_BOT_TOKEN` to `.env` after Telegram accepts the token. The host reads that name itself. Pairing stores the single `telegram:<user-id>` owner in `data/host.db`.
 
 Place shared instructions and saved materials under `groups/<folder>/`. Select
 Skills from `groups/<folder>/skills/<id>/SKILL.md` through `agent.resources.skills`.

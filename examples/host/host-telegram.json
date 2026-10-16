@@ -60,7 +60,6 @@
     "proxyHost": "onecli"
   },
   "telegram": {
-    "instance": "telegram",
-    "botTokenEnv": "MYBOTS_TELEGRAM_BOT_TOKEN"
+    "instance": "telegram"
   }
 }

@@ -22,7 +22,9 @@
     "prebuild": "node scripts/clean-build.mjs",
     "dev": "node --conditions=mybots-source packages/host/src/index.ts",
     "start": "node packages/host/dist/index.js",
-    "mbt": "node packages/host/src/cli/client.ts"
+    "mbt": "node packages/host/src/cli/client.ts",
+    "setup": "node setup/cli.ts",
+    "setup:auto": "node setup/cli.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
