@@ -17,7 +17,11 @@ Never run a second host or Telegram poller for the same root or bot.
 Allow 30 minutes for one attempt, including operator input. Each model/tool
 checkpoint has a 120-second deadline; each exact Telegram input has 120 seconds
 for the human to send it followed by 120 seconds for its reply. Allow 30 seconds
-for a listener connection or shutdown. Use a visible timer and stop at the first
+for a listener connection or shutdown.
+When matching guided human input, permit outer whitespace and an omitted final
+sentence terminator only. Preserve requested and received text separately, and
+verify the exact received input in SDK history plus output correlation. A format
+mismatch must not be reported as absence of all Telegram traffic. Use a visible timer and stop at the first
 failure or deadline. Do not resend timed-out inputs automatically: execution may
 have completed or effects may already exist. Record failure, blocked prerequisites,
 and unattempted gates separately. A later retry is a new attempt with new markers.
@@ -273,8 +277,12 @@ Reconnect the observer if its eight-minute bound expires; there is no event repl
 
 ## H: new host and saved conversations
 
-1. After every reply is delivered, record A/B/C session IDs and exact continuations.
-   Quit CLI. Ctrl+C the host in its own terminal; require process exit, closed
+1. After every reply is delivered, use CLI to write a new random public
+   `RESTART_SHARED_VALUE` into the same shared file. Verify the host-side bytes
+   exactly, and confirm this new value is absent from Telegram's prior SDK
+   messages. Keep Telegram's conversation-only label unchanged. This makes the
+   next read distinguishable from a model repeating previously known contents.
+   Record A/B/C session IDs and exact continuations. Quit CLI. Ctrl+C the host in its own terminal; require process exit, closed
    listeners and stopped session containers within 30 seconds. This is a clean
    restart test. Do not kill during an active query or delete any persistent state.
 2. Run `npm start -- --root "$ACCEPT_ROOT"` again with the same private host
@@ -284,8 +292,8 @@ Reconnect the observer if its eight-minute bound expires; there is no event repl
    In Telegram send exactly `Please read /workspace/group/acceptance-<attempt>.txt, report its contents, and tell me the public conversation label I gave you earlier. Do not change any files.`
    Each must arrive within its 120-second input/reply bounds at its original entry.
    Substitute only the filename, not the expected values, in these inputs.
-   Telegram must return both the original random label and exact shared file
-   contents, with a new successful read tool result; file reading alone cannot
+   Telegram must return both the original random label and exact new
+   `RESTART_SHARED_VALUE`, with a new successful read tool result; file reading alone cannot
    establish conversation recall. CLI must return its original private value.
 4. Use the WebSocket snippet with `content` set to `Without using tools, reply with only the WS_PRIVATE value I gave you earlier.`
    Require its original value and correlated frames within 120 seconds. Compare

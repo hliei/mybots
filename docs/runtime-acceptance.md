@@ -39,14 +39,66 @@ provides bounded input/reply checkpoints, CLI and WebSocket commands, read-only
 continuation/delivery queries, credential-boundary checks, cleanup and an evidence
 form. This is a manual opt-in procedure; no `test:live` command is provided.
 
-### Current deployment evidence: October 16, 2026
+### Completed acceptance: October 16, 2026
+
+The required macOS actual-service gates are **passed**. A follow-up from 10:17
+to 10:27 Asia/Shanghai completed the remaining Telegram reply and host-restart
+continuity checks on the same saved installation and unchanged application code.
+Together with the initial attempt below, this establishes P/M/K/C/T/W/H/X for
+the inspected deployment. Earlier refused instructions, matching failures and
+input deadlines remain recorded; they are not reclassified as successful checks.
+
+The owner confirmed receipt of the first follow-up reply with the correct shared
+file contents. SDK inspection showed that reply reused previously known content
+without a new read tool call. To distinguish fresh reading from recall, CLI then
+wrote a new random public value into the shared file. Host-side bytes were checked,
+and the new value was verified absent from Telegram's pre-restart SDK history.
+The conversation-only label was retained without writing it into the workspace.
+
+After a clean host shutdown and restart, the owner's actual Telegram input asked
+for the file contents and the previously supplied label, without including either
+answer. The reply contained both the new file value and original label. The exact
+received input and successful new `read` result were verified in the saved Pi
+conversation. Host session ID and full Pi continuation were unchanged, the session
+container ID was different, and output correlation, private-chat destination and
+independent durable `delivered` acknowledgement all matched.
+
+The guided input's final sentence terminator was omitted when copied. The strict
+helper did not match it, producing bounded matching timeouts even though the
+actual inbound/outbound pair was observed. Requested and received text were
+preserved separately, and their only difference was verified to be that final
+terminator. Validation used the exact received SDK input and its correlated
+output; no message was resent to produce a pass. Future helper matching permits
+outer whitespace and omission of that final terminator while preserving routing,
+message correlation and the actual input. No model-output prefix is a protocol
+requirement. The earlier `TG=` format failures remain in the initial record.
+
+The follow-up used the same runner image and dependency lock as the initial
+attempt: Node 24.21.0, Bun 1.4.0, Pi SDK 1.2.0 and OneCLI 1.42.0/SDK 2.2.1.
+All 6 new gateway requests returned HTTP 200 with one scoped credential injection
+for `api.deepseek.com:443`, with upstream TLS verification enabled. A further
+scan of 18 persisted files, the live container configuration and diagnostic log
+found neither the real model key nor the Telegram token. No additional ordinary
+tests were needed for the documentation-only follow-up; the initial offline and
+controlled infrastructure results below remain applicable to unchanged code.
+
+The follow-up host, CLI/observer, session containers, gateway/database/proxy stack,
+acceptance networks and shared test file were cleaned. Original credentials and
+private evidence remain local. Receipt confirmation is recorded for the first
+follow-up reply; post-restart delivery is established by the Bot API success path
+and durable mailbox acknowledgement, without claiming a human read receipt.
+The accepted hard-crash loss, repeated-tool-effect and duplicate-delivery limits
+in [ADR 0008](adr/0008-mailbox-completion-and-recovery.md) remain unchanged.
+
+### Initial partial attempt: October 16, 2026
 
 The owner explicitly requested execution. The attempt ran from 09:56 to 10:12
 Asia/Shanghai on October 16, 2026, against application commit `742e485` with
 only documentation corrections in the working tree. It used a dedicated local
-installation root and an isolated real-account gateway deployment. Overall
-acceptance remains **incomplete**, with Telegram response-format checks and
-post-host-restart Telegram continuity unverified or failed as described below.
+installation root and an isolated real-account gateway deployment. At the end of this initial attempt, acceptance was **incomplete**, with Telegram
+response-format checks and post-host-restart Telegram continuity unverified or
+failed as described below. The completed follow-up above closes the required
+service-behavior gates without deleting this evidence.
 
 | Gate | Actual result |
 | --- | --- |
@@ -101,8 +153,8 @@ Private source credentials and diagnostic session state remain local. Cleanup
 removed this attempt's gateway-held credential with its disposable stack, while
 preserving the owner's original token and model credential. No raw reasoning,
 credential, platform identity or conversation transcript is included here.
-The remaining acceptance owner must complete a new bounded Telegram reply and
-restart-continuity checkpoint. Normal continuation does not remove the accepted
+This initial attempt required a later bounded Telegram reply and restart
+checkpoint, completed above. Normal continuation does not remove the accepted
 early-completion loss windows, repeated tool effects or duplicate delivery.
 
 ## Historical embedded-runtime evidence
