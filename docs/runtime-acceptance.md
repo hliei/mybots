@@ -41,27 +41,69 @@ form. This is a manual opt-in procedure; no `test:live` command is provided.
 
 ### Current deployment evidence: October 16, 2026
 
-The procedure is delivered; actual-service acceptance is **incomplete**. No live
-service request was authorized or attempted in this documentation delivery. Real
-credentials, gateway policy/topology and the owner's exact Telegram inputs must
-be checked during a separately requested execution. Their availability was not
-inspected. The following gates are all **not run** for the current deployment:
+The owner explicitly requested execution. The attempt ran from 09:56 to 10:12
+Asia/Shanghai on October 16, 2026, against application commit `742e485` with
+only documentation corrections in the working tree. It used a dedicated local
+installation root and an isolated real-account gateway deployment. Overall
+acceptance remains **incomplete**, with Telegram response-format checks and
+post-host-restart Telegram continuity unverified or failed as described below.
 
-| Gate | Required actual evidence |
+| Gate | Actual result |
 | --- | --- |
-| P | macOS deployment prerequisites and actual dependency/runtime versions |
-| M | DeepSeek through Pi/OneCLI plus workspace tool round |
-| K | Credential absence from runner-visible surfaces and fixed mount boundary |
-| C | Recreated container continuing the exact saved CLI Pi conversation |
-| T | Real owner Telegram reply, separate conversations and shared file access |
-| W | WebSocket input/events and independent Telegram delivery acknowledgement |
-| H | New host, same saved conversations and destination affinity at all entries |
-| X | Attempt-owned process/container/client/file cleanup |
+| P | Passed: macOS deployment, pinned installation, gateway and owner-private-chat configuration |
+| M | Passed: DeepSeek via Pi/OneCLI completed real `write` and `bash` tools; shared file and actual CLI response matched |
+| K | Passed for inspected surfaces: no model key in container configuration, 8 mounted-file checks, 22,641 exported container files or diagnostics; final scan of 16 persisted files also found no model key or Telegram token |
+| C | Passed: stopped CLI container, same running host, new container, same host session and exact Pi continuation, correct original conversation-only value |
+| T | Partial: actual Telegram input/replies, successful SDK `read`, correct shared contents and separate conversation histories passed; prescribed `TG=` response format failed |
+| W | Passed: real WebSocket input/correlated output in a separate session; Telegram observations retained their Telegram destination and separate durable delivery acknowledgement |
+| H | Partial: new host and new CLI/WebSocket containers retained exact session IDs, Pi continuations and conversation-only values; final exact Telegram input was not observed within 120 seconds |
+| X | Passed: host/clients/session containers stopped; acceptance gateway/database/proxy stack and networks removed; shared test file removed |
 
-Passing ordinary or controlled infrastructure checks does not change these gate
-statuses. Historical embedded-runtime evidence below cannot close them. Normal
-continuation would not remove the accepted early-completion loss windows,
-possible repeated tool effects or duplicate platform delivery.
+Actual versions: macOS 26.3.1 arm64, Docker Desktop 4.48.0, Docker engine 28.5.1,
+Node 24.21.0, Bun 1.4.0, Pi SDK 1.2.0, OneCLI gateway 1.42.0 and OneCLI SDK 2.2.1.
+Model: `deepseek-chat`, endpoint origin `https://api.deepseek.com`. The locally
+built runner image ID begins `sha256:dd4523407129`; the gateway image ID begins
+`sha256:8d4a3300e915`. Full immutable IDs and the lockfile SHA-256 are retained
+in private local evidence. All 12 observed gateway requests targeted
+`api.deepseek.com:443`, returned HTTP 200 and recorded one credential injection.
+Real upstream TLS verification remained enabled.
+
+Bounded checkpoints and limitations:
+
+- The first Telegram challenge was delivered, but the provider treated its
+  synthetic random marker as a credential and refused the requested read/echo.
+  The second explicitly public-fixture challenge completed the actual `read`
+  tool and returned the correct file contents in prose, while refusing the
+  `TG=` prefix. Both replies reached durable `delivered` state. The current
+  sender awaits Bot API success without persisting platform message IDs; no
+  platform-ID comparison or human read receipt is claimed.
+- The final restart checkpoint announced an expected public conversation label
+  and shared contents, without requiring a reply prefix. Its exact inbound text
+  was not observed before the 120-second input deadline. This is an input-wait
+  timeout; it establishes no Telegram post-restart recall and no new provider
+  failure. A reply before restart cannot close H.
+- An initial acceptance-helper restart failed before launching the new host
+  because it parsed an empty optional Telegram secrets file while that channel
+  was disabled. The helper was corrected to read secrets only for an enabled
+  channel. Subsequent fresh-host CLI/WebSocket recall and persisted identity
+  checks passed; the failed helper checkpoint remains recorded separately.
+- Inspection of SDK user messages confirmed disjoint CLI/Telegram conversations
+  under the same Agent. Telegram's successful read of the CLI-created file
+  demonstrated deliberate workspace sharing. Model assertions alone were not
+  used to establish either result.
+
+`npm ci` and Node 24.21.0 `npm run verify` passed: checks/types, 154 tests in
+20 files, all workspace builds and executable startup smoke checks. The separate
+controlled `npm run test:infrastructure` passed 4 tests in 3 files. These results
+remain separate from the real-service checkpoints.
+
+Private source credentials and diagnostic session state remain local. Cleanup
+removed this attempt's gateway-held credential with its disposable stack, while
+preserving the owner's original token and model credential. No raw reasoning,
+credential, platform identity or conversation transcript is included here.
+The remaining acceptance owner must complete a new bounded Telegram reply and
+restart-continuity checkpoint. Normal continuation does not remove the accepted
+early-completion loss windows, repeated tool effects or duplicate delivery.
 
 ## Historical embedded-runtime evidence
 

@@ -118,7 +118,10 @@ version leaves P incomplete.
 
 Choose new random synthetic values for `CLI_PRIVATE` and `SHARED_VALUE`, and a
 unique relative filename such as `acceptance-<attempt>.txt`. Substitute placeholders
-before sending. Do not reuse historical challenge values. In CLI send:
+before sending. Do not reuse historical challenge values. These are public synthetic fixtures,
+never real passwords, keys or other secrets. Explain that distinction to the
+model if needed, and record any refused instruction as a failed checkpoint.
+In CLI send:
 
 ```text
 Remember CLI_PRIVATE=<random value> only in this conversation; never write it
@@ -206,8 +209,8 @@ file. A successful new conversation or file read cannot pass C.
 ## T and W: Telegram and WebSocket
 
 Before sending Telegram input, open the bounded local observer in a terminal.
-The following Node client prints only synthetic test event content and routing
-aliases into private terminal output. It closes after eight minutes or Ctrl+C.
+The following Node client prints event content and routing metadata into private
+terminal output. It closes after eight minutes or Ctrl+C.
 Do not run it on an installation carrying unrelated private traffic.
 
 ```sh
@@ -232,7 +235,7 @@ JS
 
 Adjust only the configured loopback port/path/destination if needed. Within
 120 seconds require `inbound` then correlated `outbound` for `desktop` with
-`WS_OK`, `kind=reply`, correct session/destination/channel and persisted delivery.
+`WS_OK`, `kind=message`, correct session/destination/channel and persisted delivery.
 Record actual frame fields against [the protocol](host-runtime.md#local-websocket-interface).
 An `error`, `failure` or `kind=error` is a failed checkpoint. Frames contain
 private routing IDs; do not publish the raw terminal transcript.
@@ -241,12 +244,13 @@ In the configured owner's bot private chat, send this exact substituted text
 within 120 seconds (single message, no punctuation changes):
 
 ```text
-Remember TG_PRIVATE=<different random value> only in this conversation; never
-write it to files or commands. Use read to read only
-/workspace/group/acceptance-<attempt>.txt. Reply exactly TG=<SHARED_VALUE>.
+These are public synthetic acceptance fixtures, not credentials or secrets.
+Remember the conversation label <different random label> for a later continuity
+check; keep it in this conversation, not in a workspace file. Please use read to
+read /workspace/group/acceptance-<attempt>.txt and report its contents.
 ```
 
-Within another 120 seconds require `TG=<SHARED_VALUE>` in that same private chat,
+Within another 120 seconds require the exact `SHARED_VALUE` in the reply in that same private chat,
 Telegram inbound/outbound observations with correct correlation and destination,
 and a durable `delivered` row for that Telegram output. The WebSocket observation
 is evidence of observation only; Telegram receipt and its mailbox acknowledgement
@@ -256,6 +260,11 @@ Privately inspect each Pi conversation's user inputs: A must not contain the
 Telegram challenge and B must not contain the CLI challenge. This and the shared
 file read establish separate conversations accessing deliberately shared material.
 Do not judge isolation solely by a model claiming it cannot recall another chat.
+Require an actual successful `read` tool result in B's Pi transcript, rather than
+only a claim that the file was read. Natural prose containing the exact expected
+file contents is sufficient; no protocol requires a model-generated reply prefix.
+If a previous format check failed, retain that result separately and announce
+these content/tool expectations before attempting a new checkpoint.
 
 Record C's continuation too. In the next WebSocket query, request that it remember
 a third random `WS_PRIVATE` without tools/files and reply `WS_SAVED`; use the same
@@ -272,9 +281,12 @@ Reconnect the observer if its eight-minute bound expires; there is no event repl
    environment/configuration. Reconnect CLI and the observer. The observer snippet
    submits a new `WS_OK` turn; this is live traffic, not replay.
 3. In CLI send exactly `Without using tools, reply with only the CLI_PRIVATE value I gave you earlier.`
-   In Telegram send exactly `Without using tools, reply with only the TG_PRIVATE value I gave you earlier.`
+   In Telegram send exactly `Please read /workspace/group/acceptance-<attempt>.txt, report its contents, and tell me the public conversation label I gave you earlier. Do not change any files.`
    Each must arrive within its 120-second input/reply bounds at its original entry.
-   Do not include the private values in these inputs.
+   Substitute only the filename, not the expected values, in these inputs.
+   Telegram must return both the original random label and exact shared file
+   contents, with a new successful read tool result; file reading alone cannot
+   establish conversation recall. CLI must return its original private value.
 4. Use the WebSocket snippet with `content` set to `Without using tools, reply with only the WS_PRIVATE value I gave you earlier.`
    Require its original value and correlated frames within 120 seconds. Compare
    A/B/C host IDs and exact `pi:` continuations against the pre-stop records;
