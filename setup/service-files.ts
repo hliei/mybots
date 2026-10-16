@@ -25,6 +25,10 @@ function xml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 export interface ServicePaths {
   root: string;
   nodePath: string;
@@ -35,18 +39,22 @@ export interface ServicePaths {
 }
 
 function proxyEntries(proxy: Record<string, string>): [string, string][] {
-  const present = Object.entries(proxy).filter(([, value]) => value);
-  if (present.length === 0) return [];
+  const httpsProxy = proxy.HTTPS_PROXY || proxy.ALL_PROXY || proxy.HTTP_PROXY;
+  const httpProxy = proxy.HTTP_PROXY || proxy.ALL_PROXY || proxy.HTTPS_PROXY;
+  if (!httpsProxy || !httpProxy) return [];
   const noProxy = new Set(
     (proxy.NO_PROXY ?? "")
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean),
   );
-  for (const item of ["127.0.0.1", "localhost", "::1"]) noProxy.add(item);
-  return Object.entries({ ...proxy, NO_PROXY: [...noProxy].join(",") }).filter(
-    ([, value]) => value,
-  );
+  for (const item of ["127.0.0.1", "localhost", "::1", "[::1]"]) noProxy.add(item);
+  return Object.entries({
+    NODE_USE_ENV_PROXY: "1",
+    HTTPS_PROXY: httpsProxy,
+    HTTP_PROXY: httpProxy,
+    NO_PROXY: [...noProxy].join(","),
+  });
 }
 
 export function renderLaunchdPlist(input: ServicePaths): string {
@@ -87,7 +95,7 @@ ${environment}
 
 export function renderSystemdUnit(input: ServicePaths): string {
   const environment = [["PATH", input.path], ["HOME", input.home], ...proxyEntries(input.proxy)]
-    .map(([key, value]) => `Environment=${key}=${value}`)
+    .map(([key, value]) => `Environment=${JSON.stringify(`${key}=${value}`.replaceAll("%", "%%"))}`)
     .join("\n");
   return `[Unit]
 Description=Mybots host
@@ -108,7 +116,7 @@ WantedBy=default.target
 export function renderStartScript(input: ServicePaths): string {
   return `#!/bin/bash
 set -euo pipefail
-cd ${JSON.stringify(input.root)}
+cd ${shellQuote(input.root)}
 mkdir -p logs
 if [[ -f data/service-proxy.env ]]; then
   set -a
@@ -119,14 +127,14 @@ fi
 if [[ -f mybots.pid ]] && kill -0 "$(cat mybots.pid)" 2>/dev/null; then
   kill "$(cat mybots.pid)" || true
 fi
-nohup ${JSON.stringify(input.nodePath)} packages/host/dist/index.js >> logs/mybots.log 2>> logs/mybots.error.log &
+nohup ${shellQuote(input.nodePath)} packages/host/dist/index.js >> logs/mybots.log 2>> logs/mybots.error.log &
 echo $! > mybots.pid
 `;
 }
 
 export function proxyAssignments(proxy: Record<string, string>): string {
   return `${proxyEntries(proxy)
-    .map(([key, value]) => `${key}=${value}`)
+    .map(([key, value]) => `${key}=${shellQuote(value)}`)
     .join("\n")}\n`;
 }
 

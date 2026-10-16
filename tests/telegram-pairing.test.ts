@@ -77,7 +77,9 @@ it("registers the private chat that sends the pairing code and leaves the messag
   expect(accepted).toBeUndefined();
   expect(sends).toEqual(["Pairing success!"]);
   expect(host.sessions()).toEqual([]);
-  expect(await readPairingState(root)).toBeUndefined();
+  expect(await readPairingState(root)).toMatchObject({ pairedOwner: "42" });
+  await channel.dispatch({ updateId: 2, userId: "99", chatId: "99", text: "123456" });
+  expect(readPairedTelegram(root)?.platformId).toBe("42");
   expect(readPairedTelegram(root)).toEqual({ platformId: "42", instance: "telegram" });
   await channel.dispatch({ updateId: 2, userId: "42", chatId: "42", text: "Hello" });
   expect(host.sessions()).toHaveLength(1);

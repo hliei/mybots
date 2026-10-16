@@ -3,12 +3,15 @@ import { createConnection } from "node:net";
 import { join } from "node:path";
 
 import {
+  completePairing,
   createPairingCode,
   readPairingState,
   writePairingState,
 } from "../packages/host/src/channels/telegram-pairing.ts";
 import { readPairedTelegram } from "../packages/host/src/db/index.ts";
+import { command } from "./command.ts";
 import { ensureOperatorDefaults, readEnvFile, upsertEnv } from "./env.ts";
+import { ensureRelay, installLocalGateway, isLocalGateway } from "./gateway.ts";
 import {
   agentId,
   enableTelegram,
@@ -63,25 +66,12 @@ export interface SetupContext {
 }
 
 const TOKEN_PATTERN = /^[0-9]+:[A-Za-z0-9_-]{35,}$/u;
-const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1"]);
 
 async function prepare(context: SetupContext): Promise<Record<string, string>> {
   const values = await ensureOperatorDefaults(context.root, context.env);
   await ensureHostJson(context.root, values);
   await ensureWorkspaceInstructions(context.root);
   return values;
-}
-
-async function command(
-  context: SetupContext,
-  command: string,
-  args: string[],
-): Promise<CommandResult> {
-  const result = await context.exec(command, args);
-  if (result.code !== 0) {
-    throw new SetupError(`${command} ${args.join(" ")} failed.`);
-  }
-  return result;
 }
 
 export async function runSetupStep(step: SetupStepName, context: SetupContext): Promise<void> {
@@ -128,105 +118,44 @@ async function containerStep(context: SetupContext): Promise<void> {
 
 async function gatewayStep(context: SetupContext): Promise<void> {
   const values = await prepare(context);
-  if (context.env.ONECLI_URL) {
-    if (!context.env.ONECLI_API_KEY)
-      throw new SetupError("ONECLI_API_KEY is required for a remote gateway.");
-    await checkGatewayHealth(context.env.ONECLI_URL, context.fetch);
-    await upsertEnv(context.root, {
-      ONECLI_URL: context.env.ONECLI_URL,
-      ONECLI_API_KEY: context.env.ONECLI_API_KEY,
-    });
-    context.log("Using the remote OneCLI gateway.");
-    return;
+  const url = values.ONECLI_URL ?? "http://127.0.0.1:10254";
+  if (!isLocalGateway(url) && !values.ONECLI_API_KEY) {
+    throw new SetupError("ONECLI_API_KEY is required for a remote gateway.");
   }
   if (values.ONECLI_URL) {
-    await checkGatewayHealth(values.ONECLI_URL, context.fetch);
+    await checkGatewayHealth(url, context.fetch);
     context.log("Keeping the configured OneCLI gateway.");
-    return;
-  }
-  const probe = await context.exec("onecli", ["api-host"]);
-  if (probe.code === 0 && probe.stdout.trim()) {
-    const url = probe.stdout.trim();
-    let healthy = false;
+  } else {
     try {
       await checkGatewayHealth(url, context.fetch);
-      healthy = true;
-    } catch {
-      healthy = false;
-    }
-    if (healthy) {
-      const key = await command(context, "onecli", ["api-key"]);
-      await upsertEnv(context.root, { ONECLI_URL: url, ONECLI_API_KEY: key.stdout.trim() });
-      await ensureHostJson(
-        context.root,
-        await readEnvFile(
-          context.root,
-          ["ONECLI_URL", "GATEWAY_PROXY_HOST", "CONTAINER_NETWORK"],
-          context.env,
-        ),
-      );
-      await ensureRelay(context);
       context.log("Reusing the local OneCLI gateway.");
-      return;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("does not provide /v1")) throw error;
+      await installLocalGateway(context);
+      await checkGatewayHealth(url, context.fetch);
     }
   }
-  context.log("Installing OneCLI 1.42.0.");
-  const installed = await command(context, "onecli", ["install", "--version", "1.42.0"]);
-  const url = installed.stdout.match(/^ONECLI_URL=(.+)$/mu)?.[1]?.trim();
-  const apiKey = installed.stdout.match(/^ONECLI_API_KEY=(.+)$/mu)?.[1]?.trim();
-  if (!url || !apiKey)
-    throw new SetupError("The OneCLI installer did not report a management URL and API key.");
-  const parsed = new URL(url);
-  if (!LOOPBACK.has(parsed.hostname)) {
-    throw new SetupError("The OneCLI management port must stay on the loopback interface.");
-  }
-  await checkGatewayHealth(url, context.fetch);
-  await upsertEnv(context.root, { ONECLI_URL: url, ONECLI_API_KEY: apiKey });
-  await ensureHostJson(
+  await upsertEnv(context.root, {
+    ONECLI_URL: url,
+    ...(values.ONECLI_API_KEY ? { ONECLI_API_KEY: values.ONECLI_API_KEY } : {}),
+  });
+  const updated = await readEnvFile(
     context.root,
-    await readEnvFile(
-      context.root,
-      ["ONECLI_URL", "GATEWAY_PROXY_HOST", "CONTAINER_NETWORK"],
-      context.env,
-    ),
-  );
-  await ensureRelay(context);
-  context.log("Installed OneCLI.");
-}
-
-async function ensureRelay(context: SetupContext): Promise<void> {
-  const values = await readEnvFile(
-    context.root,
-    ["CONTAINER_NETWORK", "GATEWAY_PROXY_HOST"],
+    ["ONECLI_URL", "GATEWAY_PROXY_HOST", "CONTAINER_NETWORK"],
     context.env,
   );
-  const network = values.CONTAINER_NETWORK ?? "mybots-isolated";
-  const alias = values.GATEWAY_PROXY_HOST ?? "onecli";
-  const slug = installSlug(context.root, context.env.MYBOTS_INSTALL_ID || undefined);
-  const name = `mybots-relay-${slug}`;
-  const existing = await context.exec("docker", ["inspect", name, "--format", "{{.Name}}"]);
-  if (existing.code === 0) {
-    context.log("Using the existing proxy relay.");
-    return;
-  }
-  await command(context, "docker", [
-    "run",
-    "--detach",
-    "--name",
-    name,
-    "--add-host",
-    "host.docker.internal:host-gateway",
-    "alpine/socat",
-    "TCP-LISTEN:10255,fork,reuseaddr",
-    "TCP:host.docker.internal:10255",
-  ]);
-  await command(context, "docker", ["network", "connect", "--alias", alias, network, name]);
-  context.log("Attached the proxy relay to the internal network.");
+  await ensureHostJson(context.root, updated);
+  await ensureRelay(
+    context,
+    url,
+    values.CONTAINER_NETWORK ?? "mybots-isolated",
+    values.GATEWAY_PROXY_HOST ?? "onecli",
+  );
 }
 
 async function providerAuthStep(context: SetupContext): Promise<void> {
   const values = await prepare(context);
-  if (!values.ONECLI_URL || !values.ONECLI_API_KEY) {
+  if (!values.ONECLI_URL || (!isLocalGateway(values.ONECLI_URL) && !values.ONECLI_API_KEY)) {
     throw new SetupError("Configure the OneCLI gateway before registering a model key.");
   }
   const modelHost = hostnameOf(values.MODEL_BASE_URL ?? "https://api.deepseek.com");
@@ -245,7 +174,7 @@ async function providerAuthStep(context: SetupContext): Promise<void> {
   if (!modelKey.trim()) throw new SetupError("The model API key is empty.");
   await registerBearerSecret({
     url: values.ONECLI_URL,
-    apiKey: values.ONECLI_API_KEY,
+    apiKey: values.ONECLI_API_KEY ?? "",
     ...(values.ONECLI_PROJECT_ID ? { projectId: values.ONECLI_PROJECT_ID } : {}),
     hostname: modelHost,
     value: modelKey,
@@ -258,7 +187,7 @@ async function providerAuthStep(context: SetupContext): Promise<void> {
     if (!searchKey.trim()) throw new SetupError("The search API key is empty.");
     await registerBearerSecret({
       url: values.ONECLI_URL,
-      apiKey: values.ONECLI_API_KEY,
+      apiKey: values.ONECLI_API_KEY ?? "",
       ...(values.ONECLI_PROJECT_ID ? { projectId: values.ONECLI_PROJECT_ID } : {}),
       hostname: searchHost,
       value: searchKey,
@@ -321,9 +250,9 @@ async function serviceStep(context: SetupContext): Promise<void> {
     await command(context, systemctl[0] ?? "systemctl", [
       ...systemctl.slice(1),
       "enable",
-      "--now",
       serviceUnitName(slug),
     ]);
+    await restartService(context);
     if (!rootInstall) await command(context, "loginctl", ["enable-linger", context.env.USER ?? ""]);
   } else {
     const file = join(context.root, "start-mybots.sh");
@@ -393,8 +322,6 @@ async function pairTelegramStep(context: SetupContext): Promise<void> {
   }
   const code = createPairingCode();
   await writePairingState(context.root, { code, wrongs: 0 });
-  process.stdout.write(`Pairing code: ${code}\n`);
-  context.log("Waiting for the Telegram pairing code.");
   const pairingFile = join(context.root, "data", "telegram-pairing.json");
   const discard = () => {
     void rm(pairingFile, { force: true });
@@ -402,11 +329,14 @@ async function pairTelegramStep(context: SetupContext): Promise<void> {
   process.once("SIGINT", discard);
   process.once("SIGTERM", discard);
   try {
+    process.stdout.write(`Pairing code: ${code}\n`);
+    context.log("Waiting for the Telegram pairing code.");
     if (context.waitForPairing) await context.waitForPairing(context.root);
     else await pollPairing(context.root);
   } finally {
     process.off("SIGINT", discard);
     process.off("SIGTERM", discard);
+    await completePairing(context.root);
   }
   context.log("Telegram pairing completed.");
 }
@@ -415,9 +345,9 @@ async function pollPairing(root: string): Promise<void> {
   const deadline = Date.now() + 10 * 60 * 1000;
   let seen = (await readPairingState(root))?.code;
   while (Date.now() < deadline) {
-    if (readPairedTelegram(root)) return;
     const state = await readPairingState(root);
     if (!state) throw new SetupError("Pairing stopped. Run pair-telegram again for a new code.");
+    if (state.pairedOwner && readPairedTelegram(root)?.platformId === state.pairedOwner) return;
     if (state.code !== seen) {
       seen = state.code;
       process.stdout.write(`Pairing code: ${state.code}\n`);

@@ -30,6 +30,23 @@ assignments are ignored. Containers do not inherit `.env`.
 | `WEB_SEARCH_PROVIDER`, `WEB_SEARCH_ENDPOINT` | Optional search endpoint. Both are required together. |
 | `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` | Optional outbound proxy for the host service, not the runner. |
 
+With no gateway URL configured, setup checks `http://127.0.0.1:10254` and
+reuses a healthy local gateway. Otherwise it downloads the OneCLI 1.42.0 Compose
+definition into `~/.onecli/` and starts it with Docker Compose. Fresh installs
+bind published ports to loopback and do not load a parent `.env` into the gateway.
+An existing Compose definition is kept. The local single-user gateway does not
+require a management key; a remote gateway requires `ONECLI_API_KEY`.
+Setup uses the management HTTP API and does not require the OneCLI CLI.
+
+Each gateway step reconciles the proxy relay, including its running state and
+internal-network alias. A local container gateway is reached through its backend
+network, so the management port can stay on loopback on Linux too. Remote
+gateways must expose their proxy on port `10255` to the relay. The relay restarts
+unless explicitly stopped; the gateway and database never join the runner network.
+
+Generated services enable Node's environment-proxy support. `ALL_PROXY` supplies
+an HTTP/HTTPS fallback, and loopback addresses always bypass the outbound proxy.
+
 `MYBOTS_MODEL_API_KEY` and `MYBOTS_SEARCH_API_KEY` are unattended prompt inputs.
 They are not read from `.env` and are not written back. `MYBOTS_SKIP` names wizard
 steps to skip. `MYBOTS_INSTALL_ID` overrides the service slug.
@@ -81,6 +98,10 @@ is wired to the configured personal Agent with a separate persistent session.
   fails startup. Pairing registers one `telegram:<user-id>` owner and the
   `owner-chat` destination in `data/host.db`. The next start merges that record
   over `host.json`. Groups and unpaired private chats produce no Agent work.
+
+Re-running pairing requires the current code even when an owner already exists.
+Successful registration records completion for that attempt and disables its code.
+The wizard removes the attempt file when it completes or fails.
 
 Omitting a channel section disables its listener. Telegram destinations require
 matching Telegram settings. `container.network` must already exist and be internal; the host checks that on

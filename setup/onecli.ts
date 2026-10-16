@@ -4,7 +4,10 @@ export class SetupError extends Error {}
 export async function checkGatewayHealth(url: string, fetchImpl: typeof fetch): Promise<void> {
   let response: Response;
   try {
-    response = await fetchImpl(new URL("/v1/health", url), { redirect: "error" });
+    response = await fetchImpl(new URL("/v1/health", url), {
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
   } catch {
     throw new SetupError(`OneCLI health check failed at ${url}.`);
   }
@@ -51,9 +54,9 @@ export async function registerBearerSecret(input: {
   fetchImpl: typeof fetch;
 }): Promise<RegisteredSecret> {
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${input.apiKey}`,
     "Content-Type": "application/json",
   };
+  if (input.apiKey) headers.Authorization = `Bearer ${input.apiKey}`;
   if (input.projectId) headers["X-Project-Id"] = input.projectId;
   const base = input.url.replace(/\/$/u, "");
   const agent = await input.fetchImpl(`${base}/v1/agents`, {
@@ -63,6 +66,18 @@ export async function registerBearerSecret(input: {
   });
   if (!agent.ok && agent.status !== 409) {
     throw new SetupError(`OneCLI could not ensure agent ${input.agentId}.`);
+  }
+  let agentRecord: { id?: unknown; identifier?: unknown };
+  if (agent.status === 409) {
+    const listed = await input.fetchImpl(`${base}/v1/agents`, { headers });
+    if (!listed.ok) throw new SetupError("OneCLI could not list agents.");
+    const agents = (await listed.json()) as { id?: unknown; identifier?: unknown }[];
+    agentRecord = agents.find((item) => item.identifier === input.agentId) ?? {};
+  } else {
+    agentRecord = await agent.json();
+  }
+  if (typeof agentRecord.id !== "string") {
+    throw new SetupError(`OneCLI did not return an id for agent ${input.agentId}.`);
   }
   const listed = await input.fetchImpl(`${base}/v1/secrets`, { headers });
   if (!listed.ok) throw new SetupError("OneCLI could not list secrets.");
@@ -78,7 +93,7 @@ export async function registerBearerSecret(input: {
   };
   const saved = existing
     ? await input.fetchImpl(`${base}/v1/secrets/${existing.id}`, {
-        method: "PUT",
+        method: "PATCH",
         headers,
         body: JSON.stringify(body),
       })
@@ -95,12 +110,16 @@ export async function registerBearerSecret(input: {
       : undefined;
   const id = returned ?? existing?.id;
   if (!id) throw new SetupError(`OneCLI did not return a secret id for ${input.hostname}.`);
-  const grant = await input.fetchImpl(`${base}/v1/agents/${input.agentId}/secrets`, {
-    method: "POST",
+  const grantUrl = `${base}/v1/agents/${agentRecord.id}/secrets`;
+  const current = await input.fetchImpl(grantUrl, { headers });
+  if (!current.ok) throw new SetupError("OneCLI could not read the Agent's secret grants.");
+  const secretIds = (await current.json()) as string[];
+  const grant = await input.fetchImpl(grantUrl, {
+    method: "PUT",
     headers,
-    body: JSON.stringify({ secretId: id }),
+    body: JSON.stringify({ secretIds: [...new Set([...secretIds, id])] }),
   });
-  if (!grant.ok && grant.status !== 409) {
+  if (!grant.ok) {
     throw new SetupError(`OneCLI could not grant the secret to agent ${input.agentId}.`);
   }
   return { id, created: !existing };

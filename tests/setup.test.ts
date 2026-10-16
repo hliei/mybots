@@ -1,8 +1,17 @@
+import { rmSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+
+import {
+  completePairing,
+  markPairingCompleted,
+  readPairingState,
+} from "../packages/host/src/channels/telegram-pairing.ts";
+import { loadHostSettings } from "../packages/host/src/config/host.ts";
+import { HostStore } from "../packages/host/src/db/index.ts";
 
 import { runSetup } from "../setup/auto.ts";
 import { registerBearerSecret } from "../setup/onecli.ts";
@@ -45,6 +54,7 @@ function context(
     },
     async exec(command, args) {
       commands.push([command, ...args].join(" "));
+      if (args[0] === "inspect") return { code: 1, stdout: "", stderr: "missing" };
       return { code: 0, stdout: "", stderr: "" };
     },
     async prompt() {
@@ -64,10 +74,9 @@ describe("gateway setup", () => {
   it("reuses a healthy local gateway without installing it", async () => {
     const root = await installRoot();
     const ctx = context(root, {
+      env: { ONECLI_API_KEY: "oc_local_key" },
       async exec(command, args) {
         ctx.commands.push([command, ...args].join(" "));
-        if (command === "onecli" && args[0] === "api-host") return ok("http://127.0.0.1:10254\n");
-        if (command === "onecli" && args[0] === "api-key") return ok("oc_local_key\n");
         if (args[0] === "inspect") return { code: 1, stdout: "", stderr: "missing" };
         return ok();
       },
@@ -113,22 +122,10 @@ describe("gateway setup", () => {
     expect(ctx.commands.some((line) => line.startsWith("onecli"))).toBe(false);
   });
 
-  it("rejects a non-loopback management URL and keeps the installer output out of the log", async () => {
-    const root = await installRoot();
-    const ctx = context(root, {
-      async exec(command, args) {
-        ctx.commands.push([command, ...args].join(" "));
-        if (command === "onecli" && args[0] === "api-host")
-          return { code: 1, stdout: "", stderr: "missing" };
-        if (command === "onecli" && args[0] === "install") {
-          return ok("ONECLI_URL=http://0.0.0.0:10254\nONECLI_API_KEY=oc_secret_install\n");
-        }
-        return ok();
-      },
-    });
-    await expect(runSetup(ctx, ["gateway"])).rejects.toThrow(/loopback/);
-    const log = await readFile(join(root, "logs", "setup-steps", "01-gateway.log"), "utf8");
-    expect(log).not.toContain("oc_secret_install");
+  it("requires a management credential for a remote gateway", async () => {
+    const ctx = context(await installRoot(), { env: { ONECLI_URL: "https://vault.example" } });
+    await expect(runSetup(ctx, ["gateway"])).rejects.toThrow(/ONECLI_API_KEY/);
+    expect(ctx.commands).toEqual([]);
   });
 });
 
@@ -171,12 +168,13 @@ describe("provider auth", () => {
         const url = String(input);
         const method = init?.method ?? "GET";
         if (url.endsWith("/v1/agents") && method === "POST")
-          return new Response("{}", { status: 200 });
+          return new Response('{"id":"agent-1"}', { status: 201 });
         if (url.endsWith("/v1/secrets") && method === "GET")
           return new Response("[]", { status: 200 });
         if (url.endsWith("/v1/secrets") && method === "POST")
           return new Response('{"id":"sec-1"}', { status: 201 });
-        if (url.endsWith("/secrets")) return new Response(null, { status: 200 });
+        if (url.endsWith("/secrets"))
+          return new Response(method === "GET" ? "[]" : '{"success":true}', { status: 200 });
         return new Response("no", { status: 500 });
       },
     });
@@ -212,9 +210,11 @@ describe("provider auth", () => {
             },
           );
         }
-        if (url.endsWith("/v1/secrets/sec-1") && method === "PUT")
+        if (url.endsWith("/v1/secrets/sec-1") && method === "PATCH")
           return new Response('{"id":"sec-1"}', { status: 200 });
-        if (method === "POST") return new Response("{}", { status: 200 });
+        if (url.endsWith("/v1/agents")) return new Response('{"id":"agent-1"}', { status: 201 });
+        if (url.endsWith("/agents/agent-1/secrets"))
+          return new Response(method === "GET" ? "[]" : '{"success":true}', { status: 200 });
         return new Response("no", { status: 500 });
       },
     });
@@ -223,7 +223,7 @@ describe("provider auth", () => {
     expect(methods.some((line) => line.startsWith("POST") && line.endsWith("/v1/secrets"))).toBe(
       false,
     );
-    expect(methods).toContain("PUT http://127.0.0.1:10254/v1/secrets/sec-1");
+    expect(methods).toContain("PATCH http://127.0.0.1:10254/v1/secrets/sec-1");
   });
 });
 
@@ -288,13 +288,84 @@ describe("service install", () => {
     expect(plist).toContain("http://user:pw@proxy.example:8080");
     expect(plist).toContain("127.0.0.1,localhost,::1");
     const proxy = await readFile(join(root, "data", "service-proxy.env"), "utf8");
-    expect(proxy).toContain("HTTPS_PROXY=http://user:pw@proxy.example:8080");
+    expect(proxy).toContain("HTTPS_PROXY='http://user:pw@proxy.example:8080'");
     expect((await stat(join(root, "data", "service-proxy.env"))).mode & 0o777).toBe(0o600);
     expect(ctx.commands.some((line) => line.includes("kickstart -k"))).toBe(true);
+    expect(plist).toContain("<key>NODE_USE_ENV_PROXY</key>");
+  });
+
+  it("restarts the Linux service after replacing its configuration", async () => {
+    const ctx = context(await installRoot(), { platform: "linux", env: { USER: "fixture" } });
+    await runSetupStep("service", ctx);
+    const slug = installSlug(ctx.root);
+    expect(ctx.commands).toContain(`systemctl --user restart mybots-${slug}.service`);
   });
 });
 
 describe("telegram pairing step", () => {
+  it("waits for completion of the new attempt even when pairing the same owner", async () => {
+    const root = await installRoot();
+    await mkdir(join(root, "data"));
+    const settings = await loadHostSettings(join(root, "examples/host/host.json"));
+    const store = new HostStore(join(root, "data/host.db"), settings.configuration);
+    store.registerTelegramOwner("42", "telegram");
+    const ready = Promise.withResolvers<void>();
+    let completed = false;
+    const ctx = context(root, {
+      env: { TELEGRAM_BOT_TOKEN: `123456789:${"D".repeat(35)}` },
+      log(line) {
+        if (line === "Waiting for the Telegram pairing code.") ready.resolve();
+      },
+    });
+    const task = runSetupStep("pair-telegram", ctx).then(() => {
+      completed = true;
+    });
+    try {
+      await ready.promise;
+      expect(await readPairingState(root)).toMatchObject({ wrongs: 0 });
+      expect(completed).toBe(false);
+      await markPairingCompleted(root, "42");
+      await task;
+      expect(completed).toBe(true);
+      expect(await readPairingState(root)).toBeUndefined();
+    } finally {
+      await completePairing(root);
+      await task.catch(() => {});
+      store.close();
+    }
+  });
+
+  it("cleans up the code when waiting for pairing fails", async () => {
+    const root = await installRoot();
+    const ctx = context(root, {
+      env: { TELEGRAM_BOT_TOKEN: `123456789:${"E".repeat(35)}` },
+      async waitForPairing() {
+        throw new Error("Pairing cancelled by fixture");
+      },
+    });
+    await expect(runSetupStep("pair-telegram", ctx)).rejects.toThrow(/cancelled by fixture/);
+    expect(await readPairingState(root)).toBeUndefined();
+  });
+
+  it("does not treat an earlier owner as completion when the current attempt stops", async () => {
+    const root = await installRoot();
+    await mkdir(join(root, "data"));
+    const settings = await loadHostSettings(join(root, "examples/host/host.json"));
+    const store = new HostStore(join(root, "data/host.db"), settings.configuration);
+    store.registerTelegramOwner("42", "telegram");
+    store.close();
+    const ctx = context(root, {
+      env: { TELEGRAM_BOT_TOKEN: `123456789:${"C".repeat(35)}` },
+      log(line) {
+        if (line === "Waiting for the Telegram pairing code.") {
+          // A stopped/exhausted attempt has no pending file, but the prior owner remains.
+          rmSync(join(root, "data/telegram-pairing.json"));
+        }
+      },
+    });
+    await expect(runSetupStep("pair-telegram", ctx)).rejects.toThrow(/Pairing stopped/);
+  });
+
   it("saves a checked token without logging it and restarts the service", async () => {
     const root = await installRoot();
     const token = `123456789:${"A".repeat(35)}`;
@@ -315,12 +386,9 @@ describe("telegram pairing step", () => {
     expect(host).toContain('"instance": "telegram"');
     expect(host).not.toContain(token);
     expect(ctx.commands.some((line) => line.includes("kickstart -k"))).toBe(true);
-    const pairing = JSON.parse(
-      await readFile(join(root, "data", "telegram-pairing.json"), "utf8"),
-    ) as {
-      code: string;
-    };
-    expect(pairing.code).toMatch(/^\d{6}$/u);
+    await expect(readFile(join(root, "data", "telegram-pairing.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     expect((await stat(join(root, ".env"))).mode & 0o777).toBe(0o600);
   });
 

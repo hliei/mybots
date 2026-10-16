@@ -8,7 +8,7 @@ import {
   type TelegramPollResult,
   type TelegramUpdate,
 } from "./telegram-api.ts";
-import { completePairing, takePairingAttempt } from "./telegram-pairing.ts";
+import { markPairingCompleted, takePairingAttempt } from "./telegram-pairing.ts";
 
 export interface TelegramDestination {
   id: string;
@@ -115,7 +115,7 @@ export class TelegramChannel {
       if (attempt.kind === "matched") {
         this.options.registerOwner?.(update.userId);
         this.admitOwner(update.userId);
-        await completePairing(this.options.pairingRoot);
+        await markPairingCompleted(this.options.pairingRoot, update.userId);
         await this.options.api.sendMessage(
           update.chatId,
           "Pairing success!",

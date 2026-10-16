@@ -3,13 +3,21 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { loadHostSettings } from "../packages/host/src/config/host.ts";
 import { applyOperatorEnvironment } from "../packages/host/src/config/operator-env.ts";
 import { runHost } from "../packages/host/src/index.ts";
+import { OPERATOR_ENV_KEYS } from "../setup/env.ts";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const roots: string[] = [];
+
+beforeEach(() => {
+  for (const key of OPERATOR_ENV_KEYS) vi.stubEnv(key, undefined);
+  vi.stubGlobal("fetch", () => {
+    throw new Error("Unexpected network request");
+  });
+});
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -76,7 +84,14 @@ it("fails startup when Telegram is enabled and TELEGRAM_BOT_TOKEN is missing", a
   await writeFile(file, JSON.stringify(settings));
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
-    await expect(runHost(["--root", root, "--config", file])).resolves.toBe(1);
+    await expect(
+      runHost(["--root", root, "--config", file], {
+        inspectNetwork: async () => "internal",
+        createTelegramApi: () => {
+          throw new Error("Unexpected Bot API initialization");
+        },
+      }),
+    ).resolves.toBe(1);
     expect(error.mock.calls.flat().join("\n")).toContain("TELEGRAM_BOT_TOKEN");
   } finally {
     error.mockRestore();

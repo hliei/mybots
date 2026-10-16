@@ -1,5 +1,5 @@
-import { randomInt } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { randomInt, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export const TELEGRAM_PAIRING_FILE = join("data", "telegram-pairing.json");
@@ -10,6 +10,7 @@ const MAXIMUM_REPLACEMENTS = 5;
 interface PairingState {
   code: string;
   wrongs: number;
+  pairedOwner?: string;
 }
 
 export type PairingAttempt =
@@ -30,7 +31,13 @@ export function pairingMessageMatches(text: string, code: string): boolean {
 export async function writePairingState(root: string, state: PairingState): Promise<void> {
   const file = join(root, TELEGRAM_PAIRING_FILE);
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
-  await writeFile(file, `${JSON.stringify(state)}\n`, { mode: 0o600 });
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(state)}\n`, { mode: 0o600 });
+    await rename(temporary, file);
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 export async function readPairingState(root: string): Promise<PairingState | undefined> {
@@ -48,7 +55,17 @@ export async function readPairingState(root: string): Promise<PairingState | und
       value.wrongs < 0
     )
       return undefined;
-    return { code: value.code, wrongs: value.wrongs };
+    const pairedOwner = "pairedOwner" in value ? value.pairedOwner : undefined;
+    if (
+      pairedOwner !== undefined &&
+      (typeof pairedOwner !== "string" || !/^\d+$/u.test(pairedOwner))
+    )
+      return undefined;
+    return {
+      code: value.code,
+      wrongs: value.wrongs,
+      ...(typeof pairedOwner === "string" ? { pairedOwner } : {}),
+    };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     return undefined;
@@ -61,7 +78,7 @@ export async function readPairingState(root: string): Promise<PairingState | und
  */
 export async function takePairingAttempt(root: string, text: string): Promise<PairingAttempt> {
   const state = await readPairingState(root);
-  if (!state) return { kind: "absent" };
+  if (!state || state.pairedOwner) return { kind: "absent" };
   if (!text.trim()) return { kind: "absent" };
   if (pairingMessageMatches(text, state.code)) return { kind: "matched" };
   const wrongs = state.wrongs + 1;
@@ -75,4 +92,10 @@ export async function takePairingAttempt(root: string, text: string): Promise<Pa
 
 export async function completePairing(root: string): Promise<void> {
   await rm(join(root, TELEGRAM_PAIRING_FILE), { force: true });
+}
+
+/** Publish completion for this attempt; its code can no longer admit another owner. */
+export async function markPairingCompleted(root: string, platformId: string): Promise<void> {
+  const state = await readPairingState(root);
+  if (state) await writePairingState(root, { ...state, pairedOwner: platformId });
 }
