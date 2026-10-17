@@ -89,25 +89,6 @@ describe("gateway setup", () => {
     const root = await installRoot();
     const ctx = context(root, {
       env: { ONECLI_API_KEY: "oc_local_key" },
-      async exec(command, args) {
-        ctx.commands.push([command, ...args].join(" "));
-        if (args[0] === "network" && args[1] === "inspect") return ok("true");
-        if (args[0] === "inspect" && args[1] === "onecli") {
-          const networks = {
-            backend: { IPAddress: "172.20.0.2" },
-            "mybots-isolated": { IPAddress: "172.21.0.2", Aliases: ["onecli"] },
-          };
-          return ok(
-            JSON.stringify(
-              args.at(-1) === "{{json .}}"
-                ? { State: { Running: true }, NetworkSettings: { Networks: networks } }
-                : networks,
-            ),
-          );
-        }
-        if (args[0] === "inspect") return { code: 1, stdout: "", stderr: "missing" };
-        return ok();
-      },
     });
     await runSetupStep("gateway", ctx);
     expect(ctx.commands.some((line) => line.includes("install"))).toBe(false);

@@ -20,21 +20,30 @@ export async function connectGateway(
       throw new Error();
     const internal = await docker(["network", "inspect", network, "--format", "{{.Internal}}"]);
     if (internal.stdout.trim() !== "true") throw new Error();
-    const inspected = await docker(["inspect", container, "--format", "{{json .}}"]);
-    const gateway = JSON.parse(inspected.stdout) as {
-      State: { Running: boolean };
-      NetworkSettings: { Networks: Record<string, { IPAddress?: string; Aliases?: string[] }> };
-    };
-    const networks = gateway.NetworkSettings.Networks;
-    if (
-      !gateway.State.Running ||
-      !Object.entries(networks).some(([name, value]) => name !== network && value.IPAddress)
-    )
-      throw new Error();
-    const attached = networks[network];
-    if (attached?.Aliases?.includes(alias)) return;
-    if (attached) await docker(["network", "disconnect", network, container]);
-    await docker(["network", "connect", "--alias", alias, network, container]);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const inspected = await docker(["inspect", container, "--format", "{{json .}}"]);
+      const gateway = JSON.parse(inspected.stdout) as {
+        State: { Running: boolean };
+        NetworkSettings: { Networks: Record<string, { IPAddress?: string; Aliases?: string[] }> };
+      };
+      const networks = gateway.NetworkSettings.Networks;
+      if (
+        !gateway.State.Running ||
+        !Object.entries(networks).some(([name, value]) => name !== network && value.IPAddress)
+      )
+        throw new Error();
+      const attached = networks[network];
+      if (attached?.IPAddress && attached.Aliases?.includes(alias)) return;
+      // The last observation verifies a concurrent caller's completed repair.
+      if (attempt === 2) throw new Error();
+      try {
+        if (attached) await docker(["network", "disconnect", network, container]);
+        await docker(["network", "connect", "--alias", alias, network, container]);
+        return;
+      } catch {
+        // Another session may have changed this shared attachment. Re-read it.
+      }
+    }
   } catch {
     throw new Error(
       "Direct OneCLI network attachment failed; check the running local gateway, separate backend and internal session network. No direct Internet fallback is available.",

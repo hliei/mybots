@@ -83,7 +83,10 @@ async function fixture() {
               Cmd: ["TCP-LISTEN:10255,fork,reuseaddr", "TCP:172.20.0.2:10255"],
             },
             NetworkSettings: {
-              Networks: { "mybots-isolated": { Aliases: ["onecli"] }, backend: {} },
+              Networks: {
+                ...(state.relayAttached ? { "mybots-isolated": { Aliases: ["onecli"] } } : {}),
+                backend: {},
+              },
             },
           }),
         );
@@ -161,4 +164,12 @@ it("does not remove an unrelated container or a relay after attachment failure",
   state.foreignRelay = true;
   await expect(runSetupStep("gateway", ctx)).rejects.toThrow("refusing to remove");
   expect(state.relay && state.relayAttached).toBe(true);
+});
+
+it("finishes an interrupted migration whose verified relay is already detached", async () => {
+  const { ctx, state } = await fixture();
+  state.relay = true;
+  state.relayAttached = false;
+  await runSetupStep("gateway", ctx);
+  expect(state).toMatchObject({ relay: false, connected: true });
 });

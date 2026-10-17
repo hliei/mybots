@@ -98,7 +98,9 @@ export async function ensureDirectGateway(
       relay.Config.Cmd.length !== 2 ||
       relay.Config.Cmd[0] !== "TCP-LISTEN:10255,fork,reuseaddr" ||
       !/^TCP:[^:]+:10255$/.test(relay.Config.Cmd[1]) ||
-      !relay.NetworkSettings.Networks[network]
+      !Object.keys(relay.NetworkSettings.Networks).some(
+        (name) => name !== network && networks[name],
+      )
     )
       throw new SetupError(
         "The legacy relay does not match this installation; refusing to remove it.",
@@ -109,18 +111,20 @@ export async function ensureDirectGateway(
       await command(context, "docker", ["network", "disconnect", network, "onecli"]);
       throw error;
     }
-    const aliases = relay.NetworkSettings.Networks[network].Aliases ?? [];
-    await command(context, "docker", ["network", "disconnect", network, name]);
+    const attached = relay.NetworkSettings.Networks[network];
+    const aliases = attached?.Aliases ?? [];
+    if (attached) await command(context, "docker", ["network", "disconnect", network, name]);
     try {
       await probe(alias);
     } catch (error) {
-      await command(context, "docker", [
-        "network",
-        "connect",
-        ...aliases.flatMap((value) => ["--alias", value]),
-        network,
-        name,
-      ]);
+      if (attached)
+        await command(context, "docker", [
+          "network",
+          "connect",
+          ...aliases.flatMap((value) => ["--alias", value]),
+          network,
+          name,
+        ]);
       await command(context, "docker", ["network", "disconnect", network, "onecli"]);
       throw error;
     }

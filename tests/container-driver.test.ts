@@ -226,3 +226,86 @@ writeFileSync(file, JSON.stringify(s));
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("concurrent session starts share a gateway attachment repaired by either caller", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mybots-driver-concurrent-network-"));
+  try {
+    const materials = await Promise.all(
+      ["cli", "telegram"].map((sessionId) =>
+        provisionSession({
+          root,
+          key: { agentGroupId: "personal", sessionId },
+          folder: "personal",
+          model: {
+            provider: "controlled",
+            id: "model",
+            baseUrl: "https://model.test",
+            contextWindow: 32768,
+            maxTokens: 4096,
+          },
+        }),
+      ),
+    );
+    const trustFile = join(root, "data", "gateway-trust", "ca.pem");
+    await mkdir(join(root, "data", "gateway-trust"));
+    await writeFile(trustFile, "public trust fixture");
+    const bin = join(root, "bin");
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "docker"),
+      `#!${process.execPath}
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+const root = ${JSON.stringify(root)};
+const endpoint = root + "/gateway-endpoint";
+const args = process.argv.slice(2);
+if (args[0] === "network" && args[1] === "inspect") console.log("true");
+if (args[0] === "inspect" && args[1] === "onecli") {
+  const attached = existsSync(endpoint);
+  writeFileSync(root + "/inspect-" + process.pid, "");
+  const deadline = Date.now() + 3000;
+  while (readdirSync(root).filter(x => x.startsWith("inspect-")).length < 2) {
+    if (Date.now() > deadline) process.exit(1);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+  }
+  console.log(JSON.stringify({State:{Running:true},NetworkSettings:{Networks:{backend:{IPAddress:"172.20.0.2"},...(attached?{session:{IPAddress:"172.21.0.2",Aliases:["proxy"]}}:{})}}}));
+}
+if (args[0] === "network" && args[1] === "connect") {
+  try { mkdirSync(endpoint); } catch { process.exit(1); }
+}
+if (args[0] === "run") console.log(args[args.indexOf("--name")+1]);
+`,
+      { mode: 0o700 },
+    );
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+    const driver = new DockerDriver({
+      gateway: {
+        ensure: async () => ({
+          trustFile,
+          target: { container: "onecli", alias: "proxy" },
+          env: {
+            HTTPS_PROXY: "http://x:fixture@proxy:10255",
+            HTTP_PROXY: "http://x:fixture@proxy:10255",
+            NODE_EXTRA_CA_CERTS: "/run/gateway/ca.pem",
+          },
+        }),
+      },
+      image: "mybots-agent",
+      network: "session",
+    });
+    const results = await Promise.allSettled(
+      materials.map((material) => driver.start(material, new AbortController().signal)),
+    );
+    try {
+      expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
+    } finally {
+      await Promise.all(
+        results
+          .filter((result) => result.status === "fulfilled")
+          .map((result) => result.value.stop()),
+      );
+    }
+  } finally {
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true });
+  }
+});
