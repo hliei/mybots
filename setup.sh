@@ -23,10 +23,19 @@ else
   esac
   mkdir -p .tools
   tmp="$(mktemp -d)"
-  curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/${archive}.tar.gz" | tar -xz -C "$tmp"
+  trap 'rm -rf "$tmp"' EXIT
+  echo "Downloading Node.js ${NODE_VERSION} (${os} ${arch})."
+  curl --http1.1 --fail --location --show-error --progress-bar \
+    --retry 2 --retry-all-errors --retry-delay 1 \
+    --connect-timeout 15 --max-time 1800 --speed-limit 1024 --speed-time 60 \
+    --output "$tmp/node.tar.gz" \
+    "https://nodejs.org/dist/${NODE_VERSION}/${archive}.tar.gz"
+  echo "Extracting Node.js ${NODE_VERSION}."
+  tar -xzf "$tmp/node.tar.gz" -C "$tmp"
   rm -rf .tools/node
   mv "$tmp/${archive}" .tools/node
   rm -rf "$tmp"
+  trap - EXIT
   NODE="$ROOT/.tools/node/bin/node"
 fi
 

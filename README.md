@@ -15,6 +15,9 @@ bash mybots.sh
 
 The script checks memory, platform, and Docker, then installs Node.js 24.21.0 when the current `node` is not that version, installs dependencies, and runs the setup wizard. The wizard builds the runner image, prepares OneCLI, asks for the model API key, writes `.env` and a generated `host.json`, installs a background service, and can pair one Telegram private chat.
 
+Node.js downloads show progress and retry up to two times on transfer failure.
+Extraction starts only after the download succeeds.
+
 `.env` holds operator settings and the Telegram bot token. Model and search API keys are registered in OneCLI and are not written to `.env`. See [configuration](docs/configuration.md) for the variable names. `.env.example` lists the names with empty values.
 
 The same second half, after Node.js 24.21.0 is on `PATH`:
