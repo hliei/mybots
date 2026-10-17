@@ -355,6 +355,19 @@ async function controlledTerminal() {
   };
 }
 
+it("labels host replies separately from the next user input prompt", async () => {
+  const terminal = await controlledTerminal();
+  const received = new Promise<void>((resolve) => terminal.peer.once("data", () => resolve()));
+  terminal.child.stdin.write("Read the test file\n");
+  await waitForCheckpoint(received, "terminal input");
+  terminal.peer.write(`${JSON.stringify({ text: "MYBOTS_FILE_OK_7D93A" })}\n`);
+  await vi.waitFor(() => expect(terminal.stdout).toContain("MYBOTS_FILE_OK_7D93A"));
+  expect(terminal.stdout).toContain("\nBot: MYBOTS_FILE_OK_7D93A\nYou: ");
+  expect(terminal.stdout).not.toContain("You: MYBOTS_FILE_OK_7D93A");
+  terminal.child.stdin.end("quit\n");
+  expect(await waitForCheckpoint(terminal.exited, "terminal quit")).toBe(0);
+});
+
 it("preserves text framing across fragmented and coalesced replies", async () => {
   const terminal = await controlledTerminal();
   let input = "";

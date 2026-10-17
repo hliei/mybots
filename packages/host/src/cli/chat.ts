@@ -1,5 +1,5 @@
 import { Socket } from "node:net";
-import { createInterface, type Interface } from "node:readline";
+import { clearLine, createInterface, cursorTo, type Interface } from "node:readline";
 import { type CliSocketClient, connectCliSocket } from "./socket-client.ts";
 
 export async function runChat(root: string): Promise<number> {
@@ -23,9 +23,15 @@ export async function runChat(root: string): Promise<number> {
     let voluntary = false;
     let connectionFailed = false;
     connection = await connectCliSocket(root, (text) => {
-      process.stdout.write(`${text}\n`);
+      if (lines) {
+        if (process.stdout.isTTY) {
+          clearLine(process.stdout, 0);
+          cursorTo(process.stdout, 0);
+        } else process.stdout.write("\n");
+      }
+      process.stdout.write(`Bot: ${text}\n`);
       if (text === "[superseded by a newer client]") lines?.close();
-      else if (!voluntary) lines?.prompt();
+      else if (!voluntary) lines?.prompt(true);
     });
     console.log("Connected to Mybots host. Type quit to disconnect.");
     lines = createInterface({ input: process.stdin, output: process.stdout, prompt: "You: " });
