@@ -17,7 +17,7 @@ assignments are ignored. Containers do not inherit `.env`.
 
 | Name | Meaning |
 | --- | --- |
-| `ONECLI_URL` | Gateway management URL. Remote access stays on a tunnel or private network. |
+| `ONECLI_URL` | Local OneCLI management URL on loopback. Remote relay gateways are unsupported. |
 | `ONECLI_API_KEY` | Gateway management credential. Host only. |
 | `ONECLI_PROJECT_ID` | Optional project id. Written only when already set. |
 | `TELEGRAM_BOT_TOKEN` | Bot API token for the host client. Required when `telegram` is enabled. |
@@ -35,14 +35,30 @@ reuses a healthy local gateway. Otherwise it downloads the OneCLI 1.42.0 Compose
 definition into `~/.onecli/` and starts it with Docker Compose. Fresh installs
 bind published ports to loopback and do not load a parent `.env` into the gateway.
 An existing Compose definition is kept. The local single-user gateway does not
-require a management key; a remote gateway requires `ONECLI_API_KEY`.
+require a management key. Remote gateways previously reached through a relay
+are unsupported; use the local `onecli` Docker container.
 Setup uses the management HTTP API and does not require the OneCLI CLI.
 
-Each gateway step reconciles the proxy relay, including its running state and
-internal-network alias. A local container gateway is reached through its backend
-network, so the management port can stay on loopback on Linux too. Remote
-gateways must expose their proxy on port `10255` to the relay. The relay restarts
-unless explicitly stopped; the gateway and database never join the runner network.
+Each gateway step connects the running `onecli` container to the internal session
+network with `GATEWAY_PROXY_HOST` as its alias. OneCLI keeps its separate backend
+connection; PostgreSQL stays on the backend network. Session startup and adoption
+repair the attachment after a gateway container is recreated. A missing or stopped
+gateway, missing backend connection, open session network or failed attachment
+stops execution without a direct Internet fallback.
+
+The gateway step verifies direct management/proxy health from the session network
+before removing the current installation's old `mybots-relay-<install-slug>`.
+It checks the old container's image, forwarding command and network membership;
+an unexpected container is preserved and reported. During migration, the relay
+is disconnected for alias validation and restored if that validation fails.
+Compose definitions, volumes, credentials, pairing and session data are retained.
+The runner image must already be built by the container step.
+
+Direct attachment exposes both proxy port `10255` and management port `10254` to
+sessions. In OneCLI's local mode, unauthenticated management requests act as
+`local-admin` and can change credential configuration and grants. Host loopback
+port publishing does not restrict access from containers on the same network.
+This is an accepted trust boundary; see [the network decision](adr/0009-direct-gateway-network.md).
 
 Generated services enable Node's environment-proxy support. `ALL_PROXY` supplies
 an HTTP/HTTPS fallback, and loopback addresses always bypass the outbound proxy.
@@ -107,9 +123,10 @@ Omitting a channel section disables its listener. Telegram destinations require
 matching Telegram settings. `container.network` must already exist and be internal; the host checks that on
 every start and refuses to run when it is missing or open. `EGRESS_LOCKDOWN`
 cannot skip the check. `gateway.url` is the host-reachable management endpoint
-and `gateway.proxyHost` is the proxy-only hostname reachable on that network.
+and `gateway.proxyHost` is the OneCLI container alias reachable on that network.
 Management credentials are `ONECLI_API_KEY` and optional `ONECLI_PROJECT_ID` in
-`.env`. The management plane and vault do not join the runner network.
+`.env`. OneCLI joins the session network; PostgreSQL does not. Management access
+is subject to the local-mode trust boundary described above.
 
 ## Persistence and configuration changes
 

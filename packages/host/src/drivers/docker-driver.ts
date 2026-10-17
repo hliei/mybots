@@ -4,6 +4,7 @@ import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { clearMailboxLocks } from "@mybots/mailbox";
+import { connectGateway } from "../config/gateway-network.ts";
 import type { GatewayProvider } from "../gateway-providers/types.ts";
 import type {
   ObservingSessionDriver,
@@ -56,6 +57,8 @@ export class DockerDriver implements ObservingSessionDriver {
         { timeout: 10000 },
       );
       if (network.stdout.trim() !== "true") throw new Error();
+      if (contribution.target)
+        await connectGateway({ ...contribution.target, network: this.network });
       signal.throwIfAborted();
       // Caller has exclusively admitted this stopped session.
       clearMailboxLocks(material.directory);
@@ -186,6 +189,9 @@ export class DockerDriver implements ObservingSessionDriver {
       sessionId !== material.key.sessionId
     )
       throw new Error("Observed container does not match the session");
+    const contribution = await this.gateway.ensure(material.key, signal);
+    if (contribution.target)
+      await connectGateway({ ...contribution.target, network: this.network });
     return this.attach(observation.ref, material, signal);
   }
 

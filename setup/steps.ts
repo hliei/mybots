@@ -11,7 +11,7 @@ import {
 import { readPairedTelegram } from "../packages/host/src/db/index.ts";
 import { command } from "./command.ts";
 import { ensureOperatorDefaults, readEnvFile, upsertEnv } from "./env.ts";
-import { ensureRelay, installLocalGateway, isLocalGateway } from "./gateway.ts";
+import { ensureDirectGateway, installLocalGateway, isLocalGateway } from "./gateway.ts";
 import {
   agentId,
   enableTelegram,
@@ -119,8 +119,10 @@ async function containerStep(context: SetupContext): Promise<void> {
 async function gatewayStep(context: SetupContext): Promise<void> {
   const values = await prepare(context);
   const url = values.ONECLI_URL ?? "http://127.0.0.1:10254";
-  if (!isLocalGateway(url) && !values.ONECLI_API_KEY) {
-    throw new SetupError("ONECLI_API_KEY is required for a remote gateway.");
+  if (!isLocalGateway(url)) {
+    throw new SetupError(
+      "Direct gateway access requires a local OneCLI container; remote gateways through a relay are no longer supported.",
+    );
   }
   if (values.ONECLI_URL) {
     await checkGatewayHealth(url, context.fetch);
@@ -145,11 +147,12 @@ async function gatewayStep(context: SetupContext): Promise<void> {
     context.env,
   );
   await ensureHostJson(context.root, updated);
-  await ensureRelay(
+  await ensureDirectGateway(
     context,
     url,
     values.CONTAINER_NETWORK ?? "mybots-isolated",
     values.GATEWAY_PROXY_HOST ?? "onecli",
+    values.CONTAINER_IMAGE ?? "mybots-agent:mailbox",
   );
 }
 

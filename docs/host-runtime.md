@@ -124,7 +124,7 @@ with the host, aborting in-flight requests and awaiting dispatches.
 
 `container.image` and `container.network` select an existing runner image and
 internal Docker network. `gateway.url` is the host's OneCLI management endpoint;
-`gateway.proxyHost` is the proxy-only hostname visible on the isolated runner
+`gateway.proxyHost` is the local OneCLI container alias visible on the isolated runner
 network. `ONECLI_URL`, `ONECLI_API_KEY`, and optional `ONECLI_PROJECT_ID` are
 host-only management settings in `.env`. Put real model credentials in OneCLI,
 not the JSON file. See [container execution](container-runtime.md) for gateway

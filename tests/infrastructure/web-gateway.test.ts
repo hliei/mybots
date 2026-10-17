@@ -137,6 +137,7 @@ test("the actual runner reaches the scoped search gateway target with fixture cr
     const gateway = new OneCliGateway({
       url: gatewayUrl,
       proxyHost: "proxy",
+      containerName: await docker([...compose, "ps", "-q", "gateway"]),
       trustDirectory: join(root, "data", "gateway-trust"),
     });
     const driver = new DockerDriver({
