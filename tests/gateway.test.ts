@@ -54,6 +54,7 @@ test("OneCLI contributes only scoped proxy identity, placeholder auth and public
       { agentGroupId: "personal", sessionId: "cli" },
       new AbortController().signal,
     );
+    expect(contribution.target).toEqual({ container: "onecli", alias: "gateway" });
     expect(contribution.env).toEqual({
       HTTPS_PROXY: "http://x:scoped-agent@gateway:10255/",
       HTTP_PROXY: "http://x:scoped-agent@gateway:10255/",

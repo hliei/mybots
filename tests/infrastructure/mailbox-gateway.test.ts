@@ -94,6 +94,21 @@ test("actual mounted runner uses OneCLI injection and reopens its explicit Pi co
     );
     started = true;
     await docker([...compose, "up", "--detach", "--wait", "--wait-timeout", "120"], 150000);
+    const gatewayContainer = await docker([...compose, "ps", "-q", "gateway"]);
+    const gatewayNetworks = JSON.parse(
+      await docker(["inspect", gatewayContainer, "--format", "{{json .NetworkSettings.Networks}}"]),
+    );
+    expect(gatewayNetworks[`${project}_session`]?.Aliases).toContain("proxy");
+    const postgresContainer = await docker([...compose, "ps", "-q", "postgres"]);
+    const postgresNetworks = JSON.parse(
+      await docker([
+        "inspect",
+        postgresContainer,
+        "--format",
+        "{{json .NetworkSettings.Networks}}",
+      ]),
+    );
+    expect(Object.keys(postgresNetworks)).toEqual([`${project}_backend`]);
     const gatewayUrl = `http://${await docker([...compose, "port", "gateway", "10254"])}`;
     const upstreamUrl = `http://${await docker([...compose, "port", "upstream", "8080"])}`;
     await request(`${gatewayUrl}/v1/secrets`, {
@@ -121,6 +136,7 @@ test("actual mounted runner uses OneCLI injection and reopens its explicit Pi co
     const gateway = new OneCliGateway({
       url: gatewayUrl,
       proxyHost: "proxy",
+      containerName: await docker([...compose, "ps", "-q", "gateway"]),
       trustDirectory: join(root, "data", "gateway-trust"),
     });
     const driver = new DockerDriver({
@@ -137,6 +153,27 @@ test("actual mounted runner uses OneCLI injection and reopens its explicit Pi co
       }).start(material, signal),
     ).rejects.toThrow("Docker session unavailable or invalid");
     handle = await driver.start(material, signal);
+    // Use direct sockets without the runner's proxy environment for these probes.
+    const networkEvidence = JSON.parse(
+      await docker([
+        "exec",
+        "--env",
+        "HTTP_PROXY=",
+        "--env",
+        "HTTPS_PROXY=",
+        handle.ref,
+        "bun",
+        "-e",
+        'import { lookup } from "node:dns/promises"; import { createConnection } from "node:net"; const denied = (host,port) => new Promise(resolve => { const socket = createConnection({host,port}); socket.setTimeout(1500); socket.once("connect", () => { socket.destroy(); resolve(false); }); socket.once("error", () => { socket.destroy(); resolve(true); }); socket.once("timeout", () => { socket.destroy(); resolve(true); }); }); const management = await fetch("http://proxy:10254/v1/agents", {signal: AbortSignal.timeout(5000)}); console.log(JSON.stringify({address:(await lookup("proxy")).address, management:management.status, internetDenied:await denied("1.1.1.1",443), databaseDenied:await denied(process.argv[1],5432)}));',
+        postgresNetworks[`${project}_backend`].IPAddress,
+      ]),
+    );
+    expect(networkEvidence).toEqual({
+      address: gatewayNetworks[`${project}_session`].IPAddress,
+      management: 200,
+      internetDenied: true,
+      databaseDenied: true,
+    });
     host.submit({
       id: "first",
       content: "Save a shared note and check the mount isolation",
@@ -182,6 +219,7 @@ test("actual mounted runner uses OneCLI injection and reopens its explicit Pi co
     // creating a duplicate.
     const live = (await driver.list(signal)).find((item) => item.key.sessionId === "cli");
     if (!live) throw new Error("The runtime did not report the live session container");
+    await docker(["network", "disconnect", `${project}_session`, gatewayContainer]);
     const adopted = await driver.adopt(live, material, signal);
     expect(adopted.ref).toBe(live.ref);
     // Stop also settles the driver wait resource.
@@ -198,7 +236,26 @@ test("actual mounted runner uses OneCLI injection and reopens its explicit Pi co
       platform_id: "owner-chat",
       thread_id: "thread",
     });
-    handle = await driver.start(material, signal);
+    await docker(
+      [...compose, "up", "--detach", "--force-recreate", "--no-deps", "--wait", "gateway"],
+      150000,
+    );
+    const recreatedGateway = await docker([...compose, "ps", "-q", "gateway"]);
+    expect(recreatedGateway).not.toBe(gatewayContainer);
+    await docker(["network", "disconnect", `${project}_session`, recreatedGateway]);
+    // The provider tracks the stable Compose name across replacement, not a stale ID.
+    const gatewayName = await docker(["inspect", recreatedGateway, "--format", "{{.Name}}"]);
+    const recoveredDriver = new DockerDriver({
+      gateway: new OneCliGateway({
+        url: `http://${await docker([...compose, "port", "gateway", "10254"])}`,
+        proxyHost: "proxy",
+        containerName: gatewayName.slice(1),
+        trustDirectory: join(root, "data", "gateway-trust"),
+      }),
+      image: "mybots-agent:mailbox",
+      network: `${project}_session`,
+    });
+    handle = await recoveredDriver.start(material, signal);
     const second = await Promise.race([
       eventually(() => reopened.outputs().find((row) => row.in_reply_to === "second"), signal),
       handle.wait().then(() => {

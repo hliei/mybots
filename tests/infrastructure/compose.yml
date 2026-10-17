@@ -22,15 +22,12 @@ services:
       GATEWAY_BASE_URL: proxy:10255
       GATEWAY_SKIP_VERIFY_HOSTS: model.test,search.test
       LOG_LEVEL: error
-    networks: [backend]
+    networks:
+      backend: {}
+      session:
+        aliases: [proxy]
     ports: [127.0.0.1::10254]
-    tmpfs: ["/app/data:uid=1000,gid=1000,mode=0700"]
-  proxy:
-    image: oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6
-    entrypoint: [bun, /fixture/proxy.mjs]
-    volumes:
-      - ./proxy.mjs:/fixture/proxy.mjs:ro
-    networks: [backend, session]
+    volumes: [gateway-data:/app/data]
   upstream:
     image: oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6
     entrypoint: [bun, /fixture/upstream.mjs]
@@ -49,3 +46,6 @@ networks:
     internal: false
   session:
     internal: true
+
+volumes:
+  gateway-data:

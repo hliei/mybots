@@ -54,6 +54,20 @@ function context(
     },
     async exec(command, args) {
       commands.push([command, ...args].join(" "));
+      if (args[0] === "network" && args[1] === "inspect") return ok("true");
+      if (args[0] === "inspect" && args[1] === "onecli") {
+        const networks = {
+          backend: { IPAddress: "172.20.0.2" },
+          "mybots-isolated": { IPAddress: "172.21.0.2", Aliases: ["onecli"] },
+        };
+        return ok(
+          JSON.stringify(
+            args.at(-1) === "{{json .}}"
+              ? { State: { Running: true }, NetworkSettings: { Networks: networks } }
+              : networks,
+          ),
+        );
+      }
       if (args[0] === "inspect") return { code: 1, stdout: "", stderr: "missing" };
       return { code: 0, stdout: "", stderr: "" };
     },
@@ -77,6 +91,20 @@ describe("gateway setup", () => {
       env: { ONECLI_API_KEY: "oc_local_key" },
       async exec(command, args) {
         ctx.commands.push([command, ...args].join(" "));
+        if (args[0] === "network" && args[1] === "inspect") return ok("true");
+        if (args[0] === "inspect" && args[1] === "onecli") {
+          const networks = {
+            backend: { IPAddress: "172.20.0.2" },
+            "mybots-isolated": { IPAddress: "172.21.0.2", Aliases: ["onecli"] },
+          };
+          return ok(
+            JSON.stringify(
+              args.at(-1) === "{{json .}}"
+                ? { State: { Running: true }, NetworkSettings: { Networks: networks } }
+                : networks,
+            ),
+          );
+        }
         if (args[0] === "inspect") return { code: 1, stdout: "", stderr: "missing" };
         return ok();
       },
@@ -84,13 +112,11 @@ describe("gateway setup", () => {
     await runSetupStep("gateway", ctx);
     expect(ctx.commands.some((line) => line.includes("install"))).toBe(false);
     expect(
-      ctx.commands.some((line) => line.startsWith("docker network connect --alias onecli")),
-    ).toBe(true);
-    expect(
-      ctx.commands.some(
-        (line) => line.includes("onecli") && line.includes("--network mybots-isolated"),
+      ctx.commands.some((line) =>
+        line.startsWith("docker run --rm --pull=never --network mybots-isolated"),
       ),
-    ).toBe(false);
+    ).toBe(true);
+    expect(ctx.commands.some((line) => line.includes("alpine/socat"))).toBe(false);
     const env = await readFile(join(root, ".env"), "utf8");
     expect(env).toContain("ONECLI_URL=http://127.0.0.1:10254");
     expect(env).toContain("ONECLI_API_KEY=oc_local_key");
@@ -122,9 +148,9 @@ describe("gateway setup", () => {
     expect(ctx.commands.some((line) => line.startsWith("onecli"))).toBe(false);
   });
 
-  it("requires a management credential for a remote gateway", async () => {
+  it("rejects a remote gateway that cannot attach to the internal network", async () => {
     const ctx = context(await installRoot(), { env: { ONECLI_URL: "https://vault.example" } });
-    await expect(runSetup(ctx, ["gateway"])).rejects.toThrow(/ONECLI_API_KEY/);
+    await expect(runSetup(ctx, ["gateway"])).rejects.toThrow(/local OneCLI container/);
     expect(ctx.commands).toEqual([]);
   });
 });

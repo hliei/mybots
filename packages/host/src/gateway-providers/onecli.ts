@@ -12,6 +12,8 @@ export interface OneCliOptions {
   /** Gateway address on the runner's isolated Docker network. */
   proxyHost: string;
   trustDirectory: string;
+  /** Local Docker container identity; defaults to onecli. */
+  containerName?: string;
 }
 
 export class OneCliGateway implements GatewayProvider {
@@ -23,6 +25,7 @@ export class OneCliGateway implements GatewayProvider {
     try {
       const base = new URL(this.options.url);
       if (
+        !["localhost", "127.0.0.1", "[::1]"].includes(base.hostname) ||
         !["http:", "https:"].includes(base.protocol) ||
         base.username ||
         base.password ||
@@ -96,6 +99,10 @@ export class OneCliGateway implements GatewayProvider {
       );
       proxy.hostname = this.options.proxyHost;
       return {
+        target: {
+          container: this.options.containerName ?? "onecli",
+          alias: this.options.proxyHost,
+        },
         env: {
           HTTPS_PROXY: proxy.href,
           HTTP_PROXY: proxy.href,
@@ -105,7 +112,7 @@ export class OneCliGateway implements GatewayProvider {
       };
     } catch {
       throw new Error(
-        "OneCLI gateway unavailable or unusable; check management access, scoped proxy and public CA configuration.",
+        "OneCLI gateway unavailable or unusable; check local management access, scoped proxy and public CA configuration. Remote relay gateways are unsupported.",
       );
     }
   }

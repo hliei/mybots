@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { connectGateway } from "../packages/host/src/config/gateway-network.ts";
 import { command } from "./command.ts";
 import { SetupError } from "./onecli.ts";
 import { installSlug } from "./service-files.ts";
@@ -45,83 +46,88 @@ export async function installLocalGateway(context: SetupContext): Promise<void> 
   ]);
 }
 
-interface Network {
-  IPAddress?: string;
-  Aliases?: string[];
-}
-
-interface Relay {
-  State: { Running: boolean };
-  Config: { Cmd: string[] };
-  HostConfig: { NetworkMode: string; RestartPolicy: { Name: string } };
-  NetworkSettings: { Networks: Record<string, Network> };
-}
-
-/** Only the proxy relay joins the internal runner network, never the vault. */
-export async function ensureRelay(
+/** Attach the local gateway itself; the database stays on its backend network. */
+export async function ensureDirectGateway(
   context: SetupContext,
   url: string,
   network: string,
   alias: string,
+  image: string,
 ): Promise<void> {
-  let backend = "bridge";
-  let host = isLocalGateway(url) ? "host.docker.internal" : new URL(url).hostname;
-  if (isLocalGateway(url)) {
-    const gateway = await context.exec("docker", [
-      "inspect",
-      "onecli",
-      "--format",
-      "{{json .NetworkSettings.Networks}}",
-    ]);
-    if (gateway.code === 0) {
-      const networks = JSON.parse(gateway.stdout) as Record<string, Network>;
-      const connection = Object.entries(networks).find(
-        ([name, value]) => name !== network && value.IPAddress,
-      );
-      if (!connection) throw new SetupError("The local gateway has no separate backend network.");
-      backend = connection[0];
-      host = connection[1].IPAddress ?? host;
-    }
-  }
-  const slug = installSlug(context.root, context.env.MYBOTS_INSTALL_ID || undefined);
-  const name = `mybots-relay-${slug}`;
-  const args = ["TCP-LISTEN:10255,fork,reuseaddr", `TCP:${host}:10255`];
-  const inspected = await context.exec("docker", ["inspect", name, "--format", "{{json .}}"]);
-  let existing = inspected.code === 0 ? (JSON.parse(inspected.stdout) as Relay) : undefined;
-  if (
-    existing &&
-    (existing.HostConfig.NetworkMode !== backend ||
-      JSON.stringify(existing.Config.Cmd) !== JSON.stringify(args))
-  ) {
-    await command(context, "docker", ["rm", "-f", name]);
-    existing = undefined;
-  }
-  if (!existing) {
+  if (!isLocalGateway(url))
+    throw new SetupError(
+      "Direct gateway access requires a local OneCLI container; remote gateways through a relay are no longer supported.",
+    );
+  await connectGateway({ container: "onecli", network, alias }, (args) =>
+    command(context, "docker", args),
+  );
+  // Probe the gateway's session IP, avoiding an old relay sharing its DNS alias.
+  const probe = async (host: string) => {
     await command(context, "docker", [
       "run",
-      "--detach",
-      "--restart",
-      "unless-stopped",
+      "--rm",
+      "--pull=never",
       "--network",
-      backend,
-      "--name",
-      name,
-      "--add-host",
-      "host.docker.internal:host-gateway",
-      "alpine/socat",
-      ...args,
+      network,
+      "--entrypoint",
+      "bun",
+      image,
+      "-e",
+      'import { lookup } from "node:dns/promises"; const addresses = await lookup(process.argv[2], {all:true}); if (!addresses.length || addresses.some(({address}) => address !== process.argv[1])) process.exit(1); for (const [port,path] of [[10254,"/v1/health"],[10255,"/healthz"]]) { const r = await fetch("http://" + process.argv[2] + ":" + port + path, {signal: AbortSignal.timeout(5000)}); if (!r.ok) process.exit(1); }',
+      networks[network].IPAddress,
+      host,
     ]);
-  } else {
-    if (existing.HostConfig.RestartPolicy.Name !== "unless-stopped")
-      await command(context, "docker", ["update", "--restart", "unless-stopped", name]);
-    if (!existing.State.Running) await command(context, "docker", ["start", name]);
-    const attached = existing.NetworkSettings.Networks[network];
-    if (attached?.Aliases?.includes(alias)) {
-      context.log("Using the existing proxy relay.");
-      return;
+  };
+  const gateway = await command(context, "docker", [
+    "inspect",
+    "onecli",
+    "--format",
+    "{{json .NetworkSettings.Networks}}",
+  ]);
+  const networks = JSON.parse(gateway.stdout) as Record<string, { IPAddress: string }>;
+  const slug = installSlug(context.root, context.env.MYBOTS_INSTALL_ID || undefined);
+  const name = `mybots-relay-${slug}`;
+  const inspected = await context.exec("docker", ["inspect", name, "--format", "{{json .}}"]);
+  if (inspected.code === 0) {
+    const relay = JSON.parse(inspected.stdout) as {
+      Config: { Image: string; Cmd: string[] };
+      NetworkSettings: { Networks: Record<string, { Aliases?: string[] }> };
+    };
+    if (
+      relay.Config.Image !== "alpine/socat" ||
+      relay.Config.Cmd.length !== 2 ||
+      relay.Config.Cmd[0] !== "TCP-LISTEN:10255,fork,reuseaddr" ||
+      !/^TCP:[^:]+:10255$/.test(relay.Config.Cmd[1]) ||
+      !relay.NetworkSettings.Networks[network]
+    )
+      throw new SetupError(
+        "The legacy relay does not match this installation; refusing to remove it.",
+      );
+    try {
+      await probe(networks[network].IPAddress);
+    } catch (error) {
+      await command(context, "docker", ["network", "disconnect", network, "onecli"]);
+      throw error;
     }
-    if (attached) await command(context, "docker", ["network", "disconnect", network, name]);
+    const aliases = relay.NetworkSettings.Networks[network].Aliases ?? [];
+    await command(context, "docker", ["network", "disconnect", network, name]);
+    try {
+      await probe(alias);
+    } catch (error) {
+      await command(context, "docker", [
+        "network",
+        "connect",
+        ...aliases.flatMap((value) => ["--alias", value]),
+        network,
+        name,
+      ]);
+      await command(context, "docker", ["network", "disconnect", network, "onecli"]);
+      throw error;
+    }
+    await command(context, "docker", ["rm", "-f", name]);
+  } else {
+    await probe(networks[network].IPAddress);
+    await probe(alias);
   }
-  await command(context, "docker", ["network", "connect", "--alias", alias, network, name]);
-  context.log("Attached the proxy relay to the internal network.");
+  context.log("Verified direct OneCLI access on the internal network.");
 }

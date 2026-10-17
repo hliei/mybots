@@ -93,10 +93,11 @@ version leaves P incomplete.
    `npm run test:infrastructure` before the live attempt; record their results
    separately. Neither result establishes any live gate.
 2. Build the runner with `docker build -t mybots-agent:mailbox -f
-   container/Dockerfile .`. Deploy the real gateway with a proxy-only endpoint on
-   the runner's internal network. Check `docker network inspect mybots-isolated
+   container/Dockerfile .`. Connect the local OneCLI container directly to
+   the runner's internal network with its configured proxy alias. Check `docker network inspect mybots-isolated
    --format '{{.Internal}}'` returns `true` if using the example network name.
-   Keep management/storage networks off the runner network. The infrastructure
+   Keep PostgreSQL on its separate backend network. Accept and record the
+   [management access boundary](adr/0009-direct-gateway-network.md). The infrastructure
    fixture is disposable controlled infrastructure, not a real-account deployment.
 3. In the owner's private gateway administration interface, configure the
    DeepSeek bearer credential for exactly the configured model endpoint hostname,

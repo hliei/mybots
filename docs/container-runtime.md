@@ -69,7 +69,7 @@ placeholder. It does not discover personal login files or refresh model catalogs
 Configure the OneCLI adapter with its management `url`, optional host-only
 `apiKey` and `projectId`, the proxy hostname visible on the runner network, and
 `<root>/data/gateway-trust` as its trust directory. The validated contribution
-contains only HTTP/HTTPS proxy configuration, the gateway-issued scoped proxy
+declares the local Docker gateway container and alias, plus HTTP/HTTPS proxy configuration, the gateway-issued scoped proxy
 identity, and a public CA path. Management credentials and real model credentials
 stay outside runner material. Harness-specific credential stubs are unsupported.
 
@@ -83,11 +83,22 @@ those policies in the gateway before using the driver. No provider catalogue
 grants network permission.
 
 The driver requires an existing **internal** Docker network and an existing
-runner image. Put a proxy-only endpoint on this network; keep gateway management,
-credential storage, host services and other sessions off it. An all-in-one
-gateway can use a TCP relay exposing only its proxy port. The opt-in fixture
-shows this topology. Runtime, gateway, image and mount failures stop execution;
-there is no embedded or direct-network fallback.
+runner image. The driver connects the OneCLI container directly to this network
+with the configured proxy alias before startup and adoption, repairing attachment
+after gateway recreation. The gateway must be running and retain a separate
+backend network; PostgreSQL remains exclusively on that backend network. The
+production gateway container is named `onecli`. Remote gateways that depended on
+a local relay are unsupported. Runtime, gateway, image and mount failures stop
+execution; there is no embedded or direct-network fallback.
+
+Both the proxy and management listeners are reachable from session containers.
+OneCLI local mode grants unauthenticated management requests `local-admin`
+permissions, including changes to credential configuration and grants. The scoped
+proxy identity governs proxy requests, not management requests. Although real
+model/search keys are not placed in runner mounts or environment, the session
+network is no longer a barrier to gateway administration. This accepted tradeoff
+is recorded in [ADR 0009](adr/0009-direct-gateway-network.md). Host loopback port
+publishing does not protect listeners from same-network containers.
 
 ## Persistence and mount ownership
 
@@ -168,15 +179,18 @@ npm run test:infrastructure
 ```
 
 This command builds the production image and launches disposable, uniquely named
-OneCLI 1.42.0, PostgreSQL 18.0, a proxy-port relay and a controlled TLS/SSE model
+OneCLI 1.42.0, PostgreSQL 18.0 and a controlled TLS/SSE model
 service. It generates ephemeral fixture credentials, stores the model key in
 OneCLI, runs workspace tools through Pi, reads persisted output on the host,
 recreates the session container and reopens the exact SDK conversation. A second
 case adds a separately scoped search connection, runs the `web_search` Pi tool
 against a controlled search route and verifies that only its host receives the
 search credential.
-Runtime observation additionally verifies adoption without duplicate containers
-and observed termination. A separate
+The suite verifies the alias resolves directly to OneCLI, unauthenticated local
+management access, blocked direct Internet/database connections, and recovery
+after gateway recreation while preserving its CA and encryption material in a
+disposable volume. Runtime observation additionally verifies attachment repair
+during adoption without duplicate containers and observed termination. A separate
 mounted storage regression exercises one thousand writes in each direction with
 concurrent opposite-side readers. The suite also
 checks read-only context/trust/input mounts, forbidden host paths, credential

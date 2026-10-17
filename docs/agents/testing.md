@@ -128,8 +128,10 @@ forbidden/read-only mount behavior and exact Pi continuation after container
 recreation. A separate case enables `web_search`, registers a second gateway
 connection scoped to the controlled search hostname and verifies that the runner
 receives the injected search credential only at that target.
-Runtime observation also verifies adoption without duplicate containers and
-observed termination.
+Runtime observation also verifies direct gateway alias identity, local-mode
+management access, blocked direct Internet/database connections, gateway
+recreation with preserved CA/encryption material, attachment repair during
+adoption without duplicate containers, and observed termination.
 The suite owns temporary Compose resources and generated fixture keys;
 no personal or paid services are used. See [container runtime](../container-runtime.md)
 for pins, prerequisites and the fixture-only upstream trust exception.
