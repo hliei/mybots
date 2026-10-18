@@ -31,9 +31,14 @@ export class LocalAccess {
     const address = request.socket.address();
     if (!("port" in address)) return 403;
     const authority = request.headers.host;
-    const allowed = ["127.0.0.1", "localhost", "[::1]"].map((host) => `${host}:${address.port}`);
+    const allowed = ["127.0.0.1", "localhost", "[::1]"].flatMap((host) =>
+      address.port === 80 ? [host, `${host}:80`] : [`${host}:${address.port}`],
+    );
     if (!authority || !allowed.includes(authority)) return 403;
-    if (request.headers.origin !== undefined && request.headers.origin !== `http://${authority}`)
+    if (
+      request.headers.origin !== undefined &&
+      request.headers.origin !== new URL(`http://${authority}`).origin
+    )
       return 403;
     if (request.headers["sec-fetch-site"] === "cross-site") return 403;
     if (!authenticated) return undefined;

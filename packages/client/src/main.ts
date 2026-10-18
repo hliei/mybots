@@ -10,6 +10,37 @@ interface Snapshot {
   }[];
 }
 
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSnapshot(value: unknown): value is Snapshot {
+  if (!record(value) || !Array.isArray(value.bots) || !Array.isArray(value.sessions)) return false;
+  return (
+    value.bots.every(
+      (bot: unknown) => record(bot) && typeof bot.id === "string" && typeof bot.name === "string",
+    ) &&
+    value.sessions.every((session: unknown) => {
+      if (!record(session) || !record(session.inputs)) return false;
+      return (
+        [
+          session.id,
+          session.botId,
+          session.destinationId,
+          session.status,
+          session.containerStatus,
+        ].every((field) => typeof field === "string") &&
+        [
+          session.inputs.pending,
+          session.inputs.processing,
+          session.inputs.acknowledged,
+          session.inputs.failed,
+        ].every((count) => typeof count === "number" && Number.isSafeInteger(count) && count >= 0)
+      );
+    })
+  );
+}
+
 const pairing = document.querySelector<HTMLElement>("#pairing") as HTMLElement;
 const status = document.querySelector<HTMLElement>("#status") as HTMLElement;
 const connection = document.querySelector<HTMLElement>("#connection") as HTMLElement;
@@ -67,7 +98,12 @@ async function load(): Promise<void> {
       return;
     }
     if (!response.ok) throw new Error();
-    const snapshot = (await response.json()) as Snapshot;
+    const snapshot: unknown = await response.json();
+    if (!isSnapshot(snapshot)) {
+      connection.textContent =
+        "Host returned invalid status. Displayed status may be stale. Refresh to retry.";
+      return;
+    }
     render(snapshot);
     pairing.hidden = true;
     status.hidden = false;
