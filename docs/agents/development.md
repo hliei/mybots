@@ -2,7 +2,7 @@
 
 ## Tooling status
 
-The host, Agent runner and shared mailbox npm workspace use a root lockfile.
+The host, Agent runner, shared mailbox and browser client npm workspaces use a root lockfile.
 `package.json` scripts and tool configuration files are authoritative for command
 details and scope. See
 [README](../../README.md) for installation and startup instructions.
@@ -12,6 +12,7 @@ details and scope. See
 - Use TypeScript with Node.js 24.21.0. The root npm package owns repository
   tooling and commands. `packages/host`, `packages/agent-runner` and
   `packages/mailbox` are independent workspaces installed from the root lockfile.
+  `packages/client` contains the browser-only status UI and compiles with DOM types.
   Host dependencies belong to the host package; Pi SDK and web-tool dependencies
   belong to the runner. The production runner uses Bun 1.4.0; Node remains the
   offline SDK-development and host runtime.
@@ -34,7 +35,8 @@ details and scope. See
 - Keep host source in `packages/host/src/` and runner source in `packages/agent-runner/src/`.
   Type-check source, tests, and TypeScript configuration files; compile host
   source into `packages/host/dist/`, runner source into
-  `packages/agent-runner/dist/`, and mailbox source into `packages/mailbox/dist/`.
+  `packages/agent-runner/dist/`, mailbox source into `packages/mailbox/dist/`, and client assets into
+  `packages/client/dist/`.
 - Ignore dependencies, build output, coverage output, local credentials, and
   runtime data. Keep source, tests, configuration, and the lockfile in Git.
 
@@ -76,14 +78,14 @@ between sessions, with sequential delivery inside each session. See
 | --- | --- |
 | `dev` | Run the persistent host from TypeScript source. |
 | `mbt` | Run the interactive socket client from TypeScript source with Node.js. |
-| `typecheck` | Check all three workspaces, root tests and configuration without emitting files. |
+| `typecheck` | Check all four workspaces, root tests and configuration without emitting files. |
 | `check` | Check formatting, lint, and types without modifying files; do not run tests or build. |
 | `format` | Apply formatting fixes. |
 | `test` | Run all ordinary offline tests once and exit. |
 | `test:watch` | Watch files and rerun ordinary offline tests. |
-| `build` | Clean generated output, then compile all three workspaces into their separate `dist/` directories. |
+| `build` | Clean generated output, then compile all four workspaces into their separate `dist/` directories. |
 | `start` | Run the built persistent host with Node.js. |
-| `verify` | Run `check`, ordinary tests, build, and an offline startup smoke check for each entry point. |
+| `verify` | Run `check`, ordinary tests, build, an offline startup smoke check for each entry point, and the built-client browser journey. |
 
 `dev` selects the mailbox `mybots-source` export condition and runs host source
 without building or watching; restart manually after

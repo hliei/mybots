@@ -1,8 +1,10 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer, type Server } from "node:http";
 import type { OutboundMessage } from "@mybots/mailbox";
 import type { RawData } from "ws";
 import { WebSocket, WebSocketServer } from "ws";
 import type { ChannelDelivery, Host, HostConfiguration, HostEvent } from "../host.ts";
+import { serveClient } from "../web/client-api.ts";
+import { LocalAccess } from "../web/local-access.ts";
 
 export interface WebSocketChannelAddress {
   host: string;
@@ -11,6 +13,7 @@ export interface WebSocketChannelAddress {
 }
 
 export interface WebSocketChannelOptions {
+  root: string;
   host: Host;
   configuration: HostConfiguration;
   /** Loopback bind address; defaults to `127.0.0.1`. */
@@ -120,6 +123,7 @@ export class WebSocketChannel {
   private readonly sendTimeoutMs: number;
   private readonly peers = new Set<Peer>();
   private readonly inputs = new Set<Promise<void>>();
+  private access!: LocalAccess;
   private server: Server | undefined;
   private webSocketServer: WebSocketServer | undefined;
   private bound: WebSocketChannelAddress | undefined;
@@ -132,10 +136,8 @@ export class WebSocketChannel {
     const destinations = options.configuration.destinations.filter(
       (destination) => destination.channelType === "websocket",
     );
-    if (destinations.length === 0)
-      throw new Error("WebSocket interface requires a configured websocket destination");
     const instances = new Set(destinations.map((destination) => destination.instance));
-    if (instances.size !== 1)
+    if (instances.size > 1)
       throw new Error("WebSocket destinations must share one channel instance");
     if (
       new Set(destinations.map((destination) => destination.platformId)).size !==
@@ -162,7 +164,7 @@ export class WebSocketChannel {
     const owner = options.configuration.owners.find((owner) => owner.startsWith("cli:"));
     if (!owner) throw new Error("WebSocket interface requires a CLI owner identity");
     this.owner = owner;
-    this.instance = [...instances][0];
+    this.instance = [...instances][0] ?? "ws";
     this.destinations = new Set(destinations.map((destination) => destination.id));
     this.platformIds = new Set(destinations.map((destination) => destination.platformId));
     this.bindHost = bindHost;
@@ -173,17 +175,35 @@ export class WebSocketChannel {
 
   static async listen(options: WebSocketChannelOptions): Promise<WebSocketChannel> {
     const channel = new WebSocketChannel(options);
-    const server = createServer((request, response) => channel.handleRequest(request, response));
-    const webSocketServer = new WebSocketServer({ server, path: channel.path });
-    webSocketServer.on("connection", (socket) => channel.handleConnection(socket));
+    channel.access = await LocalAccess.load(options.root);
+    const server = createServer((request, response) => {
+      void serveClient(request, response, options.host, channel.access, channel.path).catch(() => {
+        response.writeHead(500);
+        response.end();
+      });
+    });
+    const webSocketServer = new WebSocketServer({ noServer: true });
+    server.on("upgrade", (request, socket, head) => {
+      const denial = channel.access.rejection(request);
+      if (denial || request.url !== channel.path) {
+        socket.end(
+          `HTTP/1.1 ${denial ?? 404} Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+        );
+        return;
+      }
+      webSocketServer.handleUpgrade(request, socket, head, (peer) =>
+        channel.handleConnection(peer),
+      );
+    });
     channel.server = server;
     channel.webSocketServer = webSocketServer;
     try {
-      channel.detach = options.host.attachChannel({
-        channelType: channel.channelType,
-        instance: channel.instance,
-        deliver: (message, signal, context) => channel.deliver(message, signal, context),
-      });
+      if (channel.destinations.size > 0)
+        channel.detach = options.host.attachChannel({
+          channelType: channel.channelType,
+          instance: channel.instance,
+          deliver: (message, signal, context) => channel.deliver(message, signal, context),
+        });
       channel.unobserve = options.host.observe((event) => channel.observe(event));
       await new Promise<void>((resolve, reject) => {
         const onError = (error: Error) => {
@@ -248,15 +268,6 @@ export class WebSocketChannel {
     server.closeAllConnections();
     await Promise.all([webSocketClosed, serverClosed]);
     await Promise.allSettled([...this.inputs, ...peers.map((peer) => peer.writes)]);
-  }
-
-  private handleRequest(request: IncomingMessage, response: ServerResponse): void {
-    const path = new URL(request.url ?? "/", "http://localhost").pathname;
-    const upgradeRequired = path === this.path;
-    response.writeHead(upgradeRequired ? 426 : 404, {
-      "Content-Type": "text/plain; charset=utf-8",
-    });
-    response.end(upgradeRequired ? "Upgrade Required\n" : "Not Found\n");
   }
 
   private handleConnection(socket: WebSocket): void {

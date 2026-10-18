@@ -14,7 +14,7 @@
     "test:watch": "vitest --watch",
     "build": "npm run build --workspaces",
     "check:startup": "node scripts/check-startup.mjs",
-    "verify": "npm run check && npm test && npm run build && npm run check:startup",
+    "verify": "npm run check && npm test && npm run build && npm run check:startup && playwright test",
     "prepare": "husky",
     "demo:pi": "npm run build --workspace @mybots/mailbox && npm run build --workspace @mybots/agent-runner && npm run demo --workspace @mybots/agent-runner",
     "test:infrastructure": "docker build -t mybots-agent:mailbox -f container/Dockerfile . && vitest run --config tests/infrastructure/vitest.config.ts",
@@ -24,10 +24,12 @@
     "start": "node packages/host/dist/index.js",
     "mbt": "node packages/host/src/cli/client.ts",
     "setup": "node setup/cli.ts",
-    "setup:auto": "node setup/cli.ts"
+    "setup:auto": "node setup/cli.ts",
+    "test:browser": "npm run build && playwright test"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
+    "@playwright/test": "1.64.1",
     "@types/jsdom": "30.0.0",
     "@types/node": "24.19.2",
     "@types/turndown": "5.0.6",
@@ -39,7 +41,8 @@
   "workspaces": [
     "packages/mailbox",
     "packages/host",
-    "packages/agent-runner"
+    "packages/agent-runner",
+    "packages/client"
   ],
   "bin": {
     "mbt": "bin/mbt"

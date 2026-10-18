@@ -734,6 +734,35 @@ export class Host {
     return this.store.sessions();
   }
 
+  /** Read-only client projection. Mailbox acknowledgement is not a work outcome. */
+  async clientStatus() {
+    const sessions = await Promise.all(
+      this.store.sessions().map(async (session) => {
+        const execution = await this.prepared.get(session.id);
+        const inputs = execution?.mailbox.inputs() ?? [];
+        const acknowledgements = new Map(
+          execution?.mailbox.acknowledgements().map((ack) => [ack.message_id, ack.status]),
+        );
+        const counts = { pending: 0, processing: 0, acknowledged: 0, failed: 0 };
+        for (const input of inputs) {
+          const status = acknowledgements.get(input.id) ?? input.status;
+          if (status === "completed") counts.acknowledged++;
+          else counts[status]++;
+        }
+        return {
+          id: session.id,
+          botId: session.agent_group_id,
+          destinationId: session.messaging_group_id,
+          status: session.status,
+          containerStatus: session.container_status,
+          lastActive: session.last_active,
+          inputs: counts,
+        };
+      }),
+    );
+    return { bots: this.store.bots(), sessions };
+  }
+
   async inspect(sessionId: string) {
     const execution = await this.prepared.get(sessionId);
     if (!execution) throw new Error("Unknown session");

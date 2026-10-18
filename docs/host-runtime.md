@@ -253,25 +253,60 @@ exactly-once execution or delivery, and the accepted crash loss windows remain.
 Reconciliation runs periodically and on demand through `Host.reconcile()`. Offline
 tests use a controlled clock so backoff and stall timing are deterministic.
 
-## Local WebSocket interface
+## Local client access
 
-The optional `websocket` section starts an owner-local control and observation
-interface for configured `websocket` destinations:
+The optional `websocket` section enables one loopback HTTP/WebSocket listener in
+the persistent Host. It serves the built client, public status API and existing
+live-event interface on the same origin:
 
 ```json
 "websocket": { "host": "127.0.0.1", "port": 8787, "path": "/ws" }
 ```
 
-`host` must be a loopback address; this is not an Internet-facing endpoint. The
-interface is owner-local by machine rather than by operating-system account: any
-local process that can reach the loopback port is trusted as the configured
-owner, matching the retained local WebSocket capability. Account isolation stays
-with the CLI's mode-0600 socket. Omit
-the section to run the host without it. Every configured `websocket` destination
-must share one channel instance; the interface serves them all and resolves input
-through the same central messaging-destination, Agent and session records as CLI.
-A WebSocket destination therefore shares the Agent workspace and keeps its own
-persistent conversation.
+Build with `npm run build`, start with `npm start`, and open the printed local
+client URL (the example uses `http://127.0.0.1:8787/`). The Host generates a
+256-bit connection credential in `data/client-credential` with mode 0600. Copy it
+into the pairing form on the Host computer. The file is installation state,
+outside Agent mounts; it is retained across Host restarts and never embedded in
+client assets, URLs or startup logs. Protect it as a local owner credential.
+
+`POST /api/pair` accepts `Authorization: Bearer <credential>` and sets a host-only
+HttpOnly, SameSite=Strict cookie with a one-year lifetime. Pairing is idempotent:
+it sets the same connection credential, without creating domain work or records.
+The cookie is used over loopback HTTP. Clearing browser cookies requires pairing
+again; stopping the Host, deleting its credential file and restarting generates
+a new credential and invalidates old browser/native connections.
+
+`GET /api/status` returns `{ bots, sessions }` from the Host store and session
+mailboxes. Bot records expose `id` and `name`. Sessions expose `id`, `botId`,
+`destinationId`, lifecycle `status`, `containerStatus`, `lastActive`, and `inputs`
+counts (`pending`, `processing`, `acknowledged`, `failed`). A running container can
+be idle, and a mailbox acknowledgement does not establish a successful work
+outcome. Reads do not open SDK conversations or admit execution. This initial
+client is read-only; Bot/session creation and chat are separate capabilities.
+
+All private HTTP routes and WebSocket upgrades require the credential, either
+as a Bearer header or the paired cookie. An explicit invalid Authorization header
+cannot fall back to a cookie. Static client assets alone are public. Every request,
+including assets and upgrades, validates Host against loopback names and the actual
+bound port. A supplied Origin must exactly match that HTTP origin; cross-site
+fetches are rejected and CORS access is not enabled. Native clients may omit
+Origin. Invalid credentials yield 401 and invalid Host/Origin yields 403 before
+reads or upgrades. There is no unprotected alternate WebSocket listener.
+
+`host` must be `127.0.0.1`, `localhost` or `::1`; remote/public serving is not
+supported. The Host computer must remain available. A locator received on a phone
+does not provide access to the desktop's localhost. Omit `websocket` to disable
+the combined listener. Without WebSocket destinations it provides read-only
+status and observation. When destinations are configured, they share one channel
+instance and input resolves through the same central Agent/session records as CLI.
+
+## Local WebSocket interface
+
+Connect to the configured path with the same credential and Host/Origin checks.
+A WebSocket destination shares its Bot workspace and keeps a separate persistent
+conversation. This existing input protocol remains available to authenticated
+native clients; the initial Web page only uses the HTTP status read.
 
 A client sends one JSON text frame per input:
 
@@ -308,7 +343,7 @@ interface before stopping the host.
 
 ## Public lifecycle and verification
 
-`Host.start({ root, configuration, driver })`, `accept`, `sessions`, `inspect`,
+`Host.start({ root, configuration, driver })`, `accept`, `sessions`, `clientStatus`, `inspect`,
 `reset({ destinationId, userId })`, `observe`, `attachChannel` and `stop` are the host boundary. The driver accepts
 session material and an abort signal and returns an awaited stop/exit handle.
 `CliChannel.listen` and `close` in `packages/host/src/cli/socket-server.ts` own the local listener

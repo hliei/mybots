@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mybots · Local status</title>
+    <link rel="stylesheet" href="/style.css">
+    <script type="module" src="/main.js"></script>
+  </head>
+  <body>
+    <main>
+      <header><p class="eyebrow">MYBOTS / LOCAL HOST</p><h1>Your Bots, at a glance.</h1>
+        <p>Inspect the Bots and sessions on this computer.</p></header>
+      <p id="connection" role="status">Connecting to Host…</p>
+      <section id="pairing" hidden>
+        <h2>Connect this browser</h2>
+        <p>Use the connection credential from <code>data/client-credential</code> in your Host directory.</p>
+        <form id="pair-form">
+          <label for="credential">Connection credential</label>
+          <input id="credential" type="password" required autocomplete="off" spellcheck="false">
+          <button type="submit">Pair with Host</button>
+        </form>
+      </section>
+      <section id="status" hidden>
+        <div class="section-title"><h2>Bots and sessions</h2><button id="refresh" type="button">Refresh status</button></div>
+        <p id="updated"></p><div id="bots"></div>
+        <p class="note">This view is read-only. Container state and mailbox acknowledgements describe execution progress; they do not establish a successful work outcome.</p>
+      </section>
+      <footer>The Host must be running on this computer. A phone cannot reach this desktop’s localhost.</footer>
+    </main>
+  </body>
+</html>

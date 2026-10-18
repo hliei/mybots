@@ -27,3 +27,7 @@ node_modules/
 /host.json
 /logs/
 /.tools/
+
+# Browser validation reports.
+/test-results/
+/playwright-report/

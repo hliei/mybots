@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,7 +45,7 @@ async function open() {
     destinationId: "terminal",
     owner: configuration.owners[0],
   });
-  webSocket = await WebSocketChannel.listen({ host, configuration, port: 0 });
+  webSocket = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
 }
 async function close() {
   await webSocket?.close();
@@ -54,7 +54,11 @@ async function close() {
 }
 async function observe(text) {
   const address = webSocket.address;
-  const socket = new WebSocket(`ws://${address.host}:${address.port}${address.path}`);
+  const socket = new WebSocket(`ws://${address.host}:${address.port}${address.path}`, {
+    headers: {
+      Authorization: `Bearer ${(await readFile(join(root, "data", "client-credential"), "utf8")).trim()}`,
+    },
+  });
   const messages = [];
   socket.on("message", (data) => messages.push(JSON.parse(data.toString())));
   const deadline = setTimeout(() => socket.terminate(), 5000);

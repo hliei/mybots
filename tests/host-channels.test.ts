@@ -55,7 +55,7 @@ test("three channels share working files while execution, delivery and restart s
   async function open() {
     host = await Host.start({ root, configuration, driver });
     cli = await CliChannel.listen({ host, root, destinationId: "terminal", owner: "cli:local" });
-    web = await WebSocketChannel.listen({ host, configuration, port: 0 });
+    web = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
     telegram = TelegramChannel.listen({
       host,
       api,
@@ -70,7 +70,11 @@ test("three channels share working files while execution, delivery and restart s
     });
     await waitForCheckpoint(once(socket, "connect"), "CLI connection");
     frames = [];
-    observer = new WebSocket(`ws://127.0.0.1:${web.address.port}/ws`);
+    observer = new WebSocket(`ws://127.0.0.1:${web.address.port}/ws`, {
+      headers: {
+        Authorization: `Bearer ${(await readFile(join(root, "data", "client-credential"), "utf8")).trim()}`,
+      },
+    });
     observer.on("message", (data) => frames.push(JSON.parse(data.toString())));
     await waitForCheckpoint(once(observer, "open"), "WebSocket connection");
   }

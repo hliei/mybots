@@ -149,6 +149,7 @@ export async function runHost(
     });
     if (settings.websocket) {
       webSocket = await WebSocketChannel.listen({
+        root,
         host,
         configuration: settings.configuration,
         bindHost: settings.websocket.host,
@@ -178,9 +179,10 @@ export async function runHost(
     console.log(`Mybots host listening on ${join(root, "data", "cli.sock")}`);
     if (webSocket) {
       const address = webSocket.address;
-      console.log(
-        `Local WebSocket interface on ws://${address.host}:${address.port}${address.path}`,
-      );
+      const hostname = address.host.includes(":") ? `[${address.host}]` : address.host;
+      console.log(`Local WebSocket interface on ws://${hostname}:${address.port}${address.path}`);
+      console.log(`Local client on http://${hostname}:${address.port}/`);
+      console.log(`Pair using the credential in ${join(root, "data", "client-credential")}`);
     }
     if (telegram) console.log(`Telegram bot${botName} is polling.`);
     await finished.promise;

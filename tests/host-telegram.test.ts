@@ -458,7 +458,11 @@ it.each([false, true])(
         const prefix = "Local WebSocket interface on ";
         const address = log.mock.calls.flat().find((value) => String(value).startsWith(prefix));
         expect(address).toBeDefined();
-        socket = new WebSocket(String(address).slice(prefix.length));
+        socket = new WebSocket(String(address).slice(prefix.length), {
+          headers: {
+            Authorization: `Bearer ${(await readFile(join(root, "data", "client-credential"), "utf8")).trim()}`,
+          },
+        });
         await waitForCheckpoint(once(socket, "open"), "WebSocket connection");
         closed = once(socket, "close");
       }
