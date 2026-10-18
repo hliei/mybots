@@ -4,6 +4,10 @@ Status: accepted
 Implementation: persistent host/CLI affinity, owner-only Telegram
 private-chat affinity, local WebSocket conversations and shared workspace delivered
 
+The default single personal Agent across entry points is superseded by planned
+[independent Bots with owned sessions](0010-independent-bots-and-owned-sessions.md).
+The same-Agent workspace sharing and session execution rules below remain applicable.
+
 Personal entry points will use the same Agent identity and Agent workspace by
 default, with separate persistent Agent sessions per entry or chat. Returning
 to an entry continues its session rather than creating a new conversation on
