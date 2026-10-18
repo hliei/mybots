@@ -97,7 +97,7 @@ Resource discovery uses only explicitly selected Agent Skills and the shared wor
 explicitly; the fixture uses in-memory credentials and disables network catalog
 refresh so normal checks do not read personal auth or contact public providers.
 
-The root `typecheck` and `build` commands include all three npm workspaces.
+The root `typecheck` and `build` commands include all four npm workspaces.
 Offline tests resolve the mailbox source condition, including spawned source
 processes; compiled startup checks use its default JavaScript exports. The
 root `verify` also runs its compiled provider through the bounded offline demo
@@ -277,3 +277,23 @@ harness is separate acceptance work. No ordinary fixture invokes that engine.
 production Pi-tool boundary: ordered partial failures, Unicode continuation,
 hidden-content removal and relative-link resolution. No embedded Agent fixture
 is retained for these contracts.
+
+## Local client API and browser
+
+`tests/local-client.test.ts` exercises HTTP and WebSocket credential/Host/Origin
+checks, idempotent browser pairing and reads after a fresh Host starts over the
+same state. These tests use real SQLite and mailboxes with the existing controlled
+SessionDriver; they do not require a client build.
+
+`tests/browser/local-client.spec.ts` uses Playwright Chromium against the built
+client and compiled Host, with the same controlled SessionDriver. It verifies
+rejected/successful pairing, processing and acknowledged input counts, retained
+browser connection on reload, and status recovery after Host restart. It asserts
+rendered content and owner actions rather than pixel snapshots. Browser checks
+remain offline and do not establish actual-container or actual-service evidence.
+
+Install Chromium with `npx playwright install chromium` (Linux can use
+`npx playwright install --with-deps chromium`). Run `npm run test:browser` for
+build plus browser checks; `npm run verify` includes them after its ordinary
+tests, build and startup checks. Browser reports remain ignored. CI installs
+Chromium before the same verification command.

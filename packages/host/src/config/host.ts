@@ -122,9 +122,7 @@ function websocketSettings(
   const destinations = configuration.destinations.filter(
     (destination) => destination.channelType === "websocket",
   );
-  if (destinations.length === 0) throw new Error();
-  if (new Set(destinations.map((destination) => destination.instance)).size !== 1)
-    throw new Error();
+  if (new Set(destinations.map((destination) => destination.instance)).size > 1) throw new Error();
   return { host, port, path };
 }
 

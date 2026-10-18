@@ -220,6 +220,12 @@ export class HostStore {
     };
   }
 
+  bots(): { id: string; name: string }[] {
+    return this.db
+      .prepare("SELECT id, name FROM agent_groups ORDER BY created_at, id")
+      .all() as unknown as { id: string; name: string }[];
+  }
+
   sessions(): SavedSession[] {
     return this.db
       .prepare("SELECT * FROM sessions ORDER BY created_at, id")

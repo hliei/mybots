@@ -1,0 +1,10 @@
+{
+  "name": "@mybots/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json && node build-assets.mjs"
+  }
+}

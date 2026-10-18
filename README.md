@@ -81,7 +81,16 @@ The repository's development Skills are not assistant resources. `/reset` starts
 a fresh Pi conversation for that destination, preserving shared working files
 and other conversations. Other slash input is ordinary Agent text.
 
-The example WebSocket endpoint is `ws://127.0.0.1:8787/ws`. Send:
+Open `http://127.0.0.1:8787/` on the Host computer to inspect existing Bots and
+session execution status. The Host prints the URL at startup. Copy the locally
+generated `data/client-credential` into the pairing form once; the browser keeps
+an HttpOnly connection cookie for later visits. The page is read-only and refreshes
+status while visible. The Host must stay running, and desktop localhost is not
+reachable from a phone. See [local client access](docs/host-runtime.md#local-client-access).
+
+The example WebSocket endpoint is `ws://127.0.0.1:8787/ws`. Native clients must
+supply `Authorization: Bearer <credential>` during the upgrade. Browser clients
+use the paired cookie and a matching Origin. Send:
 
 ```json
 { "type": "input", "destination": "desktop", "content": "hello" }
@@ -118,13 +127,19 @@ npm run check
 npm test
 npm test -- tests/host-channels.test.ts
 npm run test:watch
+npx playwright install chromium
 npm run verify
+npm run test:browser
 ```
 
-`check` runs formatting/lint and host/runner types without modifying files.
-`verify` also runs all ordinary offline tests, builds both packages and exercises
-compiled entry points plus controlled Pi and host/CLI demonstrations. It requires
-no live credentials or Docker. `npm run demo:pi` and `npm run demo:host` show those
+`check` runs formatting/lint and all workspace types without modifying files.
+`verify` also runs all ordinary offline tests, builds all four workspaces, exercises
+compiled entry points plus controlled Pi and host/CLI demonstrations, and runs
+the Chromium client journey against a built Host. Install Chromium once with the
+command above; Linux may also need `npx playwright install --with-deps chromium`.
+`test:browser` builds and runs that browser journey separately. Execution is
+controlled through the existing session driver with real Host persistence;
+no live credentials or Docker are required. `npm run demo:pi` and `npm run demo:host` show those
 demonstrations separately.
 
 With Docker Desktop and `openssl`, run the separate controlled-infrastructure pass:
@@ -151,7 +166,7 @@ CI runs `npm run verify` and isolated Git workflow tests on Node.js 24.21.0.
 | Linked CLI | `mbt [arguments]` | `bin/mbt` to the same source CLI |
 
 The root package owns unified commands and repository tools; `packages/host`,
-`packages/agent-runner` and `packages/mailbox` own their business dependencies and
+`packages/agent-runner`, `packages/mailbox` and `packages/client` own their dependencies and
 separate build output. One root lockfile covers all workspaces. Source host startup
 selects the mailbox source export; built startup uses its compiled export. See
 [package resolution](docs/container-runtime.md#mailbox-package-resolution).
@@ -162,6 +177,8 @@ selects the mailbox source export; built startup uses its compiled export. See
 - `packages/host/src/host.ts`, `packages/host/src/reconcile-session.ts`: routing, delivery and bounded recovery.
 - `packages/host/src/db/`: central entities and schema migrations.
 - `packages/host/src/channels/`: Telegram and WebSocket host adapters and Bot API transport.
+- `packages/host/src/web/`: client asset serving, local pairing and HTTP reads.
+- `packages/client/src/`: browser status page using the public Host API.
 - `packages/host/src/drivers/`, `packages/host/src/container-runner.ts`: isolated execution and session material.
 - `packages/host/src/gateway-providers/`: host-side credential gateway integration.
 - `packages/mailbox/src/`: shared directional mailbox package with Node and Bun entries.

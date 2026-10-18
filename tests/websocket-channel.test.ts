@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -66,7 +66,7 @@ it("submits local input and receives correlated inbound and outbound envelopes",
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-ws-")));
   const driver = new MailboxDriver();
   host = await Host.start({ root, configuration, driver });
-  channel = await WebSocketChannel.listen({ host, configuration, port: 0 });
+  channel = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
   const client = await openClient(channel.address);
 
   client.send({ type: "input", destination: "desktop", content: "Remember Alice" });
@@ -112,7 +112,7 @@ it("rejects malformed or unconfigured input without creating host work", async (
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-ws-")));
   const driver = new MailboxDriver();
   host = await Host.start({ root, configuration, driver });
-  channel = await WebSocketChannel.listen({ host, configuration, port: 0 });
+  channel = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
   const client = await openClient(channel.address);
 
   client.sendRaw("not json");
@@ -168,7 +168,7 @@ it("keeps WebSocket and CLI conversations separate while sharing the Agent works
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-ws-")));
   const driver = new MailboxDriver();
   host = await Host.start({ root, configuration, driver });
-  channel = await WebSocketChannel.listen({ host, configuration, port: 0 });
+  channel = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
   const client = await openClient(channel.address);
   const cliReplies: string[] = [];
   host.attachChannel({
@@ -217,7 +217,12 @@ it("observes another channel's output without acknowledging its delivery", async
   const driver = new MailboxDriver();
   host = await Host.start({ root, configuration: observedConfiguration, driver });
   const running = host;
-  channel = await WebSocketChannel.listen({ host, configuration: observedConfiguration, port: 0 });
+  channel = await WebSocketChannel.listen({
+    root,
+    host,
+    configuration: observedConfiguration,
+    port: 0,
+  });
   const observer = await openClient(channel.address);
   const started = Promise.withResolvers<void>();
   const held = Promise.withResolvers<void>();
@@ -308,6 +313,7 @@ it("drops a slow peer without blocking another client or session execution", asy
   driver.respond = async (input) => (input.content === "Big" ? payload : `Reply: ${input.content}`);
   host = await Host.start({ root, configuration, driver });
   channel = await WebSocketChannel.listen({
+    root,
     host,
     configuration,
     port: 0,
@@ -336,7 +342,7 @@ it("reconnects to the same conversation without replaying delivered events", asy
   const driver = new MailboxDriver();
   host = await Host.start({ root, configuration, driver });
   const running = host;
-  channel = await WebSocketChannel.listen({ host, configuration, port: 0 });
+  channel = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
   const first = await openClient(channel.address);
 
   first.send({ type: "input", destination: "desktop", content: "Old conversation" });
@@ -380,6 +386,7 @@ it("closes clients and admission within a bounded shutdown", async () => {
   const driver = new MailboxDriver();
   host = await Host.start({ root, configuration, driver });
   channel = await WebSocketChannel.listen({
+    root,
     host,
     configuration,
     port: 0,
@@ -414,7 +421,7 @@ it("awaits admitted input from a disconnected client before closing", async () =
     accepted.resolve();
     return result;
   });
-  channel = await WebSocketChannel.listen({ host, configuration, port: 0 });
+  channel = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
   const client = await openClient(channel.address);
   client.send({ type: "input", destination: "desktop", content: "Before closing" });
   await waitForCheckpoint(entered.promise, "admitted input");
@@ -452,20 +459,21 @@ it("rejects an occupied port without crashing and releases channel attachment", 
     import { WebSocketChannel } from ${JSON.stringify(new URL("../packages/host/src/channels/websocket.ts", import.meta.url).href)};
     import { MailboxDriver } from ${JSON.stringify(new URL("./host-fixture.ts", import.meta.url).href)};
     const configuration = ${JSON.stringify(configuration)};
-    const host = await Host.start({ root: ${JSON.stringify(root)}, configuration, driver: new MailboxDriver() });
+    const root = ${JSON.stringify(root)};
+    const host = await Host.start({ root, configuration, driver: new MailboxDriver() });
     const occupied = createServer();
     occupied.listen(0, "127.0.0.1");
     await once(occupied, "listening");
     try {
       let rejected = false;
       try {
-        await WebSocketChannel.listen({ host, configuration, port: occupied.address().port });
+        await WebSocketChannel.listen({ root, host, configuration, port: occupied.address().port });
       } catch (error) {
         if (error.code !== "EADDRINUSE") throw error;
         rejected = true;
       }
       if (!rejected) throw new Error("Occupied port must reject");
-      const channel = await WebSocketChannel.listen({ host, configuration, port: 0 });
+      const channel = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
       await channel.close();
       console.log("Bind rejected and channel attachment released");
     } finally {
@@ -485,18 +493,14 @@ it("refuses a non-loopback bind and invalid options", async () => {
   host = await Host.start({ root, configuration, driver: new MailboxDriver() });
   const running = host;
   await expect(
-    WebSocketChannel.listen({
-      host: running,
-      configuration,
-      bindHost: "0.0.0.0",
-      port: 0,
-    }),
+    WebSocketChannel.listen({ root, host: running, configuration, bindHost: "0.0.0.0", port: 0 }),
   ).rejects.toThrow(/loopback/u);
   await expect(
-    WebSocketChannel.listen({ host: running, configuration, port: 0, sendTimeoutMs: 0 }),
+    WebSocketChannel.listen({ root, host: running, configuration, port: 0, sendTimeoutMs: 0 }),
   ).rejects.toThrow(/send timeout/u);
   await expect(
     WebSocketChannel.listen({
+      root,
       host: running,
       configuration: {
         ...configuration,
@@ -515,7 +519,7 @@ it("reports host failures to observers as explicit failure envelopes", async () 
   const driver = new MailboxDriver();
   driver.fail = true;
   host = await Host.start({ root, configuration, driver });
-  channel = await WebSocketChannel.listen({ host, configuration, port: 0 });
+  channel = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
   const client = await openClient(channel.address);
 
   client.send({ type: "input", destination: "desktop", content: "Persist before waking" });
@@ -532,12 +536,28 @@ it("answers plain HTTP requests with upgrade and not-found statuses", async () =
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-ws-")));
   const driver = new MailboxDriver();
   host = await Host.start({ root, configuration, driver });
-  channel = await WebSocketChannel.listen({ host, configuration, port: 0 });
+  channel = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
   const address = channel.address;
   const base = `http://${address.host}:${address.port}`;
 
-  expect((await fetch(`${base}${address.path}`)).status).toBe(426);
-  expect((await fetch(`${base}/other`)).status).toBe(404);
+  expect(
+    (
+      await fetch(`${base}${address.path}`, {
+        headers: {
+          Authorization: `Bearer ${(await readFile(join(root, "data", "client-credential"), "utf8")).trim()}`,
+        },
+      })
+    ).status,
+  ).toBe(426);
+  expect(
+    (
+      await fetch(`${base}/other`, {
+        headers: {
+          Authorization: `Bearer ${(await readFile(join(root, "data", "client-credential"), "utf8")).trim()}`,
+        },
+      })
+    ).status,
+  ).toBe(404);
   await expect(tryConnect({ ...address, path: "/other" })).rejects.toThrow();
 });
 
@@ -545,7 +565,7 @@ it("preserves the order of rapid inputs from one client", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-ws-")));
   const driver = new MailboxDriver();
   host = await Host.start({ root, configuration, driver });
-  channel = await WebSocketChannel.listen({ host, configuration, port: 0 });
+  channel = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
   const client = await openClient(channel.address);
 
   client.send({ type: "input", destination: "desktop", content: "First" });
@@ -568,6 +588,7 @@ it("cancels in-flight WebSocket delivery promptly when the host stops", async ()
   const driver = new MailboxDriver();
   host = await Host.start({ root, configuration, driver });
   channel = await WebSocketChannel.listen({
+    root,
     host,
     configuration,
     port: 0,
@@ -630,9 +651,14 @@ async function openClient(address: WebSocketChannelAddress): Promise<Client> {
   return client;
 }
 
-function tryConnect(address: WebSocketChannelAddress): Promise<WebSocket> {
+async function tryConnect(address: WebSocketChannelAddress): Promise<WebSocket> {
+  const credential = (
+    await readFile(join(root as string, "data", "client-credential"), "utf8")
+  ).trim();
   return new Promise<WebSocket>((resolve, reject) => {
-    const socket = new WebSocket(`ws://${address.host}:${address.port}${address.path}`);
+    const socket = new WebSocket(`ws://${address.host}:${address.port}${address.path}`, {
+      headers: { Authorization: `Bearer ${credential}` },
+    });
     const onOpen = () => {
       socket.removeListener("error", onError);
       resolve(socket);

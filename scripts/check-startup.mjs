@@ -63,16 +63,35 @@ try {
       let stdout = "";
       child.stdout.setEncoding("utf8").on("data", (chunk) => {
         stdout += chunk;
-        if (stdout.includes("Mybots host listening")) resolve();
+        const localClient = stdout.match(/Local client on (http:\/\/\S+)/u);
+        if (localClient) resolve(localClient[1]);
       });
     });
-    await Promise.race([
+    const clientUrl = await Promise.race([
       listening,
       exited.then(() => {
         throw new Error(`Built host stopped before listening: ${stderr}`);
       }),
     ]);
     assert.equal((await stat(join(root, "data", "cli.sock"))).mode & 0o777, 0o600);
+    const shell = await fetch(clientUrl);
+    assert.equal(shell.status, 200);
+    assert.ok((await shell.text()).includes("Connection credential"));
+    assert.equal((await fetch(`${clientUrl}api/status`)).status, 401);
+    const credential = (await readFile(join(root, "data", "client-credential"), "utf8")).trim();
+    const paired = await fetch(`${clientUrl}api/pair`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${credential}`, Origin: new URL(clientUrl).origin },
+    });
+    assert.equal(paired.status, 204);
+    const snapshot = await fetch(`${clientUrl}api/status`, {
+      headers: { Cookie: paired.headers.get("set-cookie").split(";")[0] },
+    });
+    assert.equal(snapshot.status, 200);
+    assert.deepEqual(await snapshot.json(), {
+      bots: [{ id: settings.agent.id, name: settings.agent.name }],
+      sessions: [],
+    });
     child.kill("SIGTERM");
     assert.equal(await exited, 0, `Built host shutdown failed: ${stderr}`);
     assert.equal(stderr, "");
