@@ -136,12 +136,15 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await expect(page.locator("#chat-works article").nth(2)).toContainText("Outcome: succeeded");
     await expect(page.locator("#chat-works")).toContainText("Run ID:");
     await expect(page.locator("#chat-works")).toContainText("Attempt:");
-    await page.screenshot({ path: "/tmp/mybots-thread-desktop.png", fullPage: true });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.locator("#chat-heading").evaluate((element) => element.scrollIntoView());
+    await page.screenshot({ path: "/tmp/mybots-thread-desktop.png" });
     await page.setViewportSize({ width: 390, height: 844 });
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
-    await page.screenshot({ path: "/tmp/mybots-thread-mobile.png", fullPage: true });
+    await page.locator("#chat-heading").evaluate((element) => element.scrollIntoView());
+    await page.screenshot({ path: "/tmp/mybots-thread-mobile.png" });
     await page.setViewportSize({ width: 1280, height: 900 });
     const cookie = (await context.cookies()).find((cookie) => cookie.name === "mybots_connection");
     expect(cookie).toMatchObject({ httpOnly: true, sameSite: "Strict" });

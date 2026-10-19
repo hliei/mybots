@@ -168,7 +168,7 @@ const host = spawnSync(process.execPath, ["scripts/host-cli-demo.mjs"], {
 if (host.error) throw host.error;
 assert.equal(host.status, 0, `Host CLI demo failed: ${host.stderr}`);
 assert.equal(host.stderr, "");
-assert.ok(host.stdout.includes("Persistent host routing, CLI/WebSocket conversations"));
+assert.ok(host.stdout.includes("Persistent Thread routing, CLI/WebSocket reconnect"));
 
 for (const entry of ["index", "cli/client"]) {
   const failure = spawnSync(
