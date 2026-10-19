@@ -9,6 +9,7 @@ import { loadHostSettings } from "../packages/host/src/config/host.ts";
 import type { ObservingSessionDriver, SessionDriver } from "../packages/host/src/drivers/types.ts";
 import type { HostConfiguration } from "../packages/host/src/host.ts";
 import { Host } from "../packages/host/src/host.ts";
+import { waitForCheckpoint } from "./checkpoint.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 
 let root: string;
@@ -152,10 +153,17 @@ it("keeps a fifth Bot queued while four Attempts stay active and does not preemp
 it("admits a never-served Bot before the Bot that already holds a later task", async () => {
   const releaseAlpha = Promise.withResolvers<void>();
   const releaseBeta = Promise.withResolvers<void>();
+  const releaseLater = Promise.withResolvers<void>();
+  const releaseBetaNext = Promise.withResolvers<void>();
   const external = new MailboxDriver();
   external.respond = async (input, _material, signal) => {
-    const gate =
-      input.content === "Hold" ? releaseAlpha : input.content === "Beta" ? releaseBeta : undefined;
+    const gates: Record<string, typeof releaseAlpha> = {
+      Hold: releaseAlpha,
+      Beta: releaseBeta,
+      Later: releaseLater,
+      "Beta next": releaseBetaNext,
+    };
+    const gate = gates[input.content];
     if (gate)
       await Promise.race([
         gate.promise,
@@ -178,6 +186,9 @@ it("admits a never-served Bot before the Bot that already holds a later task", a
     const second = await (
       await post(`/api/bots/${alpha}/thread/tasks`, { requestId: "alpha-again", text: "Later" })
     ).json();
+    const third = await (
+      await post(`/api/bots/${alpha}/thread/tasks`, { requestId: "alpha-third", text: "Third" })
+    ).json();
     const beta = await createBot("Beta");
     const waiting = await (
       await post(`/api/bots/${beta}/thread/messages`, { requestId: "beta-first", text: "Beta" })
@@ -197,9 +208,87 @@ it("admits a never-served Bot before the Bot that already holds a later task", a
       id: held.runId,
       state: "succeeded",
     });
+    const betaNext = await (
+      await post(`/api/bots/${beta}/thread/tasks`, { requestId: "beta-next", text: "Beta next" })
+    ).json();
+    releaseBeta.resolve();
+    await vi.waitFor(async () =>
+      expect((await get(`/api/bots/${alpha}/thread`)).tasks[1].runs[0].state).toBe("active"),
+    );
+    releaseLater.resolve();
+    await vi.waitFor(async () =>
+      expect((await get(`/api/bots/${beta}/thread`)).tasks[1].runs[0]).toMatchObject({
+        id: betaNext.runId,
+        state: "active",
+      }),
+    );
+    expect((await get(`/api/bots/${alpha}/thread`)).tasks[2].runs[0]).toMatchObject({
+      id: third.runId,
+      state: "queued",
+    });
   } finally {
     releaseAlpha.resolve();
     releaseBeta.resolve();
+    releaseLater.resolve();
+    releaseBetaNext.resolve();
+  }
+});
+
+it("continues another Bot's output while durable-wait termination is unconfirmed", async () => {
+  const stopping = Promise.withResolvers<void>();
+  const confirmStop = Promise.withResolvers<void>();
+  const external = new MailboxDriver();
+  external.respond = async (input, material, signal) => {
+    if (input.content === "Wait") {
+      new RunnerMailbox(material.directory).requestDurableWait("owner question");
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    }
+    return `Final: ${input.content}`;
+  };
+  const driver: SessionDriver = {
+    start: async (material, signal) => {
+      const handle = await external.start(material, signal);
+      return {
+        wait: handle.wait,
+        stop: async () => {
+          if (material.key.agentGroupId === "personal") {
+            stopping.resolve();
+            await confirmStop.promise;
+          }
+          await handle.stop();
+        },
+      };
+    },
+  };
+  try {
+    await start(driver);
+    const waiting = await (
+      await post("/api/bots/personal/thread/messages", { requestId: "wait", text: "Wait" })
+    ).json();
+    await vi.waitFor(() => expect(external.launches).toHaveLength(1));
+    await waitForCheckpoint(stopping.promise, "durable wait stop");
+    const beta = await createBot("Beta");
+    const outputs: string[] = [];
+    const unsubscribe = host.observe((event) => {
+      if (event.type === "output") outputs.push(event.sessionId);
+    });
+    try {
+      const admitted = await (
+        await post(`/api/bots/${beta}/thread/messages`, { requestId: "beta", text: "Beta" })
+      ).json();
+      await vi.waitFor(() => expect(outputs).toContain(admitted.runId));
+      expect((await get("/api/bots/personal/thread")).tasks[0].runs[0]).toMatchObject({
+        id: waiting.runId,
+        state: "active",
+      });
+    } finally {
+      unsubscribe();
+    }
+  } finally {
+    confirmStop.resolve();
   }
 });
 

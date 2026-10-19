@@ -716,7 +716,14 @@ export class ThreadStore {
           `INSERT INTO admission_service (bot_id, served_seq) VALUES (?, ?)
            ON CONFLICT(bot_id) DO UPDATE SET served_seq = excluded.served_seq`,
         )
-        .run(chosen.botId, chosen.seq);
+        .run(
+          chosen.botId,
+          (
+            this.db
+              .prepare("SELECT COALESCE(MAX(served_seq), 0) + 1 AS seq FROM admission_service")
+              .get() as { seq: number }
+          ).seq,
+        );
       if (chosen.admissionClass === scheduler.nextClass) {
         this.db
           .prepare("UPDATE admission_scheduler SET next_class = ? WHERE id = 1")

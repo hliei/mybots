@@ -201,7 +201,6 @@ export class Host {
   private readonly controller = new AbortController();
   private readonly prepared = new Map<string, Promise<SessionExecution>>();
   private readonly preparedExecutions = new Map<string, SessionExecution>();
-  private readonly settlingWaits = new Set<string>();
   private readonly channels = new Map<string, HostChannel>();
   private readonly observers = new Set<(event: HostEvent) => void>();
   /** Highest outbound sequence already observed per session; seeded at startup. */
@@ -697,7 +696,7 @@ export class Host {
           if (signal.aborted) break;
           execution.mailbox.syncAcknowledgements();
           this.syncChat(execution);
-          await this.reconcileDurableWait(execution);
+          this.reconcileDurableWait(execution);
           this.historyOperations(execution);
           if (!execution.handle && !execution.starting && !execution.replacing)
             await this.reconcileSession(execution);
@@ -1211,6 +1210,7 @@ export class Host {
     if (current) return current;
     const job = (async () => {
       await execution.starting;
+      await execution.replacing;
       if (this.store.threads.run(id).state !== "stopping") return;
       execution.cutover = undefined;
       const handle = execution.handle;
@@ -1466,16 +1466,10 @@ export class Host {
    * A durable wait ends the Attempt only after recorded tool calls have results.
    * An unconfirmed executor stop keeps the Bot slot.
    */
-  private async reconcileDurableWait(execution: SessionExecution): Promise<void> {
+  private reconcileDurableWait(execution: SessionExecution): void {
     if (this.stopped || execution.route.session.purpose !== "run") return;
     const id = execution.route.session.id;
-    if (
-      this.settlingWaits.has(id) ||
-      execution.starting ||
-      execution.replacing ||
-      execution.cutover
-    )
-      return;
+    if (execution.starting || execution.replacing || execution.cutover) return;
     const state = this.store.threads.run(id).state;
     if (state === "waiting" && execution.mailbox.durableResume()) {
       this.store.threads.resumeWait(id, this.timestamp());
@@ -1493,8 +1487,7 @@ export class Host {
       )
     )
       return;
-    this.settlingWaits.add(id);
-    try {
+    execution.replacing = (async () => {
       const handle = execution.handle;
       if (handle) {
         execution.superseded.add(handle);
@@ -1510,9 +1503,14 @@ export class Host {
       this.store.threads.beginWait(id, reason, this.timestamp());
       execution.mailbox.clearDurableSignal("durable-wait");
       this.schedule();
-    } finally {
-      this.settlingWaits.delete(id);
-    }
+    })()
+      .catch(() => {
+        if (!this.stopped)
+          this.emit({ type: "failure", sessionId: id, error: "Durable wait settlement failed" });
+      })
+      .finally(() => {
+        execution.replacing = undefined;
+      });
   }
 
   /** Read-only client projection. Mailbox acknowledgement is not a work outcome. */
