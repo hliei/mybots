@@ -1,3 +1,5 @@
+import { showChat } from "./chat.ts";
+
 interface Snapshot {
   bots: { id: string; name: string }[];
   sessions: {
@@ -230,6 +232,7 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
       selected.append(paragraph);
     }
   }
+  void showChat(active?.id);
   if (snapshot.bots.length === 0) bots.textContent = "No Bots configured.";
 }
 

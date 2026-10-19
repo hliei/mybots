@@ -18,16 +18,17 @@ configuration.approvedModels = [
 const driver = new MailboxDriver();
 const started = Promise.withResolvers();
 const release = Promise.withResolvers();
-driver.respond = async (_input, _material, signal) => {
+const chatRelease = Promise.withResolvers();
+driver.respond = async (input, _material, signal) => {
   started.resolve();
   await Promise.race([
-    release.promise,
+    input.content === "Hold chat" ? chatRelease.promise : release.promise,
     new Promise((resolve) => {
       if (signal.aborted) resolve();
       else signal.addEventListener("abort", resolve, { once: true });
     }),
   ]);
-  return "Controlled reply";
+  return input.content === "Inspect this session" ? "Controlled reply" : `Final: ${input.content}`;
 };
 const host = await Host.start({ root, configuration, driver });
 let channel;
@@ -52,10 +53,12 @@ try {
     process.once("disconnect", resolve);
     process.on("message", (message) => {
       if (message === "complete") release.resolve();
+      if (message === "complete-chat") chatRelease.resolve();
     });
   });
 } finally {
   release.resolve();
+  chatRelease.resolve();
   await channel?.close();
   await host.stop();
   process.disconnect?.();

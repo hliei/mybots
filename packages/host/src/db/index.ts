@@ -6,12 +6,14 @@ import type { AgentResources, WebConfiguration } from "@mybots/mailbox";
 import { BotRequestError, type BotSettings, type ManagedBot } from "../bots.ts";
 import type { ModelConfiguration } from "../drivers/types.ts";
 import type { HostConfiguration } from "../host.ts";
+import { ChatStore } from "./chat.ts";
 import { schema } from "./migrations/001-initial.ts";
 import { resourceSchema } from "./migrations/002-agent-resources.ts";
 import { deliveryAttemptSchema } from "./migrations/003-delivery-attempts.ts";
 import { recoverySchema } from "./migrations/004-session-recovery.ts";
 import { webSchema } from "./migrations/005-web-tools.ts";
 import { managedBotSchema } from "./migrations/006-managed-bots.ts";
+import { chatSchema } from "./migrations/007-chat-work.ts";
 
 export interface HostInstance {
   instance_id: string;
@@ -41,6 +43,8 @@ export interface SavedSession {
   container_status: string;
   last_active: string | null;
   created_at: string;
+  name: string;
+  purpose: string;
 }
 
 export interface SessionRoute {
@@ -67,6 +71,7 @@ export interface DeliveryAttempt {
 
 export class HostStore {
   private readonly db: DatabaseSync;
+  readonly chat: ChatStore;
   constructor(file: string, configuration: HostConfiguration) {
     this.db = new DatabaseSync(file);
     try {
@@ -76,14 +81,16 @@ export class HostStore {
       const { user_version } = this.db.prepare("PRAGMA user_version").get() as {
         user_version: number;
       };
-      if (user_version > 6) throw new Error("Unsupported host schema version");
+      if (user_version > 7) throw new Error("Unsupported host schema version");
       if (user_version === 0) this.db.exec(schema);
       if (user_version <= 1) this.db.exec(resourceSchema);
       if (user_version <= 2) this.db.exec(deliveryAttemptSchema);
       if (user_version <= 3) this.db.exec(recoverySchema);
       if (user_version <= 4) this.db.exec(webSchema);
       if (user_version <= 5) this.db.exec(managedBotSchema);
+      if (user_version <= 6) this.db.exec(chatSchema);
       this.seed(configuration);
+      this.chat = new ChatStore(this.db);
     } catch (error) {
       this.db.close();
       throw error;

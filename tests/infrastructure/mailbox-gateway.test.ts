@@ -294,6 +294,51 @@ test("actual mounted runner uses OneCLI injection and reopens its explicit Pi co
     expect(reopened.deliveryStatus(first.id)).toBeUndefined();
     reopened.markDelivered(first.id, "delivered");
     expect(new HostMailbox(material.directory).deliveryStatus(first.id)).toBe("delivered");
+    await handle.stop();
+    handle = undefined;
+    // Explicit sessions share their Bot's workspace, while mounting only their own SDK state.
+    for (const [agentGroupId, expected] of [
+      ["personal", "Shared material visible."],
+      ["writer", "Workspace starts empty."],
+    ]) {
+      const selected = await provisionSession({
+        root,
+        key: { agentGroupId, sessionId: "selected-chat" },
+        folder: agentGroupId,
+        model: {
+          provider: "controlled",
+          id: "controlled-model",
+          baseUrl: "https://model.test:8443/v1",
+          contextWindow: 32768,
+          maxTokens: 4096,
+        },
+      });
+      const mailbox = new HostMailbox(selected.directory);
+      mailbox.submit({
+        id: "inspect",
+        content: `Inspect Bot materials for ${agentGroupId}`,
+        channel_type: "client",
+        platform_id: "owner",
+        thread_id: "selected-chat",
+      });
+      handle = await recoveredDriver.start(selected, signal);
+      const result = await Promise.race([
+        eventually(() => mailbox.outputs()[0], signal),
+        handle.wait().then(() => {
+          throw new Error("Selected session stopped before reply");
+        }),
+      ]);
+      expect(result).toMatchObject({ kind: "message", content: expected });
+      const requests = (await fetch(upstreamUrl, { signal }).then((response) => response.json()))
+        .requests as { messages: { role: string; content?: unknown }[] }[];
+      const current = requests.filter((request) =>
+        JSON.stringify(request.messages).includes(`Inspect Bot materials for ${agentGroupId}`),
+      );
+      expect(current).toHaveLength(2);
+      expect(JSON.stringify(current)).not.toContain("Save a shared note");
+      await handle.stop();
+      handle = undefined;
+    }
     process.stdout.write(
       "Infrastructure passed: mounted freshness, tool isolation, gateway injection, streaming reply, explicit Pi reopening, runtime observation/adoption and observed container termination.\n",
     );

@@ -289,8 +289,20 @@ SessionDriver; they do not require a client build.
 client and compiled Host, with the same controlled SessionDriver. It verifies
 rejected/successful pairing, processing and acknowledged input counts, retained
 browser connection on reload, and status recovery after Host restart. It asserts
-rendered content and owner actions rather than pixel snapshots. Browser checks
+rendered content and owner actions rather than pixel snapshots. It also creates
+and selects Bot-owned chats, sends FIFO follow-ups, checks parallel Bot results,
+renames a session, and recovers a dropped message response and saved work after
+reload and Host restart. Browser checks
 remain offline and do not establish actual-container or actual-service evidence.
+
+`tests/selected-session-chat.test.ts` exercises selected chat operations, request
+replay/conflicts, shared work lifetimes, parallel sessions, provider failure,
+early-acknowledgement loss, held follow-ups, queued recovery, retry exhaustion,
+and admission-before-publication recovery through public HTTP. It retains real
+Host/SQLite/mailboxes. A real Pi SDK case uses the production mailbox loop and a
+controlled streaming model service to check separate contexts, same-Bot shared
+files, cross-Bot isolation and explicit reopening after restart. The infrastructure
+suite also checks these workspace and session boundaries in actual containers.
 
 Install Chromium with `npx playwright install chromium` (Linux can use
 `npx playwright install --with-deps chromium`). Run `npm run test:browser` for

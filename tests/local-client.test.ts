@@ -108,6 +108,11 @@ it("rejects invalid credential, Host and Origin on HTTP and the existing live-ev
       ["/api/bots", "POST"],
       ["/api/bots", "GET"],
       ["/api/bot-options", "GET"],
+      ["/api/sessions", "GET"],
+      ["/api/sessions", "POST"],
+      ["/api/sessions/example", "GET"],
+      ["/api/sessions/example/name", "POST"],
+      ["/api/sessions/example/messages", "POST"],
       ["/ws", "GET"],
     ]) {
       const status = await new Promise<number>((resolve, reject) => {

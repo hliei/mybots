@@ -149,6 +149,13 @@ export function createMailbox(withDatabase: WithDatabase) {
       );
     }
 
+    /** Hold unclaimed input while its work requires an explicit owner resolution. */
+    holdInput(id: string): void {
+      withDatabase(this.directory, "inbound", false, (db) =>
+        db.run("UPDATE messages_in SET trigger = 0 WHERE id = ? AND status = 'pending'", id),
+      );
+    }
+
     /** Last observed container heartbeat, or undefined when never written. */
     heartbeat(): number | undefined {
       return readHeartbeat(this.directory);

@@ -178,8 +178,8 @@ selects the mailbox source export; built startup uses its compiled export. See
 - `packages/host/src/host.ts`, `packages/host/src/reconcile-session.ts`: routing, delivery and bounded recovery.
 - `packages/host/src/db/`: central entities and schema migrations.
 - `packages/host/src/channels/`: Telegram and WebSocket host adapters and Bot API transport.
-- `packages/host/src/web/`: client asset serving, local pairing, Bot creation and HTTP reads.
-- `packages/client/src/`: browser Bot management and status page using the public Host API.
+- `packages/host/src/web/`: client asset serving, local pairing, Bot/session operations and HTTP reads.
+- `packages/client/src/`: browser Bot management, selected-session chat and work outcomes using the public Host API.
 - `packages/host/src/drivers/`, `packages/host/src/container-runner.ts`: isolated execution and session material.
 - `packages/host/src/gateway-providers/`: host-side credential gateway integration.
 - `packages/mailbox/src/`: shared directional mailbox package with Node and Bun entries.
