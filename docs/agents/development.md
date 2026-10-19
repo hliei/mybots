@@ -96,7 +96,10 @@ resolving npm symlinks while preserving the caller's current directory and prefe
 `.tools/node/bin/node`. `mbt start` uses the linked installation as its default root,
 starts its existing service without restarting a healthy Host, waits for an
 authenticated local API response, then opens the configured Web UI. Terminal chat
-keeps its caller-directory default. Startup
+keeps its caller-directory default. `mbt exit` uses the same installation default,
+stops its service and waits for session-container cleanup, retaining saved data and
+the shared gateway. Start and exit share a kernel-released lock in
+`data/service-control.lock`; they never lock the Host's domain database. Startup
 smoke checks must exit without live credentials and cover executable entry points,
 not only imports.
 The offline startup checks also execute the compiled Pi provider against a local

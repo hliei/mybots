@@ -203,12 +203,16 @@ tests import modules without initialization and reject invalid host settings and
 an unavailable host without credentials. The compiled `scripts/host-cli-demo.mjs`
 is included in `verify` and separately runnable with `npm run demo:host`. It uses
 the same controlled mailbox driver and removes its processes, sockets and state.
-`tests/start-command.test.ts` exercises `mbt start` through the executable command
+`tests/start-command.test.ts` exercises `mbt start` and `mbt exit` through the executable command
 with real Host/HTTP/pairing state. Service-manager and browser commands are replaced
 at their OS process boundary, including a controlled child Host for cold startup.
 Checks cover healthy-Host reuse, loaded/unloaded service startup, authenticated
 readiness, installation root/Node selection through a symlink from another directory,
 configuration/service rejection, browser fallback and side-effect-free help.
+Lifecycle checks cover concurrent starts, exit during startup, active execution
+cleanup, retained chat/work data after restart, already stopped services and
+unconfirmed cleanup after a Host crash. They use real Host shutdown with a
+controlled execution driver; Docker and the shared gateway are not invoked.
 All replaced embedded execution, context, routing and delivery tests are retired.
 Current contracts use host/channel and real Pi SDK tests. Independent Bot API
 normalization and transport cases remain in `tests/telegram-api.test.ts`.

@@ -10,7 +10,17 @@ const root = process.argv[2] as string;
 const { configuration, websocket } = await loadHostSettings(join(root, "host.json"));
 const stopped = Promise.withResolvers<void>();
 process.once("SIGTERM", () => stopped.resolve());
-const host = await Host.start({ root, configuration, driver: new MailboxDriver() });
+const driver = new MailboxDriver();
+driver.respond = async (_input, _material, signal) => {
+  await writeFile(join(root, "runner-active"), "active");
+  await new Promise<void>((resolve) => {
+    if (signal.aborted) resolve();
+    else signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+  await writeFile(join(root, "runner-stopped"), "stopped");
+  return "Interrupted fixture execution";
+};
+const host = await Host.start({ root, configuration, driver });
 let channel: WebSocketChannel | undefined;
 try {
   channel = await WebSocketChannel.listen({

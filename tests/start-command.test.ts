@@ -30,11 +30,27 @@ afterEach(async () => {
   host = undefined;
   if (root) {
     try {
-      const pid = Number(await readFile(join(root, "service-pid"), "utf8"));
-      process.kill(pid, "SIGTERM");
-      await vi.waitFor(async () =>
-        expect(await readFile(join(root, "service-stopped"), "utf8")).toBe("stopped"),
-      );
+      const pids = (await readFile(join(root, "service-pids"), "utf8"))
+        .trim()
+        .split("\n")
+        .map(Number);
+      for (const pid of pids) {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      }
+      await vi.waitFor(async () => {
+        for (const pid of pids) {
+          try {
+            process.kill(pid, 0);
+            throw new Error("Controlled Host is still running");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          }
+        }
+      });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
@@ -70,6 +86,31 @@ async function installed() {
   };
 }
 
+async function serviceManager(loaded = true) {
+  const commands = join(root, "commands");
+  const script = `#!${process.execPath}
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+const root = ${JSON.stringify(root)};
+const args = process.argv.slice(2);
+appendFileSync(root + '/service-commands', JSON.stringify(args) + '\\n');
+if (args[0] === 'print') process.exit(${loaded ? 0 : 1});
+if (args[0] === 'bootout' || args.includes('stop')) {
+  const pid = Number(readFileSync(root + '/service-pid', 'utf8'));
+  try { process.kill(pid, 'SIGTERM'); } catch (error) { if(error.code !== 'ESRCH') throw error; }
+  process.exit(0);
+}
+if (args.includes('start') || args[0] === 'kickstart' || args[0] === 'bootstrap') {
+  const child = spawn(process.execPath, [${JSON.stringify(resolve("tests/start-command-host.ts"))}, root], { stdio: 'ignore', detached: true, env: { ...process.env, NODE_OPTIONS: '--conditions=mybots-source' } });
+  writeFileSync(root + '/service-pid', String(child.pid));
+  appendFileSync(root + '/service-pids', String(child.pid) + '\\n');
+  child.unref();
+}
+`;
+  await writeFile(join(commands, "launchctl"), script, { mode: 0o755 });
+  await copyFile(join(commands, "launchctl"), join(commands, "systemctl"));
+}
+
 it("opens the paired local UI without restarting an already running Host", async () => {
   const { url, env } = await installed();
   const result = await run(resolve("bin/mbt"), ["start", "--root", root], {
@@ -93,22 +134,7 @@ it.each([true, false])(
     channel = undefined;
     await host?.stop();
     host = undefined;
-    const commands = join(root, "commands");
-    const script = `#!${process.execPath}
-import { appendFileSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
-const root = ${JSON.stringify(root)};
-const args = process.argv.slice(2);
-appendFileSync(root + '/service-commands', JSON.stringify(args) + '\\n');
-if (args[0] === 'print') process.exit(${loaded ? 0 : 1});
-if (args.includes('start') || args[0] === 'kickstart' || args[0] === 'bootstrap') {
-  const child = spawn(process.execPath, [${JSON.stringify(resolve("tests/start-command-host.ts"))}, root], { stdio: 'ignore', detached: true, env: { ...process.env, NODE_OPTIONS: '--conditions=mybots-source' } });
-  writeFileSync(root + '/service-pid', String(child.pid));
-  child.unref();
-}
-`;
-    await writeFile(join(commands, "launchctl"), script, { mode: 0o755 });
-    await copyFile(join(commands, "launchctl"), join(commands, "systemctl"));
+    await serviceManager(loaded);
     const result = await run(resolve("bin/mbt"), ["start", "--root", root], {
       cwd: tmpdir(),
       env,
@@ -207,13 +233,180 @@ it("keeps a ready Host usable and prints its URL when no desktop browser can ope
   expect(result.stdout).toContain(`Open ${url} in your browser.`);
 });
 
-it("shows start help without reading installation state or launching services", async () => {
-  root = await mkdtemp(join(tmpdir(), "mybots-start-help-"));
-  const result = await run(resolve("bin/mbt"), ["start", "--help", "--root", root], {
+it.each(["start", "exit"])(
+  "shows %s help without reading installation state or launching services",
+  async (command) => {
+    root = await mkdtemp(join(tmpdir(), "mybots-start-help-"));
+    const result = await run(resolve("bin/mbt"), [command, "--help", "--root", root], {
+      cwd: tmpdir(),
+      timeout: 5000,
+    });
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain(`mbt ${command}`);
+    expect(await readdir(root)).toEqual([]);
+  },
+);
+
+it("exits a stopped installation without starting services or opening a browser", async () => {
+  const { env } = await installed();
+  await channel?.close();
+  channel = undefined;
+  await host?.stop();
+  host = undefined;
+  // An unloaded/non-active service is already stopped.
+  for (const command of ["launchctl", "systemctl"])
+    await writeFile(join(root, "commands", command), "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+  const result = await run(resolve("bin/mbt"), ["exit", "--root", root], {
     cwd: tmpdir(),
+    env,
     timeout: 5000,
   });
   expect(result.stderr).toBe("");
-  expect(result.stdout).toContain("mbt start");
-  expect(await readdir(root)).toEqual([]);
+  expect(result.stdout).toContain("Mybots stopped");
+  expect(await readFile(join(root, "host.json"), "utf8")).toContain("personal");
+  await expect(readFile(join(root, "opened"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("reports service-stop failure without claiming that running work was cleaned up", async () => {
+  const { env, url } = await installed();
+  for (const command of ["launchctl", "systemctl"])
+    await writeFile(
+      join(root, "commands", command),
+      '#!/bin/sh\ncase "$*" in\n  *print*|*is-active*) exit 0 ;;\n  *) exit 1 ;;\nesac\n',
+      { mode: 0o755 },
+    );
+  const result = await run(resolve("bin/mbt"), ["exit", "--root", root], {
+    cwd: tmpdir(),
+    env,
+    timeout: 5000,
+  }).catch((error) => error as { code: number; stdout: string; stderr: string });
+  expect(result).toMatchObject({ code: 1, stderr: expect.stringContaining("Cannot exit Mybots") });
+  expect(result.stdout).not.toContain("Mybots stopped");
+  const credential = (await readFile(join(root, "data", "client-credential"), "utf8")).trim();
+  expect(
+    (
+      await fetch(new URL("api/status", url), {
+        headers: { Authorization: `Bearer ${credential}` },
+      })
+    ).status,
+  ).toBe(200);
+});
+
+it("serializes concurrent starts so the installed service is started only once", async () => {
+  const { env, url } = await installed();
+  await channel?.close();
+  channel = undefined;
+  await host?.stop();
+  host = undefined;
+  await serviceManager();
+  const results = await Promise.all(
+    [1, 2].map(() =>
+      run(resolve("bin/mbt"), ["start", "--root", root], { cwd: tmpdir(), env, timeout: 12000 }),
+    ),
+  );
+  for (const result of results) expect(result.stdout).toContain(url);
+  const commands = (await readFile(join(root, "service-commands"), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as string[]);
+  expect(commands.filter((args) => args[0] === "kickstart" || args.includes("start"))).toHaveLength(
+    1,
+  );
+}, 15000);
+
+it("waits for session execution cleanup on exit and retains Bot and work data for the next start", async () => {
+  const { env, url } = await installed();
+  await channel?.close();
+  channel = undefined;
+  await host?.stop();
+  host = undefined;
+  await serviceManager();
+  const invoke = (command: string) =>
+    run(resolve("bin/mbt"), [command, "--root", root], { cwd: tmpdir(), env, timeout: 12000 });
+  await invoke("start");
+  const credential = (await readFile(join(root, "data", "client-credential"), "utf8")).trim();
+  const headers = { Authorization: `Bearer ${credential}`, "Content-Type": "application/json" };
+  const created = await fetch(new URL("api/sessions", url), {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ requestId: "lifecycle-chat", botId: "personal", name: "Retained chat" }),
+  });
+  expect(created.status).toBe(201);
+  const { session } = await created.json();
+  const admitted = await (
+    await fetch(new URL(`api/sessions/${session.id}/messages`, url), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ requestId: "lifecycle-work", text: "Keep this evidence" }),
+    })
+  ).json();
+  await vi.waitFor(async () =>
+    expect(await readFile(join(root, "runner-active"), "utf8")).toBe("active"),
+  );
+  const exited = await invoke("exit");
+  expect(exited.stdout).toContain("Mybots stopped");
+  expect(await readFile(join(root, "runner-stopped"), "utf8")).toBe("stopped");
+  await expect(
+    readFile(join(root, "data", "host.lock", "owner.json"), "utf8"),
+  ).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(fetch(new URL("api/status", url), { headers })).rejects.toThrow();
+  await invoke("start");
+  const restored = await (
+    await fetch(new URL(`api/sessions/${session.id}`, url), { headers })
+  ).json();
+  expect(restored).toMatchObject({
+    session: { name: "Retained chat", botId: "personal" },
+    works: [{ id: admitted.workId, outcome: null, messages: [{ text: "Keep this evidence" }] }],
+  });
+  expect((await invoke("exit")).stdout).toContain("Mybots stopped");
+}, 25000);
+
+it("orders exit after a start already in progress and leaves no Host running", async () => {
+  const { env, url } = await installed();
+  await channel?.close();
+  channel = undefined;
+  await host?.stop();
+  host = undefined;
+  await serviceManager();
+  const starting = run(resolve("bin/mbt"), ["start", "--root", root], {
+    cwd: tmpdir(),
+    env,
+    timeout: 12000,
+  });
+  await vi.waitFor(async () =>
+    expect(await readFile(join(root, "service-commands"), "utf8")).toMatch(/kickstart|start/),
+  );
+  const exiting = run(resolve("bin/mbt"), ["exit", "--root", root], {
+    cwd: tmpdir(),
+    env,
+    timeout: 12000,
+  });
+  expect((await starting).stdout).toContain(url);
+  expect((await exiting).stdout).toContain("Mybots stopped");
+  await expect(fetch(new URL("api/status", url))).rejects.toThrow();
+}, 15000);
+
+it("does not claim cleanup succeeded after a Host crash left an unresolved ownership record", async () => {
+  const { env } = await installed();
+  await channel?.close();
+  channel = undefined;
+  await host?.stop();
+  host = undefined;
+  await mkdir(join(root, "data", "host.lock"));
+  await writeFile(
+    join(root, "data", "host.lock", "owner.json"),
+    JSON.stringify({ pid: 2147483647 }),
+  );
+  for (const command of ["launchctl", "systemctl"])
+    await writeFile(join(root, "commands", command), "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+  const result = await run(resolve("bin/mbt"), ["exit", "--root", root], {
+    cwd: tmpdir(),
+    env,
+    timeout: 5000,
+  }).catch((error) => error as { code: number; stdout: string; stderr: string });
+  expect(result).toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("cleanup is unconfirmed"),
+  });
+  expect(result.stdout).not.toContain("Mybots stopped");
 });
