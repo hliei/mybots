@@ -192,6 +192,8 @@ export class ThreadStore {
     });
   }
   markStopping(run: RunRow, now: string) {
+    if (run.state === "uncertain")
+      throw new ChatRequestError("Run is already uncertain. Retry or close it.", 409);
     if (["succeeded", "failed", "closed"].includes(run.state))
       throw new ChatRequestError("Run is already terminal.", 409);
     if (run.state !== "stopping")
@@ -225,7 +227,7 @@ export class ThreadStore {
       const missing = inputs.filter((row) => !row.outcome);
       const gap = missing.some((input) =>
         acknowledgements.some(
-          (ack) => ack.message_id === input.message_id && ack.status === "completed",
+          (ack) => ack.message_id === input.message_id && ack.status !== "processing",
         ),
       );
       let state: RunRow["state"];

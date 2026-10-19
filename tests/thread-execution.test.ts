@@ -768,6 +768,10 @@ it("releases capacity after confirmed stop, holds the uncertain Run, and retries
         { taskId: admitted.taskId, runId: admitted.runId },
       ]),
     );
+    expect(
+      (await post(`/api/bots/personal/runs/${admitted.runId}/stop`, { requestId: "stop-held" }))
+        .status,
+    ).toBe(409);
     expect((await get(path)).tasks[0].runs[0]).toMatchObject({
       state: "uncertain",
       held: true,
@@ -901,10 +905,11 @@ it("closes uncertain work without a new Run and keeps a late result from revivin
   }
 });
 
-it("keeps an unconfirmed stop across restart when the container is still observed", async () => {
+it("continues an observed stop after restart until termination is confirmed", async () => {
   const external = new MailboxDriver();
   const release = Promise.withResolvers<void>();
   let gatedRun = "";
+  const live = new Map<string, Awaited<ReturnType<MailboxDriver["start"]>>>();
   external.respond = async (input, _material, signal) => {
     if (input.content === "Hold")
       await new Promise<void>((resolve) => {
@@ -916,6 +921,7 @@ it("keeps an unconfirmed stop across restart when the container is still observe
   const driver: ObservingSessionDriver = {
     start: async (material, signal) => {
       const handle = await external.start(material, signal);
+      live.set(material.key.sessionId, handle);
       return {
         wait: handle.wait,
         stop: async () => {
@@ -925,7 +931,18 @@ it("keeps an unconfirmed stop across restart when the container is still observe
       };
     },
     list: () => external.list(),
-    adopt: (observation, material, signal) => external.adopt(observation, material, signal),
+    adopt: async (observation, material, signal) => {
+      const handle = live.get(observation.key.sessionId);
+      if (!handle) return external.adopt(observation, material, signal);
+      return {
+        ref: observation.ref,
+        wait: () => handle.wait(),
+        stop: async () => {
+          if (observation.key.sessionId === gatedRun) await release.promise;
+          await handle.stop();
+        },
+      };
+    },
   };
   const configuration = await start(driver);
   const admitted = await (
@@ -948,14 +965,16 @@ it("keeps an unconfirmed stop across restart when the container is still observe
   try {
     host = await Host.start({ root, configuration, driver });
     await listen(configuration);
-    expect((await get("/api/bots/personal/thread")).tasks[0].runs[0]).toMatchObject({
-      id: admitted.runId,
-      state: "stopping",
-    });
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).tasks[0].runs[0]).toMatchObject({
+        id: admitted.runId,
+        state: "stopping",
+      }),
+    );
     const queued = await (
       await post("/api/bots/personal/thread/tasks", {
         requestId: "queued-after-restart",
-        text: "Still blocked",
+        text: "Runs after confirmation",
       })
     ).json();
     const bot = await (
@@ -980,6 +999,65 @@ it("keeps an unconfirmed stop across restart when the container is still observe
       id: queued.runId,
       state: "queued",
     });
+    release.resolve();
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).tasks[0].runs[0]).toMatchObject({
+        id: admitted.runId,
+        state: "closed",
+        outcome: { kind: "cancelled" },
+      }),
+    );
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).tasks[1].runs[0]).toMatchObject({
+        id: queued.runId,
+        state: "succeeded",
+      }),
+    );
+  } finally {
+    release.resolve();
+  }
+});
+
+it("keeps a failed acknowledgement without output uncertain after confirmed stop", async () => {
+  const external = new MailboxDriver();
+  const release = Promise.withResolvers<void>();
+  external.respond = async (input, material, signal) => {
+    new RunnerMailbox(material.directory).acknowledge(input.id, "failed");
+    await new Promise<void>((resolve) => {
+      if (signal.aborted) resolve();
+      else signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    return "Final that must not replace the gap";
+  };
+  const driver: SessionDriver = {
+    start: async (material, signal) => {
+      const handle = await external.start(material, signal);
+      return {
+        wait: handle.wait,
+        stop: async () => {
+          await release.promise;
+          await handle.stop();
+        },
+      };
+    },
+  };
+  try {
+    await start(driver);
+    const admitted = await (
+      await post("/api/bots/personal/thread/messages", { requestId: "failed-ack", text: "Gap" })
+    ).json();
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("active"),
+    );
+    await post(`/api/bots/personal/runs/${admitted.runId}/stop`, { requestId: "failed-ack-stop" });
+    release.resolve();
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).tasks[0].runs[0]).toMatchObject({
+        state: "uncertain",
+        held: true,
+        outcome: { kind: "uncertain", reply: "Final evidence is missing." },
+      }),
+    );
   } finally {
     release.resolve();
   }

@@ -298,8 +298,14 @@ export class Host {
         (item) =>
           item.key.sessionId === session.id && item.key.agentGroupId === session.agent_group_id,
       );
-      if (observation) await this.adopt(execution, observation);
-      else await this.reconcileSession(execution);
+      if (observation) {
+        await this.adopt(execution, observation);
+        if (
+          execution.route.session.purpose === "run" &&
+          this.store.threads.run(session.id).state === "stopping"
+        )
+          void this.executeStop(execution);
+      } else await this.reconcileSession(execution);
     }
   }
 

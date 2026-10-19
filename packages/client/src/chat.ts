@@ -130,6 +130,7 @@ const retry = element<HTMLButtonElement>("retry-chat");
 const pendingKey = "mybots.pending-thread-input";
 let botId: string | undefined;
 let version = 0;
+let refreshTimer = 0;
 let sending = false;
 let pending: Pending | undefined;
 try {
@@ -147,6 +148,7 @@ function controls(): void {
   retry.disabled = sending;
 }
 export async function showChat(selectedBotId: string | undefined): Promise<void> {
+  window.clearTimeout(refreshTimer);
   if (botId !== selectedBotId) {
     botId = selectedBotId;
     text.value = "";
@@ -225,11 +227,15 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
           if (run.state === "uncertain")
             article.append(
               paragraph(
-                "Final evidence is missing. This Run stays held for later Routine occurrences; unrelated Tasks can proceed.",
+                "Final evidence is missing. This Run is held until you retry or close it. Unrelated Tasks can proceed.",
               ),
             );
           if (run.held)
-            article.append(paragraph("Routine hold: later occurrences of this work stay blocked."));
+            article.append(
+              paragraph(
+                "Held for a later Routine occurrence, which is not scheduled in this version.",
+              ),
+            );
           for (const late of run.lateEvidence ?? [])
             article.append(paragraph(`Late result: ${late.text}`));
           const details = document.createElement("details");
@@ -266,7 +272,7 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
           const runnable =
             run.state === "queued" || run.state === "active" || run.state === "stopping";
           if (runnable) article.append(runButton("Stop run", "stop", task.id, run.id));
-          if (run.state === "uncertain" || run.state === "closed" || run.state === "failed")
+          if (run.state === "uncertain" || run.state === "closed")
             article.append(runButton("Retry run", "retry", task.id, run.id));
           if (run.state === "uncertain")
             article.append(runButton("Close uncertain run", "close", task.id, run.id));
@@ -274,9 +280,12 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
         return article;
       }),
     );
-    if (detail.tasks.some((task) => task.runs.some((run) => run.state === "stopping")))
-      window.setTimeout(() => {
-        if (botId) void showChat(botId);
+    if (
+      current === version &&
+      detail.tasks.some((task) => task.runs.some((run) => run.state === "stopping"))
+    )
+      refreshTimer = window.setTimeout(() => {
+        if (current === version && botId) void showChat(botId);
       }, 200);
   } catch {
     if (current === version)

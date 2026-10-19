@@ -388,8 +388,9 @@ version (initially 1), start and confirmed end. Outcomes correlate to final
 mailbox evidence, never queue acceptance or partial text. `stopping` remains
 until the executor's stop completes; a failed stop keeps that Bot's serial slot
 and reports `stopError`. Confirmed stop with an acknowledged input and no final
-output becomes `uncertain` and `held`, which blocks later occurrences of that
-work's Routine. Unrelated Tasks of the same Bot may then run. Ordinary Thread
+output becomes `uncertain` and `held`. `held` records that a later Routine
+occurrence must not start; occurrence scheduling is a later capability and does
+not run in this version. Unrelated Tasks of the same Bot may then run. Ordinary Thread
 sends do not retry or close that hold. Explicit retry confirms stop, keeps the
 original outcome, and creates one linked Run. Explicit close records the same
 uncertain outcome as `closed` without a new Run. Output that arrives after a
