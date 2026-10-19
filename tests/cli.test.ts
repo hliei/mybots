@@ -122,7 +122,10 @@ it("routes owner-local socket input through the persistent host and continues af
   first.socket.destroy();
   const second = await terminal();
   second.send("Continue");
-  await vi.waitFor(() => expect(second.replies).toEqual([{ text: "Reply: Continue" }]));
+  // The next Run also waits for confirmed executor cleanup after the previous reply.
+  await vi.waitFor(() => expect(second.replies).toEqual([{ text: "Reply: Continue" }]), {
+    timeout: 3000,
+  });
   expect(host?.sessions()).toHaveLength(2);
   expect(host?.sessions()[0].id).toBe(session);
   expect((await host?.threadDetail("personal"))?.tasks).toHaveLength(2);
