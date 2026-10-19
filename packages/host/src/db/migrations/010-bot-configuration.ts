@@ -17,6 +17,6 @@ CREATE TABLE bot_updates (
  payload TEXT NOT NULL,
  version INTEGER NOT NULL
 );
-PRAGMA user_version = 9;
+PRAGMA user_version = 10;
 COMMIT;
 `;

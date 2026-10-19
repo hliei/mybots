@@ -19,7 +19,8 @@ import { webSchema } from "./migrations/005-web-tools.ts";
 import { managedBotSchema } from "./migrations/006-managed-bots.ts";
 import { chatSchema } from "./migrations/007-chat-work.ts";
 import { threadExecutionSchema } from "./migrations/008-thread-execution.ts";
-import { botConfigurationSchema } from "./migrations/009-bot-configuration.ts";
+import { runStopSchema } from "./migrations/009-run-stop.ts";
+import { botConfigurationSchema } from "./migrations/010-bot-configuration.ts";
 import { ThreadStore } from "./threads.ts";
 
 export interface HostInstance {
@@ -89,7 +90,7 @@ export class HostStore {
       const { user_version } = this.db.prepare("PRAGMA user_version").get() as {
         user_version: number;
       };
-      if (user_version > 9) throw new Error("Unsupported host schema version");
+      if (user_version > 10) throw new Error("Unsupported host schema version");
       if (
         user_version > 0 &&
         user_version < 8 &&
@@ -106,7 +107,8 @@ export class HostStore {
       if (user_version <= 5) this.db.exec(managedBotSchema);
       if (user_version <= 6) this.db.exec(chatSchema);
       if (user_version <= 7) this.db.exec(threadExecutionSchema);
-      if (user_version <= 8) this.db.exec(botConfigurationSchema);
+      if (user_version <= 8) this.db.exec(runStopSchema);
+      if (user_version <= 9) this.db.exec(botConfigurationSchema);
       this.seed(configuration);
       this.threads = new ThreadStore(this.db);
       this.threads.ensureThreads(new Date().toISOString());

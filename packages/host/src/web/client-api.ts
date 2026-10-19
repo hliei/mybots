@@ -85,6 +85,51 @@ export async function serveClient(
     }
     return;
   }
+  const runOperation = /^\/api\/bots\/([^/]+)\/runs\/([^/]+)\/(stop|retry|close)$/.exec(path);
+  const taskStop = /^\/api\/bots\/([^/]+)\/tasks\/([^/]+)\/stop$/.exec(path);
+  if ((runOperation || taskStop) && request.method === "POST") {
+    try {
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+        bytes += chunk.length;
+        if (bytes > 65536) {
+          request.resume();
+          throw new ChatRequestError("Chat request exceeds 64 KiB.", 413);
+        }
+        chunks.push(chunk);
+      }
+      let input: unknown;
+      try {
+        input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        throw new ChatRequestError("Chat operations require valid JSON.");
+      }
+      const botId = (runOperation?.[1] ?? taskStop?.[1]) as string;
+      const result = taskStop
+        ? await host.stopTask(botId, taskStop[2] as string, input)
+        : runOperation?.[3] === "retry"
+          ? await host.retryRun(botId, runOperation[2] as string, input)
+          : runOperation?.[3] === "close"
+            ? await host.closeRun(botId, runOperation[2] as string, input)
+            : await host.stopRun(botId, runOperation?.[2] as string, input);
+      response.writeHead(202, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(result));
+    } catch (error) {
+      response.writeHead(error instanceof ChatRequestError ? error.status : 503, {
+        "Content-Type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error:
+            error instanceof ChatRequestError
+              ? error.message
+              : "Run operation unavailable. Retry with the same requestId.",
+        }),
+      );
+    }
+    return;
+  }
   const threadRoute = /^\/api\/bots\/([^/]+)\/thread(?:\/(messages|tasks))?$/.exec(path);
   const taskRoute = /^\/api\/bots\/([^/]+)\/tasks\/([^/]+)\/inputs$/.exec(path);
   if (threadRoute || taskRoute) {

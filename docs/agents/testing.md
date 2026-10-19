@@ -313,7 +313,8 @@ continuation that keeps the Run ledger and original history.
 `tests/thread-execution.test.ts` exercises one-Thread operations through public
 HTTP with real Host/SQLite/mailboxes. It covers stable request replay/conflicts,
 completion races, targeted active/queued additions, admission-before-publication
-recovery, Host loss with durable steering, uncertain outcomes, original-reply
+recovery, Host loss with durable steering, uncertain outcomes, confirmed and
+failed stops, same-Task retry, late results, original-reply
 projection, authenticated ownership, fresh runtime setup, and actual same-Bot
 serialization with cross-Bot progress. Real Pi cases use the production mailbox
 loop and a controlled streaming model service to check independent Run ledgers,
