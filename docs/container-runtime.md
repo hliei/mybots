@@ -212,11 +212,15 @@ require separate explicitly requested live checks.
 ## Agent resources and reset controls
 
 Immutable context carries optional non-secret `resources.skills` IDs,
+`resources.skillRevisions` content hashes for owner-activated revisions,
 `resources.tools` built-in or web tool names, and the matching `web` provider and
 endpoint selection. Pi loads only the shared Agent's `AGENTS.md`
-and explicitly selected `skills/<id>/SKILL.md` on a new query. It uses in-memory
+and explicitly selected `SKILL.md` files on a new query. Activated revisions
+load from `/session/skills/<id>/SKILL.md`, a read-only mount backed by Host-owned
+`data/protected-skills/<botId>/<runId>/` outside writable session/workspace paths. It uses in-memory
 settings and credentials; host Skills, login files, private settings, extensions,
-themes and prompt templates are not discovered. No new host mounts are required.
+themes and prompt templates are not discovered. Skill proposals in the writable
+workspace cannot replace activated revisions.
 See [host resources](host-runtime.md#shared-instructions-and-skills) for formats.
 
 The runner registers `web_search` and `fetch_content` as Pi custom tools only for

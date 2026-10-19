@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AgentResources, WebConfiguration } from "@mybots/mailbox";
 import {
@@ -11,6 +11,7 @@ import {
 } from "../bots.ts";
 import type { ModelConfiguration } from "../drivers/types.ts";
 import type { HostConfiguration } from "../host.ts";
+import { LocalSkills, type SkillSelection } from "../skills.ts";
 import { schema } from "./migrations/001-initial.ts";
 import { resourceSchema } from "./migrations/002-agent-resources.ts";
 import { deliveryAttemptSchema } from "./migrations/003-delivery-attempts.ts";
@@ -109,7 +110,7 @@ export class HostStore {
       if (user_version <= 7) this.db.exec(threadExecutionSchema);
       if (user_version <= 8) this.db.exec(runStopSchema);
       if (user_version <= 9) this.db.exec(botConfigurationSchema);
-      this.seed(configuration);
+      this.seed(configuration, dirname(dirname(file)));
       this.threads = new ThreadStore(this.db);
       this.threads.ensureThreads(new Date().toISOString());
     } catch (error) {
@@ -118,7 +119,7 @@ export class HostStore {
     }
   }
 
-  private seed(configuration: HostConfiguration): void {
+  private seed(configuration: HostConfiguration, root: string): void {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const now = new Date().toISOString();
@@ -135,6 +136,19 @@ export class HostStore {
         .prepare("SELECT agent_group_id FROM bot_bootstrap WHERE singleton = 1")
         .get()?.agent_group_id as string | undefined;
       if (!bootstrapId) {
+        const resources = agent.resources ? { ...agent.resources } : undefined;
+        if (resources?.skills?.length && !resources.skillRevisions) {
+          const library = new LocalSkills(root);
+          resources.skillRevisions = Object.fromEntries(
+            resources.skills.map((id) => {
+              const revision = library.import(agent.id, {
+                id,
+                path: join(root, "groups", agent.folder, "skills", id),
+              });
+              return [id, revision.revision];
+            }),
+          );
+        }
         this.db
           .prepare(`INSERT INTO agent_groups VALUES (?, ?, ?, 'pi', ?) ON CONFLICT(id) DO NOTHING`)
           .run(agent.id, agent.name, agent.folder, now);
@@ -147,7 +161,7 @@ export class HostStore {
             `${agent.model.provider}/${agent.model.id}`,
             JSON.stringify(agent.model),
             agent.instructions ?? null,
-            agent.resources ? JSON.stringify(agent.resources) : null,
+            resources ? JSON.stringify(resources) : null,
             agent.web ? JSON.stringify(agent.web) : null,
             now,
           );
@@ -255,6 +269,10 @@ export class HostStore {
     return {
       instructions: instructions ?? "",
       model: { provider: model.provider, id: model.id },
+      skills: Object.entries(resources?.skillRevisions ?? {}).map(([id, revision]) => ({
+        id,
+        revision,
+      })),
       tools: [...(resources?.tools ?? ["read", "write", "edit", "bash"])],
     };
   }
@@ -399,6 +417,7 @@ export class HostStore {
       instructions: string;
       model: { provider: string; id: string };
       tools: string[];
+      skills?: SkillSelection[];
     },
     model: ModelConfiguration,
   ): { bot: ManagedBot; replayed: boolean } {
@@ -426,7 +445,18 @@ export class HostStore {
         | undefined;
       if (!current) throw new BotRequestError("Bot not found.", 404);
       const resources = JSON.parse(current.resources ?? "{}") as AgentResources;
-      const nextResources = { ...resources, tools: input.tools, skills: resources.skills ?? [] };
+      const nextResources = {
+        ...resources,
+        tools: input.tools,
+        skills: input.skills?.map((skill) => skill.id) ?? resources.skills ?? [],
+        ...(input.skills
+          ? {
+              skillRevisions: Object.fromEntries(
+                input.skills.map((skill) => [skill.id, skill.revision]),
+              ),
+            }
+          : {}),
+      };
       const version = current.version + 1;
       const now = new Date().toISOString();
       this.db

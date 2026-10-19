@@ -1,4 +1,5 @@
 import type { ModelConfiguration } from "./drivers/types.ts";
+import { parseSkills, type SkillSelection } from "./skills.ts";
 
 export interface BotSettings {
   name: string;
@@ -8,12 +9,14 @@ export interface BotSettings {
 }
 
 export interface BotConfigurationView {
+  skills: SkillSelection[];
   instructions: string;
   model: { provider: string; id: string };
   tools: string[];
 }
 
 export interface ManagedBot extends BotSettings {
+  skills: SkillSelection[];
   id: string;
   /** Owned material relative to the installation root. */
   workspace: string;
@@ -80,21 +83,27 @@ export function parseBotCreate(value: unknown): BotSettings & { requestId: strin
   };
 }
 
-/** Role, approved model and tools. Name, endpoints and per-Task overrides are not settings. */
-export function parseBotSettings(value: unknown): BotSettings & { requestId: string } {
+/** Role, approved model, tools and Skill revisions. Name, endpoints and per-Task overrides are not settings. */
+export function parseBotSettings(
+  value: unknown,
+): BotSettings & { requestId: string; skills?: SkillSelection[] } {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new BotRequestError("Bot settings require a JSON object.");
   const input = value as Record<string, unknown>;
   if (
-    Object.keys(input).some((key) => !["requestId", "instructions", "model", "tools"].includes(key))
+    Object.keys(input).some(
+      (key) => !["requestId", "instructions", "model", "tools", "skills"].includes(key),
+    )
   )
     throw new BotRequestError(
       "Unsupported Bot setting. Endpoints, credentials and per-Task overrides are not Bot configuration.",
     );
-  const parsed = parseBotCreate({ ...input, name: "settings" });
+  const { skills, ...settings } = input;
+  const parsed = parseBotCreate({ ...settings, name: "settings" });
   return {
     requestId: parsed.requestId,
     name: "",
+    ...(skills !== undefined ? { skills: parseSkills(skills) } : {}),
     instructions: parsed.instructions,
     model: parsed.model,
     tools: parsed.tools,

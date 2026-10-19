@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentResources, RunContext } from "@mybots/mailbox";
@@ -249,7 +249,11 @@ function sdkDriver(service: Awaited<ReturnType<typeof startPiService>>): Session
       const controller = new AbortController();
       const running = runMailbox({
         mailbox: new RunnerMailbox(material.directory),
-        provider: new PiProvider({ modelRuntime: service.runtime, model }),
+        provider: new PiProvider({
+          modelRuntime: service.runtime,
+          model,
+          protectedSkillsDirectory: material.skillsDirectory,
+        }),
         cwd: material.workspace,
         sessionDir: join(material.directory, "pi"),
         instructions: context.instructions,
@@ -351,6 +355,195 @@ it("fails an incompatible model continuation visibly and keeps the Run ledger", 
     expect(await readdir(join(ledger, ".."))).toHaveLength(1);
   } finally {
     release.resolve();
+    await host?.stop();
+    await service.close();
+  }
+});
+
+it("imports inspectable Bot-local revisions without activating working materials", async () => {
+  const configuration = await start();
+  const source = join(root, "groups", "personal", "proposals", "brief");
+  await mkdir(join(source, "scripts"), { recursive: true });
+  const content = "---\nname: brief\ndescription: Write a brief\n---\nReviewed instructions.\n";
+  await writeFile(join(source, "SKILL.md"), content);
+  await writeFile(join(source, "scripts", "example.txt"), "Reviewed supporting material");
+  const imported = await post("/api/bots/personal/skills", { id: "brief", path: source });
+  expect(imported.status).toBe(201);
+  const revision = await imported.json();
+  expect(revision).toMatchObject({ id: "brief", revision: expect.any(String) });
+  expect((await get("/api/bots")).bots[0].skills).toEqual([]);
+  expect((await get("/api/bots/personal/skills")).revisions).toEqual([revision]);
+  expect(revision.files).toContainEqual({
+    path: "SKILL.md",
+    base64: Buffer.from(content).toString("base64"),
+  });
+  const skills = [{ id: "brief", revision: revision.revision }];
+  expect((await post("/api/bots/personal/settings", { ...edit, skills })).status).toBe(201);
+  expect((await get("/api/bots")).bots[0]).toMatchObject({ skills, effective: { skills } });
+  await writeFile(join(source, "SKILL.md"), "Unreviewed proposal");
+  expect((await get("/api/bots/personal/skills")).revisions).toEqual([revision]);
+  expect(
+    (
+      await post("/api/bots/personal/settings", {
+        ...edit,
+        requestId: "invalid-skill",
+        skills: [{ id: "brief", revision: "a".repeat(64) }],
+      })
+    ).status,
+  ).toBe(400);
+  const other = await (
+    await post("/api/bots", { ...edit, requestId: "other-bot", name: "Other" })
+  ).json();
+  expect(
+    (await post(`/api/bots/${other.bot.id}/settings`, { ...edit, requestId: "cross-bot", skills }))
+      .status,
+  ).toBe(400);
+  await channel.close();
+  await host.stop();
+  host = await Host.start({ root, configuration, driver: new MailboxDriver() });
+  await listen(configuration);
+  expect((await get("/api/bots/personal/skills")).revisions).toEqual([revision]);
+  expect(
+    (await get("/api/bots")).bots.find((bot: { id: string }) => bot.id === "personal").skills,
+  ).toEqual(skills);
+});
+
+it("reopens the same SDK Run with explicitly activated revisions at the finite cutoff", async () => {
+  const release = Promise.withResolvers<void>();
+  const service = await startPiService(async () => {
+    await release.promise;
+    return { text: "Recorded answer" };
+  });
+  try {
+    await start(sdkDriver(service));
+    const source = join(root, "proposal");
+    await mkdir(source);
+    const content = (description: string) =>
+      `---\nname: brief\ndescription: ${description}\n---\nUse reviewed instructions.\n`;
+    await writeFile(join(source, "SKILL.md"), content("Original brief"));
+    const old = await (
+      await post("/api/bots/personal/skills", { id: "brief", path: source })
+    ).json();
+    expect(
+      (
+        await post("/api/bots/personal/settings", {
+          ...edit,
+          skills: [{ id: old.id, revision: old.revision }],
+        })
+      ).status,
+    ).toBe(201);
+    await mkdir(join(root, "groups", "personal", "skills", "brief"), { recursive: true });
+    await writeFile(
+      join(root, "groups", "personal", "skills", "brief", "SKILL.md"),
+      content("Unreviewed replacement"),
+    );
+    const path = "/api/bots/personal/thread";
+    const first = await (
+      await post(`${path}/messages`, { requestId: "skill-start", text: "First Skill input" })
+    ).json();
+    await service.waitForRequest(1);
+    expect(JSON.stringify(service.requests[0])).toContain("Original brief");
+    expect(JSON.stringify(service.requests[0])).not.toContain("Unreviewed replacement");
+    expect(JSON.stringify(service.requests[0])).toContain("/brief/SKILL.md");
+    await writeFile(join(source, "SKILL.md"), content("Updated brief"));
+    const next = await (
+      await post("/api/bots/personal/skills", { id: "brief", path: source })
+    ).json();
+    expect(
+      (
+        await post("/api/bots/personal/settings", {
+          ...edit,
+          requestId: "activate-next",
+          skills: [{ id: next.id, revision: next.revision }],
+        })
+      ).status,
+    ).toBe(201);
+    expect((await get("/api/bots")).bots[0]).toMatchObject({
+      savedVersion: 3,
+      effectiveVersion: 2,
+      effective: { skills: [{ id: old.id, revision: old.revision }] },
+    });
+    const later = await (
+      await post(`${path}/messages`, { requestId: "skill-next", text: "Continue with next Skill" })
+    ).json();
+    expect(later.runId).toBe(first.runId);
+    release.resolve();
+    await vi.waitFor(async () =>
+      expect((await get(path)).tasks[0].runs[0].state).toBe("succeeded"),
+    );
+    expect(JSON.stringify(service.requests[1])).toContain("Updated brief");
+    expect(JSON.stringify(service.requests[1])).toContain("First Skill input");
+    expect(JSON.stringify(service.requests[1])).not.toContain("Original brief");
+    const ledger = (await host.inspect(first.runId)).continuation?.slice(3) as string;
+    expect(await readdir(join(ledger, ".."))).toHaveLength(1);
+  } finally {
+    release.resolve();
+    await host?.stop();
+    await service.close();
+  }
+});
+
+it("rejects unsafe local imports and unauthenticated Skill administration", async () => {
+  await start();
+  const source = join(root, "unsafe");
+  await mkdir(source);
+  expect((await post("/api/bots/missing/skills", { id: "brief", path: source })).status).toBe(404);
+  expect((await fetch(`${base}/api/bots/personal/skills`)).status).toBe(401);
+  expect(
+    (
+      await fetch(`${base}/api/bots/personal/skills`, {
+        method: "POST",
+        headers: { ...headers, Origin: "https://untrusted.example" },
+        body: JSON.stringify({ id: "brief", path: source }),
+      })
+    ).status,
+  ).toBe(403);
+  expect((await post("/api/bots/personal/skills", { id: "../brief", path: source })).status).toBe(
+    400,
+  );
+  expect((await post("/api/bots/personal/skills", { id: "brief", path: source })).status).toBe(400);
+  await writeFile(join(source, "SKILL.md"), "Proposed instructions");
+  await symlink(join(source, "SKILL.md"), join(source, "linked.md"));
+  expect((await post("/api/bots/personal/skills", { id: "brief", path: source })).status).toBe(400);
+  await rm(join(source, "linked.md"));
+  await writeFile(join(source, "oversized"), Buffer.alloc(4 * 1024 * 1024));
+  expect((await post("/api/bots/personal/skills", { id: "brief", path: source })).status).toBe(400);
+  expect((await get("/api/bots/personal/skills")).revisions).toEqual([]);
+});
+
+it("exposes an invalid activated Skill as a failed Run without contacting the model", async () => {
+  const service = await startPiService(() => ({ text: "Unexpected" }));
+  try {
+    await start(sdkDriver(service));
+    const source = join(root, "invalid");
+    await mkdir(source);
+    await writeFile(
+      join(source, "SKILL.md"),
+      "---\nname: brief\n---\nMissing required description",
+    );
+    const revision = await (
+      await post("/api/bots/personal/skills", { id: "brief", path: source })
+    ).json();
+    expect(
+      (
+        await post("/api/bots/personal/settings", {
+          ...edit,
+          skills: [{ id: revision.id, revision: revision.revision }],
+        })
+      ).status,
+    ).toBe(201);
+    await post("/api/bots/personal/thread/messages", {
+      requestId: "invalid-resource",
+      text: "Use brief",
+    });
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).tasks[0].runs[0]).toMatchObject({
+        state: "failed",
+        outcome: { reply: "Invalid selected Agent Skills." },
+      }),
+    );
+    expect(service.requests).toEqual([]);
+  } finally {
     await host?.stop();
     await service.close();
   }

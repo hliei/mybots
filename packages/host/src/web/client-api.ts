@@ -10,6 +10,7 @@ const ASSETS = new Map([
   ["/main.js", ["main.js", "text/javascript; charset=utf-8"]],
   ["/history.js", ["history.js", "text/javascript; charset=utf-8"]],
   ["/chat.js", ["chat.js", "text/javascript; charset=utf-8"]],
+  ["/skills.js", ["skills.js", "text/javascript; charset=utf-8"]],
   ["/style.css", ["style.css", "text/css; charset=utf-8"]],
 ]);
 
@@ -179,6 +180,47 @@ export async function serveClient(
             error instanceof ChatRequestError
               ? error.message
               : "Thread operation unavailable. Retry with the same requestId.",
+        }),
+      );
+    }
+    return;
+  }
+  const skillsRoute = /^\/api\/bots\/([^/]+)\/skills$/.exec(path);
+  if (skillsRoute && ["GET", "POST"].includes(request.method ?? "")) {
+    try {
+      const botId = skillsRoute[1] as string;
+      let result: object;
+      if (request.method === "GET") result = { revisions: host.localSkills(botId) };
+      else {
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+          bytes += chunk.length;
+          if (bytes > 65536) {
+            request.resume();
+            throw new BotRequestError("Skill request exceeds 64 KiB.", 413);
+          }
+          chunks.push(chunk);
+        }
+        let input: unknown;
+        try {
+          input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        } catch {
+          throw new BotRequestError("Skill import requires valid JSON.");
+        }
+        result = host.importSkill(botId, input);
+      }
+      response.writeHead(request.method === "GET" ? 200 : 201, {
+        "Content-Type": "application/json",
+      });
+      response.end(JSON.stringify(result));
+    } catch (error) {
+      response.writeHead(error instanceof BotRequestError ? error.status : 503, {
+        "Content-Type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error: error instanceof BotRequestError ? error.message : "Local Skills unavailable.",
         }),
       );
     }

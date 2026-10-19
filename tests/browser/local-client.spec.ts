@@ -1,5 +1,5 @@
 import { type ChildProcess, fork } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -168,6 +168,25 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await page.getByRole("button", { name: "Refresh status" }).click();
     await expect(page.getByRole("status")).toContainText("Connected");
     await page.getByRole("button", { name: "Select Writer", exact: true }).click();
+    const skillSource = join(root, "reviewed-skill");
+    await mkdir(skillSource);
+    await writeFile(
+      join(skillSource, "SKILL.md"),
+      "---\nname: brief\ndescription: Reviewed brief\n---\nReviewed browser instructions.",
+    );
+    await page.getByLabel("Skill ID", { exact: true }).fill("brief");
+    await page.getByLabel("Local Skill directory", { exact: true }).fill(skillSource);
+    await page.getByRole("button", { name: "Import Skill for inspection", exact: true }).click();
+    await expect(page.locator("#skill-library summary")).toContainText("brief");
+    await page.locator("#skill-library summary").click();
+    await expect(page.locator("#skill-library")).toContainText("Reviewed browser instructions.");
+    await expect(page.locator("#selected-bot")).toContainText("Saved Skills: None");
+    const revision = await page
+      .getByLabel("Skill brief", { exact: true })
+      .locator("option")
+      .nth(1)
+      .getAttribute("value");
+    await page.getByLabel("Skill brief", { exact: true }).selectOption(revision as string);
     await page.getByLabel("Bot role").fill("Edited writer role.");
     await page.getByRole("button", { name: "Save configuration", exact: true }).click();
     await expect(page.locator("#settings-versions")).toContainText(
@@ -187,6 +206,13 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await expect(page.locator("#chat-works article")).toHaveCount(3);
     await page.getByRole("button", { name: "Select Writer", exact: true }).click();
     await expect(page.locator("#selected-bot")).toContainText("Edited writer role.");
+    await expect(page.locator("#selected-bot")).toContainText(`Saved Skills: brief@${revision}`);
+    await expect(page.getByLabel("Skill brief", { exact: true })).toHaveValue(revision as string);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.setViewportSize({ width: 1280, height: 900 });
     await expect(page.locator("#settings-versions")).toContainText(
       "Saved and effective configuration 2",
     );

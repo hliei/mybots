@@ -15,6 +15,7 @@ import { createWebTools } from "../tools/web.ts";
 import type { AgentProvider, AgentQuery, ProviderEvent, QueryInput } from "./types.ts";
 
 export interface PiProviderOptions {
+  protectedSkillsDirectory?: string;
   modelRuntime: ModelRuntime;
   model: Model<Api>;
 }
@@ -80,7 +81,10 @@ export class PiProvider implements AgentProvider {
         const cwd = await realpath(input.cwd);
         const skillPaths: string[] = [];
         for (const name of resources?.skills ?? []) {
-          const file = join(cwd, "skills", name, "SKILL.md");
+          const directory = resources?.skillRevisions
+            ? (this.options.protectedSkillsDirectory ?? join(sessionDir, "..", "skills"))
+            : join(cwd, "skills");
+          const file = join(directory, name, "SKILL.md");
           if ((await realpath(file)) !== file) throw new Error("Agent Skills must use real paths");
           skillPaths.push(file);
         }
@@ -111,8 +115,11 @@ export class PiProvider implements AgentProvider {
           ],
         });
         await resourceLoader.reload();
-        if (resourceLoader.getSkills().diagnostics.some((item) => item.type === "error"))
-          throw new Error("Invalid selected Agent Skills");
+        if (
+          resourceLoader.getSkills().diagnostics.length ||
+          resourceLoader.getSkills().skills.length !== skillPaths.length
+        )
+          throw new Error("Invalid selected Agent Skills.");
         const created = await createAgentSession({
           cwd: input.cwd,
           agentDir,
@@ -399,7 +406,8 @@ export class PiProvider implements AgentProvider {
             ? "Agent query aborted."
             : error instanceof Error &&
                 (error.message.startsWith("Required Run input") ||
-                  error.message.startsWith("Run has incomplete tool"))
+                  error.message.startsWith("Run has incomplete tool") ||
+                  error.message === "Invalid selected Agent Skills.")
               ? error.message
               : "Agent query failed.",
           ...(durable ? { inputIds: [...admitted.keys()] } : {}),

@@ -1,4 +1,5 @@
 import { showChat } from "./chat.ts";
+import { type SkillSelection, selectedSkills, showSkills } from "./skills.ts";
 
 interface Snapshot {
   bots: { id: string; name: string }[];
@@ -21,7 +22,13 @@ interface Bot {
   tools: string[];
   savedVersion: number;
   effectiveVersion: number;
-  effective: { instructions: string; model: { provider: string; id: string }; tools: string[] };
+  skills: SkillSelection[];
+  effective: {
+    skills: SkillSelection[];
+    instructions: string;
+    model: { provider: string; id: string };
+    tools: string[];
+  };
 }
 interface BotOptions {
   models: { provider: string; id: string }[];
@@ -159,6 +166,7 @@ let currentOptions = "";
 let settingsIdentity = "";
 interface SettingsDraft extends Creation {
   botId: string;
+  skills?: SkillSelection[];
 }
 let pendingSettings: SettingsDraft | undefined;
 try {
@@ -278,12 +286,14 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
       `Saved role: ${active.instructions}`,
       `Saved model: ${active.model.provider}/${active.model.id}`,
       `Saved tools: ${active.tools.join(", ") || "None"}`,
+      `Saved Skills: ${active.skills.map((skill) => `${skill.id}@${skill.revision}`).join(", ") || "None"}`,
     ];
     if (active.savedVersion !== active.effectiveVersion)
       lines.push(
         `Effective role: ${active.effective.instructions}`,
         `Effective model: ${active.effective.model.provider}/${active.effective.model.id}`,
         `Effective tools: ${active.effective.tools.join(", ") || "None"}`,
+        `Effective Skills: ${active.effective.skills.map((skill) => `${skill.id}@${skill.revision}`).join(", ") || "None"}`,
       );
     for (const text of [
       ...lines,
@@ -294,6 +304,12 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
       paragraph.textContent = text;
       selected.append(paragraph);
     }
+    void showSkills(
+      active.id,
+      pendingSettings?.botId === active.id
+        ? (pendingSettings.skills ?? active.skills)
+        : active.skills,
+    );
     settingsSection.hidden = false;
     settingsVersions.textContent =
       active.savedVersion === active.effectiveVersion
@@ -315,7 +331,10 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
       settingsFields.disabled = true;
       saveSettings.textContent = "Retry configuration";
     }
-  } else settingsSection.hidden = true;
+  } else {
+    settingsSection.hidden = true;
+    void showSkills(undefined);
+  }
   void showChat(active?.id);
   if (snapshot.bots.length === 0) bots.textContent = "No Bots configured.";
 }
@@ -464,6 +483,7 @@ settingsForm.addEventListener("submit", async (event) => {
         botId: selectedId,
         requestId: crypto.randomUUID(),
         name: "settings",
+        skills: selectedSkills(),
         instructions: savedRole.value,
         model: { provider: provider as string, id: id.join("/") },
         tools: [...savedTools.querySelectorAll<HTMLInputElement>("input:checked")].map(
@@ -484,6 +504,7 @@ settingsForm.addEventListener("submit", async (event) => {
           instructions: pendingSettings.instructions,
           model: pendingSettings.model,
           tools: pendingSettings.tools,
+          ...(pendingSettings.skills ? { skills: pendingSettings.skills } : {}),
         }),
       },
     );

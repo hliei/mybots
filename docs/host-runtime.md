@@ -67,7 +67,9 @@ configuring a Telegram private chat.
 `agent` bootstraps the first Bot's ID, name, shared folder, instructions and explicit
 model configuration only when the store is first initialized. Later startup values
 do not overwrite the persisted identity or settings. Optional `agent.resources.skills` selects directory IDs under
-`groups/<folder>/skills/`; `agent.resources.tools` selects Pi built-ins (`read`,
+`groups/<folder>/skills/` and imports/pins those sources once at initial bootstrap.
+Later source edits and startup-file changes cannot replace those revisions; use
+the owner Skill panel to import and activate updates. `agent.resources.tools` selects Pi built-ins (`read`,
 `write`, `edit`, `bash`, `grep`, `find`, `ls`) and the configured web tools
 (`web_search`, `fetch_content`). Omitted Skills select none; omitted
 tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
@@ -582,25 +584,33 @@ socket-client entry point.
 Put Agent instructions in `groups/<folder>/AGENTS.md`. Only that exact file is
 loaded; ancestor project instructions and host engineering Skills are excluded.
 The host's optional `agent.instructions` is appended through Pi's resource loader.
-Create each selected Skill as `groups/<folder>/skills/<id>/SKILL.md`, with Pi-native
-frontmatter (`name`, `description`) and its instructions. For example:
+Use the selected Bot's **Local Skills** panel to import an absolute directory on
+this Host. The authenticated `POST /api/bots/:botId/skills` operation accepts
+`{ "id": "brief", "path": "/absolute/local/brief" }`; `GET` on the same route
+returns inspectable revisions and base64-encoded file bytes. A Skill directory
+contains `SKILL.md` with Pi-native `name` and `description` frontmatter, plus any
+supporting files. Import rejects links, special files, excessive nesting, more
+than 256 files or 4 MiB. Binary supporting files retain their bytes.
 
-```markdown
----
-name: brief
-description: Produce a concise answer from saved working materials
----
-Read the relevant shared materials, then answer concisely.
-```
+Imports create Bot-owned, content-addressed snapshots in
+`data/skills/<botId>/`. Reusing a source for another Bot requires an explicit
+import for that Bot. Editing the source, including an Agent's proposed files in
+its workspace, cannot change an imported revision. Import alone does not activate
+content or change tools or privileges.
 
-Select it in host configuration with
-`"resources": { "skills": ["brief"], "tools": ["read", "write", "edit", "bash"] }`.
-Selected Skill IDs must be unique path-safe names; tools must be unique supported
-built-in or configured web-tool names. Selected Skill and instruction paths must be real workspace
-paths. Missing selected Skills fail the exchange before model traffic. Resource
-selection is not filesystem confinement: the actual container mounts protect
-host credentials and other session logs. Agent sessions deliberately share the
-writable working directory.
+Inspect the files, select one revision per Skill ID in Bot configuration, and
+save. The settings API accepts `skills: [{ "id": "brief", "revision": "<sha256>" }]`;
+`skills: []` disables all Skills. Omitting the field preserves the selection.
+Saved and effective settings show the exact revisions. A save uses the existing
+finite steering cutoff: the old Attempt finishes under its captured version,
+and the next Attempt reopens the same Run with the saved revisions.
+
+Before launching a stopped Run, the Host copies selected snapshots into
+`data/protected-skills/<botId>/<runId>/`. Docker mounts this directory read-only
+at `/session/skills`, outside the writable workspace and with no writable source
+alias. Pi loads these selected resources on Run creation/reopening. Invalid or
+missing selected resources fail execution before model traffic. Proposed files
+remain ordinary working material until the owner imports and activates them.
 
 Long conversations use Pi's default automatic compaction and SDK-owned history.
 Reopening the explicit `pi:` continuation restores the retained summary and
