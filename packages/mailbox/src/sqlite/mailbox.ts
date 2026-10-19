@@ -149,6 +149,13 @@ export function createMailbox(withDatabase: WithDatabase) {
       );
     }
 
+    /** Hold unclaimed input while its work requires an explicit owner resolution. */
+    holdInput(id: string): void {
+      withDatabase(this.directory, "inbound", false, (db) =>
+        db.run("UPDATE messages_in SET trigger = 0 WHERE id = ? AND status = 'pending'", id),
+      );
+    }
+
     /** Last observed container heartbeat, or undefined when never written. */
     heartbeat(): number | undefined {
       return readHeartbeat(this.directory);
@@ -236,14 +243,17 @@ export function createMailbox(withDatabase: WithDatabase) {
             ),
           ),
       );
-      return withDatabase(this.directory, "inbound", true, (db) =>
-        (
+      return withDatabase(this.directory, "inbound", true, (db) => {
+        const pending = (
           db.all(
-            "SELECT * FROM messages_in WHERE status = 'pending' AND trigger = 1 AND (process_after IS NULL OR process_after <= ?) ORDER BY seq",
-            new Date().toISOString(),
+            "SELECT * FROM messages_in WHERE status = 'pending' AND trigger = 1 ORDER BY seq",
           ) as InboundMessage[]
-        ).filter((row) => !handled.has(row.id)),
-      );
+        ).filter((row) => !handled.has(row.id));
+        // Recovery backoff is a FIFO barrier, so newer input cannot overtake its retry.
+        const now = new Date().toISOString();
+        const delayed = pending.findIndex((row) => row.process_after && row.process_after > now);
+        return pending.slice(0, delayed === -1 ? undefined : delayed);
+      });
     }
 
     acknowledge(id: string, status: ProcessingAck["status"]): void {

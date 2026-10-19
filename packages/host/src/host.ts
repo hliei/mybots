@@ -7,6 +7,7 @@ import { setTimeout } from "node:timers/promises";
 import type { AgentResources, OutboundMessage, WebConfiguration } from "@mybots/mailbox";
 import { HostMailbox } from "@mybots/mailbox/node";
 import { BotRequestError, parseBotCreate, publicModel } from "./bots.ts";
+import { chatInput } from "./chat.ts";
 import { validateHostConfiguration } from "./config/host.ts";
 import { provisionSession } from "./container-runner.ts";
 import { HostStore, type SavedSession, type SessionRoute } from "./db/index.ts";
@@ -471,11 +472,16 @@ export class Host {
     // bounded recovery schedule instead of restarting forever.
     if (!execution.superseded.has(handle)) {
       if (error) this.emit({ type: "failure", sessionId: id, error });
+      // A runner can exit immediately after persisting final evidence, before the poll sees it.
+      execution.mailbox.syncAcknowledgements();
+      this.syncChat(execution);
+      this.recordRecovery(execution, recoverAbandonedClaims(execution.mailbox, this.clock()));
       this.recordRecovery(execution, recoverUnclaimedInput(execution.mailbox, this.clock()));
     }
   }
 
   private recordRecovery(execution: SessionExecution, outcome: RecoveryOutcome): void {
+    this.store.chat.failInputs(outcome.failed, this.timestamp());
     if (outcome.failed.length === 0) return;
     this.emit({
       type: "failure",
@@ -505,6 +511,8 @@ export class Host {
     const id = execution.route.session.id;
     try {
       execution.mailbox.syncAcknowledgements();
+      this.syncChat(execution);
+      if (this.store.chat.uncertain(id)) return;
       if (execution.handle) {
         await this.enforceStall(execution, now);
         return;
@@ -599,6 +607,7 @@ export class Host {
           const execution = await pending;
           if (signal.aborted) break;
           execution.mailbox.syncAcknowledgements();
+          this.syncChat(execution);
           // Observe new rows even while an earlier channel delivery remains pending.
           const route = execution.route;
           if (!this.owned(route.session.id)) continue;
@@ -791,6 +800,82 @@ export class Host {
 
   sessions(): SavedSession[] {
     return this.store.sessions();
+  }
+
+  createChat(value: unknown) {
+    const input = chatInput(value, ["botId", "name"]);
+    return this.store.chat.create(
+      input.requestId as string,
+      input.botId as string,
+      input.name as string,
+      this.timestamp(),
+    );
+  }
+
+  renameChat(id: string, value: unknown) {
+    const input = chatInput(value, ["name"]);
+    return this.store.chat.rename(input.requestId as string, id, input.name as string);
+  }
+
+  chatSessions(botId: string) {
+    return { sessions: this.store.chat.sessions(botId) };
+  }
+
+  async chatDetail(id: string) {
+    this.store.chat.session(id);
+    const execution = await this.prepared.get(id);
+    if (execution) this.syncChat(execution);
+    return this.store.chat.detail(id);
+  }
+
+  async messageChat(id: string, value: unknown) {
+    const input = chatInput(value, ["text"]);
+    const route = this.store.route(this.store.chat.session(id));
+    const execution = await this.prepare(route);
+    if (this.stopped) throw new Error("Host is stopped");
+    this.syncChat(execution);
+    const admitted = this.store.chat.message(
+      input.requestId as string,
+      id,
+      input.text as string,
+      this.timestamp(),
+    );
+    this.syncChat(execution);
+    if (!this.store.chat.uncertain(id)) this.wake(execution, { force: true });
+    return admitted;
+  }
+
+  private syncChat(execution: SessionExecution): void {
+    const { mailbox, route } = execution;
+    if (route.session.purpose !== "chat") return;
+    const id = route.session.id;
+    const inputs = mailbox.inputs();
+    this.store.chat.reconcile(
+      id,
+      {
+        inputs,
+        acknowledgements: mailbox.acknowledgements(),
+        outputs: mailbox.outputs(),
+        executionLost: !execution.handle && !execution.starting && !execution.replacing,
+      },
+      this.timestamp(),
+    );
+    if (this.store.chat.uncertain(id)) {
+      for (const input of inputs) mailbox.holdInput(input.id);
+      return;
+    }
+    // Admission is durable before mailbox publication. Restart/retry fills only missing rows.
+    const published = new Set(inputs.map((input) => input.id));
+    for (const input of this.store.chat.inputs(id)) {
+      if (input.outcome || published.has(input.message_id)) continue;
+      mailbox.submit({
+        id: input.message_id,
+        content: input.content,
+        channel_type: route.channel_type,
+        platform_id: route.platform_id,
+        thread_id: route.session.thread_id,
+      });
+    }
   }
 
   /** Read-only client projection. Mailbox acknowledgement is not a work outcome. */

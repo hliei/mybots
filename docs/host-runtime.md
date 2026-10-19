@@ -43,9 +43,10 @@ do not overwrite the persisted identity or settings. Optional `agent.resources.s
 tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
 Selecting a web tool requires matching `agent.web` configuration. The execution
 harness is Pi; the model backend is specified separately by `model.provider` and
-`model.id`. The central store uses schema version 6 for host routing, resource
-selection, delivery attempts, lifecycle records, web configuration and Bot create
-admissions. Earlier schema versions upgrade additively. The central store saves the model
+`model.id`. The central store uses schema version 7 for host routing, resource
+selection, delivery attempts, lifecycle records, web configuration, Bot/chat
+admissions and durable chat work outcomes. Earlier schema versions upgrade
+additively. The central store saves the model
 selector as `provider/id` plus its endpoint and token limits. Endpoints must use
 HTTPS without URL credentials. Host configuration and gateway management material
 are outside runner mounts.
@@ -314,7 +315,59 @@ another Bot's materials, including Bots with equal display names.
 The client stores an unconfirmed creation payload before sending, so reload and
 retry retain its request identity. It remembers the selected Bot and shows that
 Bot's initial settings. Creation does not start a session or container. Runtime
-configuration editing and selected-session chat are subsequent capabilities.
+configuration editing is a subsequent capability.
+
+### Selected chat sessions and work outcomes
+
+Select a Bot, create and name chat sessions, then select a session before sending
+messages. The client remembers the selected session per Bot. Same-Bot chats share
+working files while Pi retains separate conversations; different Bots have
+separate workspaces. Creation and renaming do not start execution.
+
+| HTTP operation | Request / response |
+| --- | --- |
+| `POST /api/sessions` | `{ requestId, botId, name }`; 201 with `{ requestId, session, replayed }`, or 200 for a replay. |
+| `GET /api/sessions?botId=<id>` | `{ sessions }` for that Bot's explicitly created chats. |
+| `POST /api/sessions/<id>/name` | `{ requestId, name }`; 200 with the admitted session. |
+| `POST /api/sessions/<id>/messages` | `{ requestId, text }`; 202 with `{ requestId, botId, sessionId, workId, messageId, replayed }`. |
+| `GET /api/sessions/<id>` | `{ session, works }` with persisted input/result links and work outcomes. |
+
+Names allow 120 characters; messages allow 32,000 characters, within the 64 KiB
+JSON request limit. These operations reject unknown fields, including execution
+configuration overrides. Reusing an ID for a different chat operation or payload
+returns 409. Unknown Bot/chat identities return 404; invalid JSON or fields return
+400. The client saves unconfirmed create/name/message requests before sending and
+provides a retry button after a lost response or reload. Retry the original
+request identity after 503 or an unconfirmed transport result.
+
+Initial input in an idle chat starts a work item. FIFO follow-ups admitted before
+its terminal outcome join the same work, including while earlier turns finish.
+An input after terminal completion starts distinct work. Each session executes
+sequentially; separate sessions and Bots can progress concurrently. Global/per-Bot
+admission limits are a subsequent capability.
+
+Work records expose `id`, `botId`, `sessionId`, `state`, `outcome`, timestamps,
+and admitted `messages`. Each message includes its stable `id`, input `text`, and
+correlated final `outcome` with `messageId`, `resultId`, `reply`, `kind` and time.
+A successful work outcome identifies the last input/result; a failed work outcome
+identifies the first failed input/result, retaining each later reply separately. Bounded recovery exhaustion has a failure reason without a
+runner `resultId`. States distinguish `queued`, `active`, `succeeded`, `failed`,
+and `uncertain`; unresolved work has no terminal outcome. Result delivery remains
+independent of work success.
+
+The Host reconciles correlated final mailbox output into durable outcomes. Early
+acknowledgements and partial model text do not establish success. If execution is
+lost after acknowledgement without final evidence, the work becomes `uncertain`;
+pending follow-ups stay held and ordinary replacement input returns 409. Other
+sessions remain usable. The client retains available per-message evidence and
+shows the unresolved work. Owner resolution/stop controls, full SDK history and
+streaming are subsequent capabilities. This view shows admitted chat inputs and
+final outcomes; it does not claim complete tool or SDK conversation history.
+
+Admission commits before mailbox publication. Restart or retry publishes missing
+inputs using their existing identity, reconciles saved replies, and preserves
+terminal outcomes and uncertainty. This does not close the runner's accepted
+acknowledgement/output crash windows or promise exactly-once tool effects.
 
 All private HTTP routes and WebSocket upgrades require the credential, either
 as a Bearer header or the paired cookie. An explicit invalid Authorization header
