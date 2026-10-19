@@ -3,6 +3,14 @@
 Status: accepted
 Implementation: planned
 
+Explicit retry now creates a new Run under the same Task in the planned model,
+preserving the prior Run outcome under
+[ADR 0026](0026-durable-runs-and-serial-bot-execution.md).
+The durable-evidence, uncertainty, and confirmed-stop requirements below remain.
+ADR 0026 distinguishes capacity release from business-outcome resolution:
+unconfirmed execution stop holds the Bot's serial slot, while confirmed stop
+allows unrelated Bot work despite an uncertain outcome of the affected Run.
+
 Chat work, task runs, delegations, and controlled Host actions reach success or
 failure from durable correlated evidence of their work outcome, rather than treating input
 processing acknowledgement as completion. Completion notifications require an

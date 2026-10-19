@@ -6,11 +6,19 @@ A conversational agent that uses tools and Skills on behalf of its user.
 
 **Bot**:
 A persistent personal assistant with its own role, workspace, memory,
-configuration, and conversations. Bot is the product-facing name for an Agent.
+configuration, and one direct Thread. Bot is the product-facing name for an Agent.
 
 **Agent**:
 A persistent assistant identity whose instructions, Skills, and shared working
-materials can be used across multiple conversations.
+materials can be used across multiple executions.
+
+**Thread**:
+A Bot's single persistent direct conversation with the owner. Its recorded
+history is distinct from the active context selected for an execution.
+
+**Chat background boundary**:
+The point from which new conversational Runs use the Thread as default
+background. Earlier history remains available for deliberate selection.
 
 **Agent group**:
 The logical boundary of one Bot's identity, workspace, memory, configuration,
@@ -18,43 +26,48 @@ and sessions. It denotes one assistant rather than a team of collaborating Bots.
 
 **Agent workspace**:
 The shared working materials and persistent resources associated with one Agent.
-Separate conversations with that Agent can access the same workspace.
+Separate executions by that Agent can access the same workspace.
 
 **Agent session**:
-A conversation associated with one Agent, containing the user's messages, the
-Agent's replies, and exchanges with tools. Sessions have separate conversation
-history even when they share an Agent workspace.
+A conversation context used by an Agent during execution. It is distinct from
+the Bot's persistent direct Thread.
 
 **Agent turn**:
 An Agent's processing of one user message, including model replies and any
 exchanges with tools.
 
-**Work item**:
-Tracked work owned by one Bot, originating from a chat request, a task run, or a
-delegation. It can span multiple Agent turns, execution stages, and waits.
+**Task**:
+A unit of work owned by one Bot, originating from a chat request, a Routine
+occurrence, or a delegation. It can span multiple Agent turns and waits.
+_Avoid_: Work item
+
+**Run**:
+One logical execution of a Task, retaining its identity across durable waits.
+An explicit retry starts a new Run for the same Task.
+
+**Attempt**:
+One period of actual execution for a Run. Continuing after a durable wait or
+legitimate executor takeover starts another Attempt.
+_Avoid_: Execution stage when naming an actual execution attempt
 
 **Chat work**:
-A work item begun by an initial message in a chat session, including FIFO
-follow-ups accepted before that work terminates.
+A Task originating from a request in the Bot's direct Thread.
 
-**Execution stage**:
-A period of active Agent processing for a work item before it completes or
-enters a persistent wait.
-
-**Scheduled task**:
+**Routine**:
 A persistent definition of work owned by one Bot, with instructions and a
-schedule for triggering that work.
+schedule whose occurrences create separate Tasks.
+_Avoid_: Scheduled task when naming the persistent definition
 
-**Task run**:
-A work item representing one triggered occurrence of a scheduled task, with its
-own execution outcome and associated results.
+**Steering message**:
+Persisted additional instructions supplied to an active Run
+at its next permitted model boundary.
 
 **Uncertain outcome**:
 Work that may have taken effect but whose final result cannot be established
 from durable evidence. It requires an explicit owner decision before proceeding.
 
 **Delegation**:
-A work item requested asynchronously by one Bot from another, with its own
+An asynchronous request by one Bot for a Task performed by another, with its own
 identity, outcome, and associated results.
 
 **User question**:
@@ -64,9 +77,10 @@ A Bot's request for information or a preference needed to continue its work.
 The owner's decision to allow or deny a specified proposed operation with
 identified inputs and scope.
 
-**Session attachment**:
-A file supplied as input to a selected Agent session, rather than implicitly
-shared with the Bot's other sessions.
+**Task attachment**:
+A file supplied as input to a selected Task, rather than implicitly shared
+with the Bot's other Tasks.
+_Avoid_: Session attachment
 
 **Delivered artifact**:
 A selected file preserved as it was delivered with a work result. Later changes
@@ -115,7 +129,7 @@ resolves it through the same Agent and Agent session records as other channels, 
 broadcasts live inbound, outbound, and failure envelopes to connected clients.
 
 **Conversation history**:
-The complete recorded sequence of messages in an Agent session.
+The complete recorded sequence of messages in a Thread.
 _Avoid_: Long-term memory
 
 **Long-term memory**:

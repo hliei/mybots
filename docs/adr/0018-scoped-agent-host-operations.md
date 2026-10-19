@@ -7,12 +7,12 @@ The owner manages Bot creation, deletion, disablement, role/model/tool/Skill
 selection, collaboration policy, and installation settings through management
 interfaces. Agents may suggest these changes but do not administer them.
 
-An Agent can use scoped Host operations to manage its Bot's scheduled tasks,
+An Agent can use scoped Host operations to search/read authorized Thread history and manage its Bot's Routines,
 delegate under the directed collaboration policy, ask the owner questions, submit
 proposed controlled actions, publish its work progress, and deliver selected
-results. Ordinary management of its own Bot's tasks needs no additional approval
-per call. It cannot manage other Bots' tasks or grant itself privileges. The Host
-derives caller identity and scope from the actual session rather than trusting
+results. Ordinary management of its own Bot's Routines needs no additional approval
+per call. It cannot manage other Bots' Routines or grant itself privileges. The Host
+derives caller identity and scope from the actual fenced Bot/Task/Run/Attempt execution rather than trusting
 identity claims in request payloads.
 
 This permits useful autonomous work while reserving identity/configuration and

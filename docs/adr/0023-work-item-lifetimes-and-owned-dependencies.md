@@ -3,6 +3,16 @@
 Status: accepted
 Implementation: planned
 
+For the planned replacement model, Work item is named Task under
+[ADR 0025](0025-tasks-routines-and-independent-occurrence-context.md), and active
+conversational input uses steering under
+[ADR 0024](0024-single-direct-thread-and-application-owned-context.md).
+Task/Run/Attempt identity and owned-dependency continuation are refined in
+[ADR 0026](0026-durable-runs-and-serial-bot-execution.md).
+The active budget and originating delegation-chain count belong to the Run
+across Attempts under that record. Thread append-or-next-work and explicit Task
+input are settled in ADR 0024; the older FIFO wording below is decision history.
+
 A work item is tracked Bot work originating from a chat request, task run or
 delegation. It can span multiple Agent turns, active execution stages and
 persistent waits. An initial message in a chat session with no unfinished chat

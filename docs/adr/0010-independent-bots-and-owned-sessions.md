@@ -3,6 +3,14 @@
 Status: accepted
 Implementation: planned
 
+The multiple owner-created chat-session and FIFO-only input choices below are
+superseded for the planned model by
+[ADR 0024](0024-single-direct-thread-and-application-owned-context.md).
+Task/Routine lifetimes and context follow ADRs 0025-0027; the text below
+preserves the superseded multi-session decision rather than a pending choice.
+Same-Bot concurrency is superseded by serial execution under
+[ADR 0026](0026-durable-runs-and-serial-bot-execution.md).
+
 Each Bot has one Agent identity and Agent group, with its own workspace, memory,
 configuration, and sessions. An Agent session belongs to exactly one Bot; the
 owner can explicitly create and select multiple sessions for that Bot. Sessions

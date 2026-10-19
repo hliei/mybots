@@ -5,6 +5,11 @@ Implementation: Pi runner, isolated execution and persistent host/CLI delivered;
 Agent resources, SDK compaction, reset and all entry-point cutovers delivered;
 custom execution/context engine retired
 
+Planned context ownership is partially superseded by
+[ADR 0024](0024-single-direct-thread-and-application-owned-context.md).
+The delivered SDK behavior below remains the implementation baseline while the
+new execution contracts are designed.
+
 Agent execution will move into isolated session containers, with the host
 responsible for channel routing, operational message persistence, container
 lifecycle, and delivery. The Pi coding-agent SDK will own the model/tool loop,
