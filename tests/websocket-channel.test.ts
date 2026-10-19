@@ -313,7 +313,6 @@ it("drops a slow peer without blocking another client or session execution", asy
     host,
     configuration,
     port: 0,
-    sendTimeoutMs: 100,
   });
   const slow = await openClient(channel.address);
   const fast = await openClient(channel.address);
@@ -322,7 +321,8 @@ it("drops a slow peer without blocking another client or session execution", asy
   fast.send({ type: "input", destination: "desktop", content: "Big" });
   const outbound = await fast.waitFor((message) => message.type === "outbound", "big reply");
   expect(String(outbound.content)).toHaveLength(8_000_000);
-  await vi.waitFor(() => expect(channel?.clientCount).toBe(1));
+  // Allow the production send deadline to drop the paused reader.
+  await vi.waitFor(() => expect(channel?.clientCount).toBe(1), { timeout: 3000 });
 
   fast.send({ type: "input", destination: "desktop", content: "After" });
   const next = await fast.waitFor(
