@@ -227,8 +227,9 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
     await handle.stop();
     await stopped.catch(() => {});
     handle = undefined;
-    // Termination is visible in the observed runtime state.
+    // Termination is the container leaving the runtime, not the stop call returning.
     expect((await driver.list(signal)).some((item) => item.ref === live.ref)).toBe(false);
+    await expect(execute("docker", ["inspect", live.ref], { timeout: 10000 })).rejects.toThrow();
     const reopened = new HostMailbox(material.directory);
     reopened.submit({
       id: "second",

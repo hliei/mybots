@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { HostMailbox, RunnerMailbox } from "@mybots/mailbox/node";
 import { WebSocketChannel } from "../packages/host/dist/channels/websocket.js";
 import { loadHostSettings } from "../packages/host/dist/config/host.js";
 import { Host } from "../packages/host/dist/host.js";
@@ -19,6 +20,30 @@ const driver = new MailboxDriver();
 const started = Promise.withResolvers();
 const release = Promise.withResolvers();
 const chatRelease = Promise.withResolvers();
+let releaseStop = () => {};
+let stopGate = process.env.MYBOTS_HOLD_STOP
+  ? new Promise((resolve) => {
+      releaseStop = resolve;
+    })
+  : Promise.resolve();
+let failStop = false;
+let stops = 0;
+const execution = {
+  async start(material, signal) {
+    const handle = await driver.start(material, signal);
+    return {
+      ref: handle.ref,
+      wait: () => handle.wait(),
+      stop: async () => {
+        stops += 1;
+        if (failStop) throw new Error("Controlled stop failure");
+        // The browser harness completes its initial inspection before owner stops.
+        if (process.env.MYBOTS_HOLD_STOP && stops > 1) await stopGate;
+        await handle.stop();
+      },
+    };
+  },
+};
 driver.respond = async (input, _material, signal) => {
   started.resolve();
   await Promise.race([
@@ -30,7 +55,7 @@ driver.respond = async (input, _material, signal) => {
   ]);
   return input.content === "Inspect this session" ? "Controlled reply" : `Final: ${input.content}`;
 };
-const host = await Host.start({ root, configuration, driver });
+const host = await Host.start({ root, configuration, driver: execution });
 let channel;
 try {
   channel = await WebSocketChannel.listen({ root, host, configuration, port });
@@ -54,11 +79,26 @@ try {
     process.on("message", (message) => {
       if (message === "complete") release.resolve();
       if (message === "complete-chat") chatRelease.resolve();
+      if (message === "hold-stop")
+        stopGate = new Promise((resolve) => {
+          releaseStop = resolve;
+        });
+      if (message === "release-stop") releaseStop();
+      if (message === "fail-stop") failStop = true;
+      if (message === "allow-stop") failStop = false;
+      if (message === "write-late") {
+        const directory = driver.launches.at(-1)?.material.directory;
+        const input = directory ? new HostMailbox(directory).inputs().at(-1) : undefined;
+        if (directory && input)
+          new RunnerMailbox(directory).reply(input, "Late evidence after stop", "message");
+      }
     });
   });
 } finally {
   release.resolve();
   chatRelease.resolve();
+  failStop = false;
+  releaseStop();
   await channel?.close();
   await host.stop();
   process.disconnect?.();

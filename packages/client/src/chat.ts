@@ -8,7 +8,10 @@ interface Outcome {
 interface Run {
   id: string;
   state: string;
+  held?: boolean;
+  stopError?: string | null;
   outcome: Outcome | null;
+  lateEvidence?: { text: string }[];
   inputs: {
     id: string;
     text: string;
@@ -36,9 +39,10 @@ interface Detail {
 interface Pending {
   botId: string;
   requestId: string;
-  operation: "message" | "new-task" | "task";
+  operation: "message" | "new-task" | "task" | "stop" | "retry" | "close";
   text: string;
   taskId?: string;
+  runId?: string;
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -100,8 +104,10 @@ function isPending(value: unknown): value is Pending {
   return (
     record(value) &&
     [value.botId, value.requestId, value.text].every((item) => typeof item === "string") &&
-    ["message", "new-task", "task"].includes(value.operation as string) &&
-    (value.operation !== "task" || typeof value.taskId === "string")
+    ["message", "new-task", "task", "stop", "retry", "close"].includes(value.operation as string) &&
+    (value.operation !== "task" || typeof value.taskId === "string") &&
+    (!["stop", "retry", "close"].includes(value.operation as string) ||
+      typeof value.runId === "string")
   );
 }
 function element<T extends HTMLElement>(id: string): T {
@@ -124,6 +130,7 @@ const retry = element<HTMLButtonElement>("retry-chat");
 const pendingKey = "mybots.pending-thread-input";
 let botId: string | undefined;
 let version = 0;
+let refreshTimer = 0;
 let sending = false;
 let pending: Pending | undefined;
 try {
@@ -141,6 +148,7 @@ function controls(): void {
   retry.disabled = sending;
 }
 export async function showChat(selectedBotId: string | undefined): Promise<void> {
+  window.clearTimeout(refreshTimer);
   if (botId !== selectedBotId) {
     botId = selectedBotId;
     text.value = "";
@@ -209,12 +217,27 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
                 `Final: ${run.outcome.reply}${run.outcome.truncated ? " [Excerpt; inspect Run evidence for the original.]" : ""}`,
               ),
             );
+          if (run.state === "stopping")
+            article.append(
+              paragraph(
+                run.stopError ??
+                  "Stopping until termination is confirmed. This Bot keeps its execution slot.",
+              ),
+            );
           if (run.state === "uncertain")
             article.append(
               paragraph(
-                "Final evidence is missing. This Run needs owner inspection; new independent work can proceed after execution stops.",
+                "Final evidence is missing. This Run is held until you retry or close it. Unrelated Tasks can proceed.",
               ),
             );
+          if (run.held)
+            article.append(
+              paragraph(
+                "Held for a later Routine occurrence, which is not scheduled in this version.",
+              ),
+            );
+          for (const late of run.lateEvidence ?? [])
+            article.append(paragraph(`Late result: ${late.text}`));
           const details = document.createElement("details");
           details.append(
             Object.assign(document.createElement("summary"), {
@@ -246,15 +269,47 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
           inspect.textContent = "Inspect Run evidence";
           inspect.addEventListener("click", () => void showRunHistory(run.id));
           article.append(inspect);
+          const runnable =
+            run.state === "queued" || run.state === "active" || run.state === "stopping";
+          if (runnable) article.append(runButton("Stop run", "stop", task.id, run.id));
+          if (run.state === "uncertain" || run.state === "closed")
+            article.append(runButton("Retry run", "retry", task.id, run.id));
+          if (run.state === "uncertain")
+            article.append(runButton("Close uncertain run", "close", task.id, run.id));
         }
         return article;
       }),
     );
+    if (
+      current === version &&
+      detail.tasks.some((task) => task.runs.some((run) => run.state === "stopping"))
+    )
+      refreshTimer = window.setTimeout(() => {
+        if (current === version && botId) void showChat(botId);
+      }, 200);
   } catch {
     if (current === version)
       notice.textContent =
         "Thread state unavailable. Displayed results may be stale. Refresh to retry.";
   }
+}
+function runButton(
+  label: string,
+  operation: "stop" | "retry" | "close",
+  taskId: string,
+  runId: string,
+): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = label;
+  button.disabled = sending || !!pending;
+  button.addEventListener("click", () => {
+    if (!botId || sending || pending) return;
+    pending = { botId, requestId: crypto.randomUUID(), operation, text: "", taskId, runId };
+    localStorage.setItem(pendingKey, JSON.stringify(pending));
+    void submit();
+  });
+  return button;
 }
 async function submit(newTask = false): Promise<void> {
   if (sending || !botId) return;
@@ -274,14 +329,23 @@ async function submit(newTask = false): Promise<void> {
     controls();
     const admitted = pending;
     const prefix = `/api/bots/${encodeURIComponent(admitted.botId)}`;
-    const path =
-      admitted.operation === "task"
+    const runOperation =
+      admitted.operation === "stop" ||
+      admitted.operation === "retry" ||
+      admitted.operation === "close";
+    const path = runOperation
+      ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/${admitted.operation}`
+      : admitted.operation === "task"
         ? `${prefix}/tasks/${encodeURIComponent(admitted.taskId as string)}/inputs`
         : `${prefix}/thread/${admitted.operation === "new-task" ? "tasks" : "messages"}`;
     const response = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requestId: admitted.requestId, text: admitted.text }),
+      body: JSON.stringify(
+        runOperation
+          ? { requestId: admitted.requestId }
+          : { requestId: admitted.requestId, text: admitted.text },
+      ),
     });
     const result: unknown = await response.json();
     if (!response.ok) {
@@ -300,13 +364,15 @@ async function submit(newTask = false): Promise<void> {
       result.requestId !== admitted.requestId ||
       typeof result.taskId !== "string" ||
       typeof result.runId !== "string" ||
-      typeof result.messageId !== "string"
+      (!runOperation && typeof result.messageId !== "string")
     )
       throw new Error();
     localStorage.removeItem(pendingKey);
     pending = undefined;
-    if (admitted.botId === botId) text.value = "";
-    notice.textContent = `Admitted to Task ${result.taskId}, Run ${result.runId}. Await its durable outcome.`;
+    if (admitted.botId === botId && !runOperation) text.value = "";
+    notice.textContent = runOperation
+      ? `Recorded ${admitted.operation} for Run ${result.runId}. Refresh after the Run state changes.`
+      : `Admitted to Task ${result.taskId}, Run ${result.runId}. Await its durable outcome.`;
     await showChat(botId);
   } catch {
     notice.textContent = pending

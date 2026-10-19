@@ -1,7 +1,7 @@
 # Durable work outcomes and uncertain recovery
 
 Status: accepted
-Implementation: planned
+Implementation: Run stop, uncertain outcomes, explicit retry, and close are delivered; Routine occurrence scheduling and delegation remain planned
 
 Explicit retry now creates a new Run under the same Task in the planned model,
 preserving the prior Run outcome under

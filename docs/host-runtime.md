@@ -73,7 +73,7 @@ do not overwrite the persisted identity or settings. Optional `agent.resources.s
 tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
 Selecting a web tool requires matching `agent.web` configuration. The execution
 harness is Pi; the model backend is specified separately by `model.provider` and
-`model.id`. The central store uses schema version 8 for host routing, Bot configuration,
+`model.id`. The central store uses schema version 9 for host routing, Bot configuration,
 Threads, original messages, Tasks, Runs, Attempts and stable input admissions.
 An older store containing sessions requires fresh runtime records; see the
 [replacement instructions](../README.md#persistence-and-reliability). The central store saves the model
@@ -367,6 +367,10 @@ response loss or reload. The old `/api/sessions` operations return 404.
 | `POST /api/bots/<id>/thread/messages` | `{ requestId, text }`; 202 with `{ requestId, botId, threadId, taskId, runId, messageId, replayed }`. |
 | `POST /api/bots/<id>/thread/tasks` | Same payload/response; always creates independent work. |
 | `POST /api/bots/<id>/tasks/<taskId>/inputs` | Same payload/response; appends only to that Bot's eligible Task. |
+| `POST /api/bots/<id>/runs/<runId>/stop` | `{ requestId }`; 202 acknowledges a stop. The Run stays `stopping` until termination is confirmed. |
+| `POST /api/bots/<id>/tasks/<taskId>/stop` | Same payload; stops that Task's unfinished Run. |
+| `POST /api/bots/<id>/runs/<runId>/retry` | `{ requestId }`; confirms stop, preserves the old outcome, and admits a linked Run under the same Task. |
+| `POST /api/bots/<id>/runs/<runId>/close` | `{ requestId }`; resolves an uncertain Run without creating another Run. |
 
 Messages allow 32,000 characters within a 256 KiB JSON limit. Unknown fields,
 including configuration overrides, return 400. A reused request ID with changed
@@ -376,13 +380,23 @@ returns its original association. Ordinary Thread sends remain usable after
 prior completion, failure or stopped uncertain work.
 
 Each Task exposes origin and Runs. Runs expose state (`queued`, `active`,
-`succeeded`, `failed`, `uncertain`), source message, captured background boundary,
-input identities, durable recording timestamps, final outcomes and Attempts.
-Each Attempt exposes fenced incarnation, effective configuration version (initially
-1), start and confirmed end. Outcomes correlate to final mailbox evidence, never
-queue acceptance or partial text. Complete original history, lexical retrieval
-and live execution previews are described below. Owner stop/uncertainty resolution
-and configuration cutover remain later capabilities.
+`stopping`, `succeeded`, `failed`, `uncertain`, `closed`), source message,
+captured background boundary, prior Run link, stop error, held Routine flag,
+late evidence, input identities, durable recording timestamps, final outcomes
+and Attempts. Each Attempt exposes fenced incarnation, effective configuration
+version (initially 1), start and confirmed end. Outcomes correlate to final
+mailbox evidence, never queue acceptance or partial text. `stopping` remains
+until the executor's stop completes; a failed stop keeps that Bot's serial slot
+and reports `stopError`. Confirmed stop with an acknowledged input and no final
+output becomes `uncertain` and `held`. `held` records that a later Routine
+occurrence must not start; occurrence scheduling is a later capability and does
+not run in this version. Unrelated Tasks of the same Bot may then run. Ordinary Thread
+sends do not retry or close that hold. Explicit retry confirms stop, keeps the
+original outcome, and creates one linked Run. Explicit close records the same
+uncertain outcome as `closed` without a new Run. Output that arrives after a
+closed or uncertain Run is late evidence and does not revive it. Complete
+original history, lexical retrieval and live execution previews are described
+below. Configuration cutover remains a later capability.
 
 All private HTTP routes and WebSocket upgrades require the credential, either
 as a Bearer header or the paired cookie. An explicit invalid Authorization header
