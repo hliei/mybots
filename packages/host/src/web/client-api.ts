@@ -184,6 +184,43 @@ export async function serveClient(
     }
     return;
   }
+  const settingsRoute = /^\/api\/bots\/([^/]+)\/settings$/.exec(path);
+  if (settingsRoute && request.method === "POST") {
+    try {
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+        bytes += chunk.length;
+        if (bytes > 65536) {
+          request.resume();
+          throw new BotRequestError("Bot request exceeds 64 KiB.", 413);
+        }
+        chunks.push(chunk);
+      }
+      let input: unknown;
+      try {
+        input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        throw new BotRequestError("Bot settings require valid JSON.");
+      }
+      const result = host.updateBot(decodeURIComponent(settingsRoute[1] as string), input);
+      response.writeHead(result.replayed ? 200 : 201, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(result));
+    } catch (error) {
+      response.writeHead(error instanceof BotRequestError ? error.status : 503, {
+        "Content-Type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error:
+            error instanceof BotRequestError
+              ? error.message
+              : "Bot settings unavailable. Retry with the same requestId.",
+        }),
+      );
+    }
+    return;
+  }
   if (path === "/api/bots" && request.method === "POST") {
     try {
       const chunks: Buffer[] = [];
@@ -231,6 +268,11 @@ export async function serveClient(
       response.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" });
       response.end("Build the local client with npm run build, then reload.\n");
     }
+    return;
+  }
+  if (settingsRoute) {
+    response.writeHead(405, { Allow: "POST" });
+    response.end();
     return;
   }
   if (

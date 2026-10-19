@@ -25,6 +25,21 @@
         <div class="section-title"><h2>Bots and Runs</h2><button id="refresh" type="button">Refresh status</button></div>
         <p id="updated"></p><div id="bots"></div>
         <article id="selected-bot" aria-label="Selected Bot" hidden></article>
+        <section id="settings" hidden>
+          <h2>Bot configuration</h2>
+          <p id="settings-versions"></p>
+          <form id="settings-form">
+            <fieldset id="settings-fields">
+              <label for="saved-role">Bot role</label>
+              <textarea id="saved-role" required maxlength="32000" rows="4"></textarea>
+              <label for="saved-model">Saved model</label>
+              <select id="saved-model" required></select>
+              <fieldset id="saved-tools"><legend>Saved tools</legend></fieldset>
+            </fieldset>
+            <button id="save-settings" type="submit">Save configuration</button>
+          </form>
+          <p id="settings-message" aria-live="polite"></p>
+        </section>
         <section id="chat" aria-labelledby="chat-heading" hidden>
           <h2 id="chat-heading">Direct Thread</h2>
           <h3 id="selected-chat"></h3>
@@ -52,7 +67,7 @@
         </section>
         <section aria-labelledby="create-heading">
           <h2 id="create-heading">Create a Bot</h2>
-          <p>Give this Bot its own role and working materials. Settings are fixed at creation in this version.</p>
+          <p>Give this Bot its own role and working materials. Edit saved settings from the selected Bot.</p>
           <form id="create-form">
             <fieldset id="create-fields">
               <label for="bot-name">Bot name</label>

@@ -1,7 +1,8 @@
 # Host-owned durable Bot configuration
 
 Status: accepted
-Implementation: planned
+Implementation: saved and effective Bot configuration versions and the finite
+Attempt cutoff are delivered; protected Skill revisions remain planned
 
 The Host owns one durable authoritative configuration for each Bot. Web UI and
 management API edits persist across Host restarts, and chat, scheduled work,

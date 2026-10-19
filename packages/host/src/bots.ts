@@ -7,10 +7,19 @@ export interface BotSettings {
   tools: string[];
 }
 
+export interface BotConfigurationView {
+  instructions: string;
+  model: { provider: string; id: string };
+  tools: string[];
+}
+
 export interface ManagedBot extends BotSettings {
   id: string;
   /** Owned material relative to the installation root. */
   workspace: string;
+  savedVersion: number;
+  effectiveVersion: number;
+  effective: BotConfigurationView;
 }
 
 export class BotRequestError extends Error {
@@ -68,6 +77,27 @@ export function parseBotCreate(value: unknown): BotSettings & { requestId: strin
     instructions: input.instructions,
     model: { provider: model.provider, id: model.id },
     tools: input.tools,
+  };
+}
+
+/** Role, approved model and tools. Name, endpoints and per-Task overrides are not settings. */
+export function parseBotSettings(value: unknown): BotSettings & { requestId: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new BotRequestError("Bot settings require a JSON object.");
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).some((key) => !["requestId", "instructions", "model", "tools"].includes(key))
+  )
+    throw new BotRequestError(
+      "Unsupported Bot setting. Endpoints, credentials and per-Task overrides are not Bot configuration.",
+    );
+  const parsed = parseBotCreate({ ...input, name: "settings" });
+  return {
+    requestId: parsed.requestId,
+    name: "",
+    instructions: parsed.instructions,
+    model: parsed.model,
+    tools: parsed.tools,
   };
 }
 

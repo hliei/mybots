@@ -19,6 +19,9 @@ interface Bot {
   instructions: string;
   model: { provider: string; id: string };
   tools: string[];
+  savedVersion: number;
+  effectiveVersion: number;
+  effective: { instructions: string; model: { provider: string; id: string }; tools: string[] };
 }
 interface BotOptions {
   models: { provider: string; id: string }[];
@@ -76,7 +79,13 @@ function isBot(value: unknown): value is Bot {
       (field) => typeof field === "string",
     ) &&
     isModel(value.model) &&
-    isStrings(value.tools)
+    isStrings(value.tools) &&
+    typeof value.savedVersion === "number" &&
+    typeof value.effectiveVersion === "number" &&
+    record(value.effective) &&
+    typeof value.effective.instructions === "string" &&
+    isModel(value.effective.model) &&
+    isStrings(value.effective.tools)
   );
 }
 function isOptions(value: unknown): value is BotOptions {
@@ -121,7 +130,23 @@ const createButton = document.querySelector<HTMLButtonElement>(
   "#create-button",
 ) as HTMLButtonElement;
 const createMessage = document.querySelector<HTMLElement>("#create-message") as HTMLElement;
+const settingsSection = document.querySelector<HTMLElement>("#settings") as HTMLElement;
+const settingsVersions = document.querySelector<HTMLElement>("#settings-versions") as HTMLElement;
+const settingsForm = document.querySelector<HTMLFormElement>("#settings-form") as HTMLFormElement;
+const settingsFields = document.querySelector<HTMLFieldSetElement>(
+  "#settings-fields",
+) as HTMLFieldSetElement;
+const savedRole = document.querySelector<HTMLTextAreaElement>("#saved-role") as HTMLTextAreaElement;
+const savedModel = document.querySelector<HTMLSelectElement>("#saved-model") as HTMLSelectElement;
+const savedTools = document.querySelector<HTMLFieldSetElement>(
+  "#saved-tools",
+) as HTMLFieldSetElement;
+const saveSettings = document.querySelector<HTMLButtonElement>(
+  "#save-settings",
+) as HTMLButtonElement;
+const settingsMessage = document.querySelector<HTMLElement>("#settings-message") as HTMLElement;
 const pendingKey = "mybots.pending-bot";
+const pendingSettingsKey = "mybots.pending-settings";
 let selectedId = localStorage.getItem("mybots.selected-bot");
 let pending: Creation | undefined;
 try {
@@ -131,6 +156,18 @@ try {
   /* An unreadable draft has no valid request to retry. */
 }
 let currentOptions = "";
+let settingsIdentity = "";
+interface SettingsDraft extends Creation {
+  botId: string;
+}
+let pendingSettings: SettingsDraft | undefined;
+try {
+  const stored: unknown = JSON.parse(localStorage.getItem(pendingSettingsKey) ?? "null");
+  if (isCreation(stored) && record(stored) && typeof stored.botId === "string")
+    pendingSettings = stored as unknown as SettingsDraft;
+} catch {
+  /* An unreadable settings draft has no valid request to retry. */
+}
 
 function selectBot(id: string): void {
   selectedId = id;
@@ -142,17 +179,25 @@ function renderOptions(options: BotOptions): void {
   if (signature === currentOptions) return;
   currentOptions = signature;
   const previousModel = model.value;
-  model.replaceChildren(
-    ...options.models.map((choice) => {
-      const option = document.createElement("option");
-      option.value = `${choice.provider}/${choice.id}`;
-      option.textContent = option.value;
-      return option;
-    }),
-  );
-  if (options.models.some((choice) => `${choice.provider}/${choice.id}` === previousModel))
-    model.value = previousModel;
+  const previousSaved = savedModel.value;
+  const optionsFor = (select: HTMLSelectElement, previous: string) => {
+    select.replaceChildren(
+      ...options.models.map((choice) => {
+        const option = document.createElement("option");
+        option.value = `${choice.provider}/${choice.id}`;
+        option.textContent = option.value;
+        return option;
+      }),
+    );
+    if (options.models.some((choice) => `${choice.provider}/${choice.id}` === previous))
+      select.value = previous;
+  };
+  optionsFor(model, previousModel);
+  optionsFor(savedModel, previousSaved);
   tools.replaceChildren(Object.assign(document.createElement("legend"), { textContent: "Tools" }));
+  savedTools.replaceChildren(
+    Object.assign(document.createElement("legend"), { textContent: "Saved tools" }),
+  );
   for (const tool of options.tools) {
     const label = document.createElement("label");
     const checkbox = document.createElement("input");
@@ -160,6 +205,13 @@ function renderOptions(options: BotOptions): void {
     checkbox.value = tool;
     label.append(checkbox, document.createTextNode(tool));
     tools.append(label);
+    const savedLabel = document.createElement("label");
+    const savedCheckbox = document.createElement("input");
+    savedCheckbox.type = "checkbox";
+    savedCheckbox.value = tool;
+    savedCheckbox.setAttribute("aria-label", `Saved tool ${tool}`);
+    savedLabel.append(savedCheckbox, document.createTextNode(`Saved tool ${tool}`));
+    savedTools.append(savedLabel);
   }
   if (pending) {
     botName.value = pending.name;
@@ -220,18 +272,50 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     const heading = document.createElement("h2");
     heading.textContent = active.name;
     selected.append(heading);
-    for (const text of [
+    const lines = [
       `Bot ID: ${active.id}`,
       `Workspace: ${active.workspace}`,
-      `Role: ${active.instructions}`,
-      `Model: ${active.model.provider}/${active.model.id}`,
-      `Tools: ${active.tools.join(", ") || "None"}`,
+      `Saved role: ${active.instructions}`,
+      `Saved model: ${active.model.provider}/${active.model.id}`,
+      `Saved tools: ${active.tools.join(", ") || "None"}`,
+    ];
+    if (active.savedVersion !== active.effectiveVersion)
+      lines.push(
+        `Effective role: ${active.effective.instructions}`,
+        `Effective model: ${active.effective.model.provider}/${active.effective.model.id}`,
+        `Effective tools: ${active.effective.tools.join(", ") || "None"}`,
+      );
+    for (const text of [
+      ...lines,
+      `Saved configuration: ${active.savedVersion}`,
+      `Effective configuration: ${active.effectiveVersion}`,
     ]) {
       const paragraph = document.createElement("p");
       paragraph.textContent = text;
       selected.append(paragraph);
     }
-  }
+    settingsSection.hidden = false;
+    settingsVersions.textContent =
+      active.savedVersion === active.effectiveVersion
+        ? `Saved and effective configuration ${active.savedVersion}.`
+        : `Saved configuration ${active.savedVersion}. Effective configuration ${active.effectiveVersion}. The current Attempt finishes under the effective role, model, and tools.`;
+    const identity = `${active.id}:${active.savedVersion}`;
+    const editing = settingsFields.disabled || settingsFields.matches(":focus-within");
+    if (!editing && (identity !== settingsIdentity || pendingSettings?.botId === active.id)) {
+      settingsIdentity = identity;
+      savedRole.value =
+        pendingSettings?.botId === active.id ? pendingSettings.instructions : active.instructions;
+      savedModel.value = `${(pendingSettings?.botId === active.id ? pendingSettings.model : active.model).provider}/${(pendingSettings?.botId === active.id ? pendingSettings.model : active.model).id}`;
+      const selectedTools =
+        pendingSettings?.botId === active.id ? pendingSettings.tools : active.tools;
+      for (const checkbox of savedTools.querySelectorAll("input"))
+        checkbox.checked = selectedTools.includes(checkbox.value);
+    }
+    if (pendingSettings?.botId === active.id) {
+      settingsFields.disabled = true;
+      saveSettings.textContent = "Retry configuration";
+    }
+  } else settingsSection.hidden = true;
   void showChat(active?.id);
   if (snapshot.bots.length === 0) bots.textContent = "No Bots configured.";
 }
@@ -367,6 +451,70 @@ createForm.addEventListener("submit", async (event) => {
       : "Could not save the creation request in this browser. Check local storage and retry.";
   } finally {
     createButton.disabled = false;
+  }
+});
+settingsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!selectedId) return;
+  saveSettings.disabled = true;
+  try {
+    if (!pendingSettings || pendingSettings.botId !== selectedId) {
+      const [provider, ...id] = savedModel.value.split("/");
+      pendingSettings = {
+        botId: selectedId,
+        requestId: crypto.randomUUID(),
+        name: "settings",
+        instructions: savedRole.value,
+        model: { provider: provider as string, id: id.join("/") },
+        tools: [...savedTools.querySelectorAll<HTMLInputElement>("input:checked")].map(
+          (input) => input.value,
+        ),
+      };
+      localStorage.setItem(pendingSettingsKey, JSON.stringify(pendingSettings));
+    }
+    settingsFields.disabled = true;
+    saveSettings.textContent = "Retry configuration";
+    const response = await fetch(
+      `/api/bots/${encodeURIComponent(pendingSettings.botId)}/settings`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId: pendingSettings.requestId,
+          instructions: pendingSettings.instructions,
+          model: pendingSettings.model,
+          tools: pendingSettings.tools,
+        }),
+      },
+    );
+    const result: unknown = await response.json();
+    if (!response.ok) {
+      if (response.status >= 400 && response.status < 500) {
+        localStorage.removeItem(pendingSettingsKey);
+        pendingSettings = undefined;
+        settingsFields.disabled = false;
+        saveSettings.textContent = "Save configuration";
+      }
+      settingsMessage.textContent =
+        record(result) && typeof result.error === "string"
+          ? result.error
+          : "Configuration save failed. Retry the same request.";
+      return;
+    }
+    if (!record(result) || !isBot(result.bot)) throw new Error();
+    localStorage.removeItem(pendingSettingsKey);
+    pendingSettings = undefined;
+    settingsFields.disabled = false;
+    saveSettings.textContent = "Save configuration";
+    settingsIdentity = "";
+    settingsMessage.textContent = `Saved configuration ${result.bot.savedVersion}. Effective configuration ${result.bot.effectiveVersion}.`;
+    await load();
+  } catch {
+    settingsMessage.textContent = pendingSettings
+      ? "Configuration response unconfirmed. Retry configuration to keep the same request, including after reload."
+      : "Could not save the configuration request in this browser. Check local storage and retry.";
+  } finally {
+    saveSettings.disabled = false;
   }
 });
 refresh.addEventListener("click", () => void load());

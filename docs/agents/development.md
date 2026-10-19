@@ -181,10 +181,12 @@ extensions, prompt templates, themes and file-backed SDK settings stay disabled.
 Selecting `web_search` or `fetch_content` registers the matching Pi custom tool
 inside the container; the real search credential stays gateway-owned and is
 injected only for the configured endpoint's hostname.
-Shared instruction/Skill file changes take effect on the next query, after the
-current query and SDK cleanup finish; queued follow-ups retain their query's
-resources. Changing the configured selection requires stopped execution and
-explicit replacement of immutable context, as with model configuration.
+The runner loads the workspace's current AGENTS.md and selected Skill files when
+it opens a query. Saving Bot role, model, or tool selection does not edit those
+files. That save establishes a finite cutoff: the open Attempt and steering
+admitted before the save finish under that Attempt's version. Input admitted
+after the save stays on the same Run and runs on the next Attempt, which
+replaces immutable context with the saved version and reopens that Run ledger.
 
 Pi owns Run-local automatic compaction, summaries and reopening. The Host selects
 bounded original Thread references for each new Run. Legacy `/reset` is rejected;

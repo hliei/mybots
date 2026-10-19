@@ -304,6 +304,12 @@ queued Tasks, checks cross-Bot progress, and recovers a dropped message response
 and saved work after reload and Host restart. Browser checks remain offline and
 do not establish actual-container or actual-service evidence.
 
+`tests/bot-configuration.test.ts` edits role, approved model and tools through
+public HTTP. It checks saved and effective versions across restart, the finite
+pre-save steering cutoff, same-Run application after that cutoff, real SDK
+reopening with the saved instructions and tools, and a visible incompatible
+continuation that keeps the Run ledger and original history.
+
 `tests/thread-execution.test.ts` exercises one-Thread operations through public
 HTTP with real Host/SQLite/mailboxes. It covers stable request replay/conflicts,
 completion races, targeted active/queued additions, admission-before-publication
