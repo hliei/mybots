@@ -138,30 +138,29 @@ continuation, tool activity and delivery acknowledgements are separate records.
 SDK logs remain under the session's `pi/sessions/`; a saved `pi:` continuation
 selects one exact conversation at the stable container path after recreation.
 
-The poll loop queues inputs arriving during active execution as FIFO follow-ups.
-Each input remains a separate exchange with its own reply correlation and address;
-it does not steer the current exchange. A follow-up is acknowledged completed
-as soon as the query accepts it into Pi's queue. A hard crash can therefore lose
-that work even before a reply exists. Input refused by a closing query remains
-pending for the next query.
+Production execution receives immutable Run context with source-message identity,
+captured background boundary and bounded original Thread references. Each Run
+mounts only its own SDK ledger and directional mailboxes. Later Attempts reopen
+that same ledger; new Runs use independently initialized SDK state.
 
-Pi's synchronous Agent queue admits one follow-up at a time. Successful
-tool-free `turn_end` events follow SDK persistence and identify exchange results;
-tool rounds and low-level `agent_end` events do not. Errors and truncated
-attempts wait for SDK recovery, the next user input, or prompt settlement before
-becoming results. An ordinary failed exchange gets an error notice at its own
-address; later queued exchanges retain their own results. A query that ends or
-throws with unfinished work produces separate failure notices for those inputs.
-Request-level SDK recovery does not redeliver the whole task or repeat completed
-tools. Raw provider diagnostics are not reply content.
+The poll loop queues active Run additions with SDK steering. Queue insertion
+alone does not acknowledge completion. Input identity is recorded in the SDK
+user message, and a later awaited Agent listener publishes recording evidence
+only after coding-agent's persistence listener. Final settled results correlate
+all consumed additions to their input addresses. Unconsumed steering remains
+pending for another query in the same Run.
 
-Cancellation closes query admission, stops follow-up polling, awaits SDK cleanup
-and discards late results. The initial unfinished processing claim remains for
-host recovery; early-completed follow-ups remain completed. Initial-result
-acknowledgement deliberately precedes output persistence, so a crash between
-them can lose the reply. The runner does not repair these accepted loss windows
-or add atomic completion. The host reschedules or fails an abandoned claim under
-its bounded policy; see [host runtime](host-runtime.md#interrupted-execution-recovery).
+Context selection drops older quoted references before required live instructions.
+A conservative UTF-8 byte bound reserves model output, system and tools; input
+that cannot fit fails visibly. Pi retains its tool loop, resources and automatic
+compaction. Reopening uses existing tool/result pairs without replay to reconstruct
+context. A recorded final answer can repair missing output evidence; incomplete
+tool evidence fails visibly rather than replaying a partial tool stack.
+
+Cancellation closes admission, stops polling and awaits SDK cleanup. Host recovery
+retains pending inputs and bounded unfinished claims. Acknowledgement still precedes
+output persistence, so an acknowledged result can remain uncertain after a crash.
+These records do not establish atomic tool effects or exactly-once completion.
 
 Stop a session with its handle's awaited `stop()` before re-provisioning or
 replacing immutable context. Re-provisioning identical context is idempotent;
@@ -229,11 +228,6 @@ item, at most five items and three concurrent requests per call. Tool outcomes,
 including per-item errors, return to the model for continuation; cancellation
 stops active requests and awaited disposal releases their readers.
 
-A `reset` input is a runner control rather than model text. Follow-up admission
-stops at that row, leaving it and all later input pending until SDK query cleanup
-(including compaction) finishes. The runner creates a new SDK SessionManager,
-records the owner's reset action through its public message API, stores the new
-continuation and acknowledges/replies through the usual independent records.
-The control message makes Pi persist its otherwise empty conversation; no model
-request or custom JSONL writer is used. Reset preserves earlier logs and shared
-files. Automatic compaction and context restoration remain owned by Pi.
+The Host rejects legacy `/reset` controls. Future chat background reset must
+capture a new prospective Thread boundary without replacing existing Run ledgers.
+Automatic Run compaction and context restoration remain owned by Pi.

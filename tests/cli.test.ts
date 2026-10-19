@@ -123,7 +123,9 @@ it("routes owner-local socket input through the persistent host and continues af
   const second = await terminal();
   second.send("Continue");
   await vi.waitFor(() => expect(second.replies).toEqual([{ text: "Reply: Continue" }]));
-  expect(host?.sessions().map((session) => session.id)).toEqual([session]);
+  expect(host?.sessions()).toHaveLength(2);
+  expect(host?.sessions()[0].id).toBe(session);
+  expect((await host?.threadDetail("personal"))?.tasks).toHaveLength(2);
 });
 
 it("claims a terminal on its first input and replaces the previous client without cancelling the session", async () => {
@@ -138,7 +140,7 @@ it("claims a terminal on its first input and replaces the previous client withou
     expect(first.replies).toContainEqual({ text: "[superseded by a newer client]" }),
   );
   await vi.waitFor(() => expect(second.replies).toEqual([{ text: "Reply: Second" }]));
-  expect(host?.sessions()).toHaveLength(1);
+  expect(host?.sessions()).toHaveLength(2);
 });
 
 it("rejects malformed socket input without accepting Agent work and remains usable", async () => {
@@ -151,7 +153,7 @@ it("rejects malformed socket input without accepting Agent work and remains usab
   await vi.waitFor(() => expect(client.replies).toContainEqual({ text: "Reply: Valid" }));
 });
 
-it("executes the CLI as a host client and reconnects to the same saved conversation", async () => {
+it("executes the CLI as a host client and reconnects to the same Thread with independent Runs", async () => {
   await setup();
   for (const text of ["First", "Continue"]) {
     const child = spawn(process.execPath, ["packages/host/src/cli/client.ts", "--root", root], {
@@ -182,7 +184,7 @@ it("executes the CLI as a host client and reconnects to the same saved conversat
       clearTimeout(timeout);
     }
   }
-  expect(host?.sessions()).toHaveLength(1);
+  expect(host?.sessions()).toHaveLength(2);
 });
 
 it("disconnects a CLI process with Ctrl+C while the host keeps its conversation available", async () => {
@@ -455,7 +457,7 @@ it("links mbt into an isolated npm prefix and uses the same interactive client f
     expect(await waitForCheckpoint(exited, "linked mbt interruption")).toBe(130);
     expect(stderr).toBe("");
   }
-  expect(host?.sessions()).toHaveLength(1);
+  expect(host?.sessions()).toHaveLength(2);
   const missing = spawnSync(command, ["--root", join(root, "unavailable")], {
     cwd: tmpdir(),
     env: { ...process.env, NODE_OPTIONS: "" },

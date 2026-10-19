@@ -164,7 +164,7 @@ it("rejects malformed or unconfigured input without creating host work", async (
   expect(outbound).toMatchObject({ content: "Reply: Hello" });
 });
 
-it("keeps WebSocket and CLI conversations separate while sharing the Agent workspace", async () => {
+it("routes WebSocket and CLI input to the same active Thread work", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-ws-")));
   const driver = new MailboxDriver();
   host = await Host.start({ root, configuration, driver });
@@ -190,7 +190,7 @@ it("keeps WebSocket and CLI conversations separate while sharing the Agent works
     "desktop inbound",
   );
 
-  expect(inbound.session_id).not.toBe(viaCli.sessionId);
+  expect(inbound.session_id).toBe(viaCli.sessionId);
   expect(host.sessions()).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ id: viaCli.sessionId, agent_group_id: "personal" }),
@@ -199,9 +199,7 @@ it("keeps WebSocket and CLI conversations separate while sharing the Agent works
   );
   expect(driver.launches.map((launch) => launch.material.workspace)).toEqual([
     join(root, "groups", "personal"),
-    join(root, "groups", "personal"),
   ]);
-  expect(driver.launches[0].material.directory).not.toBe(driver.launches[1].material.directory);
   await vi.waitFor(() => expect(cliReplies).toEqual(["Reply: From the terminal"]));
 });
 
@@ -286,7 +284,6 @@ it("observes another channel's output without acknowledging its delivery", async
   expect(delivered).toEqual([]);
   expect((await host.inspect(accepted.sessionId)).deliveries).toEqual([
     expect.objectContaining({ id: outbound.message_id, status: undefined }),
-    expect.objectContaining({ id: nextOutbound.message_id, status: undefined }),
   ]);
 
   held.resolve();
@@ -296,7 +293,6 @@ it("observes another channel's output without acknowledging its delivery", async
   await vi.waitFor(async () =>
     expect((await running.inspect(accepted.sessionId)).deliveries).toEqual([
       expect.objectContaining({ id: outbound.message_id, status: "delivered" }),
-      expect.objectContaining({ id: nextOutbound.message_id, status: "delivered" }),
     ]),
   );
   expect(
@@ -333,7 +329,7 @@ it("drops a slow peer without blocking another client or session execution", asy
     (message) => message.type === "outbound" && message.content === "Reply: After",
     "next reply",
   );
-  expect(next.session_id).toBe(outbound.session_id);
+  expect(next.session_id).not.toBe(outbound.session_id);
   expect(channel.clientCount).toBe(1);
 });
 
@@ -373,8 +369,8 @@ it("reconnects to the same conversation without replaying delivered events", asy
     (message) => message.type === "outbound" && message.content === "Reply: Continue",
     "next outbound",
   );
-  expect(nextInbound.session_id).toBe(sessionId);
-  expect(nextOutbound.session_id).toBe(sessionId);
+  expect(nextInbound.session_id).not.toBe(sessionId);
+  expect(nextOutbound.session_id).toBe(nextInbound.session_id);
   expect(
     reconnected.messages.filter((message) => message.message_id === firstOutbound.message_id),
   ).toEqual([]);

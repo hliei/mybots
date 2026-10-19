@@ -186,7 +186,7 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     const sessions = snapshot.sessions.filter((session) => session.botId === bot.id);
     if (sessions.length === 0) {
       const empty = document.createElement("p");
-      empty.textContent = "No sessions yet.";
+      empty.textContent = "No Runs yet.";
       article.append(empty);
     } else {
       const list = document.createElement("ul");
@@ -196,7 +196,7 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
         id.className = "session-id";
         id.textContent = session.id;
         const progress = document.createElement("span");
-        progress.textContent = `Destination: ${session.destinationId} · Session: ${session.status} · Container: ${session.containerStatus}. Inputs: ${session.inputs.pending} pending, ${session.inputs.processing} processing, ${session.inputs.acknowledged} acknowledged, ${session.inputs.failed} failed.`;
+        progress.textContent = `Destination: ${session.destinationId} · Run: ${session.status} · Container: ${session.containerStatus}. Inputs: ${session.inputs.pending} pending, ${session.inputs.processing} processing, ${session.inputs.acknowledged} acknowledged, ${session.inputs.failed} failed.`;
         item.append(id, progress);
         list.append(item);
       }

@@ -65,11 +65,11 @@ details and scope. See
 - Give long-running resources an explicit cleanup path. Define cancellation,
   message ordering, and failure behavior when introducing asynchronous work.
 
-Active runner queries admit FIFO follow-ups through Pi's synchronous Agent
-queue with one-at-a-time consumption. Each exchange keeps its input routing;
-follow-up acknowledgement precedes execution. Query shutdown closes admission
-and awaits polling/SDK cleanup. Host execution and delivery progress independently
-between sessions, with sequential delivery inside each session. See
+Active Run queries accept durable steering at permitted SDK boundaries. Queue
+insertion alone is not consumption; SDK recording precedes mailbox evidence.
+Query shutdown closes admission and awaits polling/SDK cleanup. One actual
+Attempt per Bot holds capacity until confirmed stop; other Bots may progress.
+Execution and per-Run delivery progress independently. See
 [container execution](../container-runtime.md) for event and failure mapping.
 
 ## Command contract
@@ -186,8 +186,7 @@ current query and SDK cleanup finish; queued follow-ups retain their query's
 resources. Changing the configured selection requires stopped execution and
 explicit replacement of immutable context, as with model configuration.
 
-Pi owns automatic compaction, summaries and reopening. `/reset` or `Host.reset`
-queues an owner control in the session mailbox; it cannot enter the active SDK
-follow-up queue. It executes after query cleanup, stores a fresh `pi:` continuation
-and replies through ordinary persisted delivery. Later input uses that new
-conversation. No host token-budget algorithm or transcript rewriting is involved.
+Pi owns Run-local automatic compaction, summaries and reopening. The Host selects
+bounded original Thread references for each new Run. Legacy `/reset` is rejected;
+prospective Thread background reset is delivered separately without replacing
+existing Run ledgers.

@@ -32,7 +32,7 @@ async function contents(directory: string): Promise<string> {
   return values.join("\n");
 }
 
-test("actual mounted runner uses OneCLI injection and reopens its explicit Pi conversation", async () => {
+test("actual mounted runner records and reopens a Run-local ledger through the credential gateway", async () => {
   const root = await mkdtemp(join(tmpdir(), "mybots-infrastructure-"));
   const project = `mybots-infra-${randomUUID().slice(0, 8)}`;
   const credential = randomUUID();
@@ -120,8 +120,9 @@ test("actual mounted runner uses OneCLI injection and reopens its explicit Pi co
     });
     const material = await provisionSession({
       root,
-      key: { agentGroupId: "personal", sessionId: "cli" },
+      key: { agentGroupId: "personal", sessionId: "run-one" },
       folder: "personal",
+      runContext: { sourceMessageId: "first", backgroundBoundary: 0, references: [] },
       model: {
         provider: "controlled",
         id: "controlled-model",
@@ -217,7 +218,7 @@ test("actual mounted runner uses OneCLI injection and reopens its explicit Pi co
     });
     // The runtime reports the live container and adoption takes it over without
     // creating a duplicate.
-    const live = (await driver.list(signal)).find((item) => item.key.sessionId === "cli");
+    const live = (await driver.list(signal)).find((item) => item.key.sessionId === "run-one");
     if (!live) throw new Error("The runtime did not report the live session container");
     await docker(["network", "disconnect", `${project}_session`, gatewayContainer]);
     const adopted = await driver.adopt(live, material, signal);
@@ -269,6 +270,12 @@ test("actual mounted runner uses OneCLI injection and reopens its explicit Pi co
       thread_id: "thread",
     });
     expect(reopened.continuation()).toBe(continuation);
+    expect(reopened.inputEvidence().map((row) => row.messageId)).toEqual([
+      "first",
+      "while-running",
+      "second",
+    ]);
+    expect(await contents(join(material.directory, "pi"))).toContain("mybotsInputId");
     const evidence = (await fetch(upstreamUrl, { signal }).then((response) => response.json())) as {
       injected: boolean;
       requests: Array<{ messages: unknown[] }>;
@@ -296,15 +303,22 @@ test("actual mounted runner uses OneCLI injection and reopens its explicit Pi co
     expect(new HostMailbox(material.directory).deliveryStatus(first.id)).toBe("delivered");
     await handle.stop();
     handle = undefined;
-    // Explicit sessions share their Bot's workspace, while mounting only their own SDK state.
+    // Runs share their Bot's workspace and mount only their own SDK ledger.
     for (const [agentGroupId, expected] of [
       ["personal", "Shared material visible."],
       ["writer", "Workspace starts empty."],
     ]) {
       const selected = await provisionSession({
         root,
-        key: { agentGroupId, sessionId: "selected-chat" },
+        key: { agentGroupId, sessionId: "independent-run" },
         folder: agentGroupId,
+        runContext: {
+          sourceMessageId: "inspect",
+          backgroundBoundary: 0,
+          references: [
+            { id: "original-reference", role: "assistant", content: "A bounded Thread reference" },
+          ],
+        },
         model: {
           provider: "controlled",
           id: "controlled-model",
@@ -336,6 +350,8 @@ test("actual mounted runner uses OneCLI injection and reopens its explicit Pi co
       );
       expect(current).toHaveLength(2);
       expect(JSON.stringify(current)).not.toContain("Save a shared note");
+      expect(JSON.stringify(current)).toContain("original-reference");
+      expect(mailbox.inputEvidence()).toEqual([expect.objectContaining({ messageId: "inspect" })]);
       await handle.stop();
       handle = undefined;
     }

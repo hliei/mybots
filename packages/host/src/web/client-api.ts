@@ -56,25 +56,21 @@ export async function serveClient(
     response.end(JSON.stringify({ bots: host.managedBots() }));
     return;
   }
-  if (path === "/api/sessions" || path.startsWith("/api/sessions/")) {
+  const threadRoute = /^\/api\/bots\/([^/]+)\/thread(?:\/(messages|tasks))?$/.exec(path);
+  const taskRoute = /^\/api\/bots\/([^/]+)\/tasks\/([^/]+)\/inputs$/.exec(path);
+  if (threadRoute || taskRoute) {
     try {
-      const match = /^\/api\/sessions\/([^/]+)(?:\/(name|messages))?$/.exec(path);
       let result: object;
-      let status = 200;
-      if (request.method === "GET" && path === "/api/sessions") {
-        result = host.chatSessions(
-          new URL(request.url ?? "/", "http://localhost").searchParams.get("botId") ?? "",
-        );
-      } else if (request.method === "GET" && match && !match[2]) {
-        result = await host.chatDetail(match[1] as string);
-      } else if (request.method === "POST" && (path === "/api/sessions" || match?.[2])) {
+      if (request.method === "GET" && threadRoute && !threadRoute[2]) {
+        result = await host.threadDetail(threadRoute[1] as string);
+      } else if (request.method === "POST" && (threadRoute?.[2] || taskRoute)) {
         const chunks: Buffer[] = [];
         let bytes = 0;
         for await (const chunk of request.iterator({ destroyOnReturn: false })) {
           bytes += chunk.length;
-          if (bytes > 65536) {
+          if (bytes > 262144) {
             request.resume();
-            throw new ChatRequestError("Chat request exceeds 64 KiB.", 413);
+            throw new ChatRequestError("Chat request exceeds 256 KiB.", 413);
           }
           chunks.push(chunk);
         }
@@ -84,20 +80,20 @@ export async function serveClient(
         } catch {
           throw new ChatRequestError("Chat operations require valid JSON.");
         }
-        if (path === "/api/sessions") {
-          const created = host.createChat(input);
-          status = created.replayed ? 200 : 201;
-          result = created;
-        } else if (match?.[2] === "messages") {
-          result = await host.messageChat(match[1] as string, input);
-          status = 202;
-        } else result = host.renameChat(match?.[1] as string, input);
+        result = await host.sendThread(
+          (threadRoute?.[1] ?? taskRoute?.[1]) as string,
+          input,
+          threadRoute?.[2] === "tasks" ? "new-task" : "message",
+          taskRoute?.[2],
+        );
       } else {
-        response.writeHead(match || path === "/api/sessions" ? 405 : 404);
+        response.writeHead(405);
         response.end();
         return;
       }
-      response.writeHead(status, { "Content-Type": "application/json" });
+      response.writeHead(request.method === "POST" ? 202 : 200, {
+        "Content-Type": "application/json",
+      });
       response.end(JSON.stringify(result));
     } catch (error) {
       response.writeHead(error instanceof ChatRequestError ? error.status : 503, {
@@ -108,7 +104,7 @@ export async function serveClient(
           error:
             error instanceof ChatRequestError
               ? error.message
-              : "Chat operation unavailable. Retry with the same requestId.",
+              : "Thread operation unavailable. Retry with the same requestId.",
         }),
       );
     }

@@ -149,7 +149,7 @@ it("keeps the Bot API token out of runner material and shared resources", async 
     expect(await readFile(file, "latin1"), `${file} must not hold the token`).not.toContain(token);
 });
 
-it("keeps Telegram and CLI conversations separate within one shared workspace across restart", async () => {
+it("routes Telegram and CLI into one Thread and preserves it across restart", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-telegram-")));
   let driver = new MailboxDriver();
   host = await Host.start({ root, configuration, driver });
@@ -167,15 +167,13 @@ it("keeps Telegram and CLI conversations separate within one shared workspace ac
     userId: "cli:local",
     text: "CLI first",
   });
-  expect(telegramFirst?.sessionId).not.toBe(cliFirst.sessionId);
+  expect(telegramFirst?.sessionId).toBe(cliFirst.sessionId);
   await vi.waitFor(() =>
     expect(first.sends).toEqual([{ chatId: "42", text: "Reply: Telegram first" }]),
   );
   expect(driver.launches.map((launch) => launch.material.workspace)).toEqual([
     join(root, "groups", "personal"),
-    join(root, "groups", "personal"),
   ]);
-  expect(driver.launches[0].material.directory).not.toBe(driver.launches[1].material.directory);
   await channel.stop();
   channel = undefined;
   await host.stop();
@@ -197,15 +195,16 @@ it("keeps Telegram and CLI conversations separate within one shared workspace ac
     userId: "cli:local",
     text: "CLI second",
   });
-  expect(telegramSecond?.sessionId).toBe(telegramFirst?.sessionId);
-  expect(cliSecond.sessionId).toBe(cliFirst.sessionId);
+  expect(telegramSecond?.sessionId).not.toBe(telegramFirst?.sessionId);
+  expect(cliSecond.sessionId).toBe(telegramSecond?.sessionId);
   await vi.waitFor(() =>
     expect(resumed.sends).toEqual([{ chatId: "42", text: "Reply: Telegram second" }]),
   );
   const telegramLaunch = driver.launches.find((launch) =>
-    launch.material.directory.endsWith(telegramFirst?.sessionId ?? ""),
+    launch.material.directory.endsWith(telegramSecond?.sessionId ?? ""),
   );
-  expect(telegramLaunch?.continuation).toMatch(/^pi:/);
+  expect(telegramLaunch?.continuation).toBeUndefined();
+  expect((await host.threadDetail("personal")).tasks).toHaveLength(2);
 });
 
 it("splits a long reply into ordered platform-sized chat messages", async () => {

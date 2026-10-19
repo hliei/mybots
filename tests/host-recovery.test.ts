@@ -49,7 +49,7 @@ function sessionDirectory(current: string, sessionId: string): string {
   return join(current, "data", "sessions", "personal", sessionId);
 }
 
-it("adopts a container the runtime still reports instead of starting another", async () => {
+it("adopts and stops a completed Run container without starting another", async () => {
   const current = await temporaryRoot();
   const first = new MailboxDriver();
   const host = await Host.start({ root: current, configuration, driver: first });
@@ -81,8 +81,8 @@ it("adopts a container the runtime still reports instead of starting another", a
   expect(second.adopted).toEqual([observation]);
   expect(second.launches).toHaveLength(0);
   expect(await recovered.inspect(accepted.sessionId)).toMatchObject({
-    session: { container_status: "running" },
-    claim: { container_ref: "orphaned-container" },
+    session: { container_status: "stopped" },
+    claim: { container_ref: null },
   });
 });
 
@@ -453,7 +453,7 @@ it.each([2, 3])(
     const upgraded = new DatabaseSync(file);
     expect(
       (upgraded.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-    ).toBe(7);
+    ).toBe(8);
     expect(
       upgraded
         .prepare(

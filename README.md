@@ -1,9 +1,10 @@
 # Mybots
 
-A personal assistant with one persistent host, isolated Agent session containers,
-and a shared Agent workspace. CLI, owner-only Telegram private chats and the local
-WebSocket interface use separate persistent conversations with the same Agent.
-Pi owns model/tool execution, Skills, conversation history and compaction.
+A personal assistant with one persistent Host, independent Bots and one direct
+Thread per Bot. Requested work has durable Task/Run/Attempt identities. Containers
+execute one Attempt per Bot at a time; different Bots can progress concurrently.
+Mybots selects bounded Thread originals for each new Run. Pi owns that Run's
+model/tool execution, Skills, recording, reopening and compaction.
 
 ## Install and start
 
@@ -97,12 +98,14 @@ shows an already paired owner. The setup wizard writes `TELEGRAM_BOT_TOKEN` to `
 
 Place shared instructions and saved materials under `groups/<folder>/`. Select
 Skills from `groups/<folder>/skills/<id>/SKILL.md` through `agent.resources.skills`.
-The repository's development Skills are not assistant resources. `/reset` starts
-a fresh Pi conversation for that destination, preserving shared working files
-and other conversations. Other slash input is ordinary Agent text.
+The repository's development Skills are not assistant resources. Chat background
+reset is deferred; `/reset` returns an explicit unavailable error. Other slash
+input is ordinary Agent text.
 
 Open `http://127.0.0.1:8787/` on the Host computer to create and select Bots and
-inspect session execution status. The Host prints the URL at startup. Copy the locally
+use the Bot's direct Thread. Send ordinary chat, choose New task for independent
+work, or select an active/queued Task as the input target. Inspect Task/Run identity,
+queue state, Attempts and final outcomes. The Host prints the URL at startup. Copy the locally
 generated `data/client-credential` into the pairing form once; the browser keeps
 an HttpOnly connection cookie for later visits. Each new Bot has its own role,
 approved model, tools and workspace; settings persist across Host restart. The
@@ -124,22 +127,28 @@ for protocol, owner-local access, delivery and recovery details.
 
 ## Persistence and reliability
 
-The host stores routing and lifecycle state in `data/host.db`. Each conversation
-has directional mailboxes and SDK-owned history under
-`data/sessions/<agent_group_id>/<session_id>/`; shared Agent files live separately
-under `groups/<folder>/`. Immutable host-owned runner context is mounted read-only.
-A saved `pi:` continuation explicitly selects the session's SDK history.
+The Host stores Bot configuration, Threads, original messages, Tasks, Runs, Attempts
+and input admissions in `data/host.db` (schema 8). Each Run has directional mailboxes
+and an independent SDK ledger under `data/sessions/<bot_id>/<run_id>/`; shared Bot
+files live under `groups/<folder>/`. Immutable runner context is mounted read-only.
+A saved `pi:` continuation selects only that Run's SDK history.
 
-Execution completion and delivery are separate. Follow-ups admitted to an active
-Pi query are acknowledged early; a hard crash can lose queued work or a final
-reply between completion and output persistence. Unfinished crash/stuck work has
-bounded retries and may repeat tool effects. Persisted replies have independent
-finite delivery attempts; a platform acceptance before acknowledgement can
-produce duplicates. See [completion and recovery](docs/adr/0008-mailbox-completion-and-recovery.md).
+Inputs retain one Task/Run association across response loss, retries and restart.
+SDK steering queues alone do not establish consumption; recording evidence is
+persisted after the SDK records the input. A new Attempt reopens that Run's ledger.
+Known tool results are retained. Unfinished crash/stuck recovery remains bounded
+and may repeat effects; acknowledged work without final evidence is uncertain.
+Final reply persistence and platform delivery remain separate, with finite delivery
+attempts and possible duplicate delivery. See [Host execution](docs/host-runtime.md#conversations-and-delivery).
 
-This setup starts fresh and has no import path for the retired embedded runtime's
-YAML configuration or conversation files. Historical decisions remain in
-[ADRs](docs/adr/0006-sdk-managed-agent-execution.md).
+This execution model requires fresh runtime records when updating an installation
+with the earlier multi-session model. Stop the installed Host and confirm its
+containers have stopped, then remove `data/host.db` and `data/sessions/` before
+starting the updated build and runner image. The Host refuses an older store
+containing sessions. Keep deployment configuration, `.env`, `data/client-credential`,
+gateway credentials and `groups/` outside this replacement. There is no backup,
+import or old-session continuation step. A fresh store bootstraps the configured
+Bot; new-model state and settings survive subsequent ordinary restarts.
 
 ## Verify
 

@@ -22,29 +22,22 @@
         </form>
       </section>
       <section id="status" hidden>
-        <div class="section-title"><h2>Bots and sessions</h2><button id="refresh" type="button">Refresh status</button></div>
+        <div class="section-title"><h2>Bots and Runs</h2><button id="refresh" type="button">Refresh status</button></div>
         <p id="updated"></p><div id="bots"></div>
         <article id="selected-bot" aria-label="Selected Bot" hidden></article>
         <section id="chat" aria-labelledby="chat-heading" hidden>
-          <h2 id="chat-heading">Chat sessions</h2>
-          <div id="chat-sessions" aria-label="Chat sessions"></div>
-          <form id="session-form">
-            <label for="session-name">Session name</label>
-            <input id="session-name" required maxlength="120" autocomplete="off">
-            <button type="submit">Create session</button>
-          </form>
-          <h3 id="selected-chat" hidden></h3>
-          <form id="session-name-form" hidden>
-            <label for="rename-session">Rename session</label>
-            <input id="rename-session" required maxlength="120" autocomplete="off">
-            <button type="submit">Save session name</button>
-          </form>
-          <div id="chat-works" aria-label="Chat work"></div>
-          <form id="message-form" hidden>
+          <h2 id="chat-heading">Direct Thread</h2>
+          <h3 id="selected-chat"></h3>
+          <div id="thread-messages" aria-label="Conversation"></div>
+          <form id="message-form">
+            <label for="input-target">Input target</label>
+            <select id="input-target"><option value="">Thread — continue chat</option></select>
             <label for="message-text">Message</label>
             <textarea id="message-text" required maxlength="32000" rows="4"></textarea>
             <button type="submit">Send message</button>
+            <button id="new-task" type="submit">New task</button>
           </form>
+          <div id="chat-works" aria-label="Tasks and Runs"></div>
           <p id="chat-message" aria-live="polite"></p>
           <button id="retry-chat" type="button" hidden>Retry chat request</button>
         </section>

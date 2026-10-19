@@ -26,6 +26,5 @@ fieldset { border: 1px solid #d8e0d8; border-radius: 6px; padding: 16px; display
 button[aria-pressed="true"] { outline: 3px solid #9bcfb3; }
 #selected-bot p { white-space: pre-wrap; overflow-wrap: anywhere; }
 
-#chat-sessions { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
 #selected-chat { margin: 24px 0; overflow-wrap: anywhere; }
-#chat-works p { white-space: pre-wrap; overflow-wrap: anywhere; }
+#thread-messages p, #chat-works p { white-space: pre-wrap; overflow-wrap: anywhere; }

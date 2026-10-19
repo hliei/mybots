@@ -18,6 +18,11 @@ export async function provisionSession(input: {
   instructions?: string;
   resources?: AgentResources;
   web?: WebConfiguration;
+  runContext?: {
+    references: { id: string; role: string; content: string }[];
+    sourceMessageId: string;
+    backgroundBoundary: number;
+  };
 }): Promise<SessionMaterial> {
   if (![input.key.agentGroupId, input.key.sessionId, input.folder].every(legalName))
     throw new Error("Invalid Agent/session path identity");
@@ -71,6 +76,7 @@ export async function provisionSession(input: {
     instructions: input.instructions,
     resources,
     web,
+    runContext: input.runContext,
   })}\n`;
   await writeFile(contextFile, context, { mode: 0o444, flag: "wx" }).catch(async (error) => {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
