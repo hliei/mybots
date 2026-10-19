@@ -9,6 +9,7 @@ const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 
 for (const [command, args, usage] of [
   [process.execPath, ["packages/host/dist/cli/client.js", "--help"], "Usage: mbt"],
+  [process.execPath, ["packages/host/dist/cli/client.js", "start", "--help"], "mbt start"],
   ["npm", ["start", "--", "--help"], "Usage: npm start"],
 ]) {
   const result = spawnSync(command, args, {

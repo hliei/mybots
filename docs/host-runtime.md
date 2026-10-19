@@ -26,9 +26,23 @@ service. Missing `host.json` fails and tells the operator to run setup. Invalid
 configuration fails before opening the host.
 
 `npm link --workspaces=false` exposes `mbt` from the root package's `bin/mbt`
-launcher. It resolves the linked checkout and invokes the same CLI source with
-Node.js; no build is needed for the client. Run `mbt` from the install root, or
-pass `--root`. The launcher never starts the host automatically.
+launcher. It resolves the linked checkout and invokes the CLI source using
+`.tools/node/bin/node` when installed, otherwise Node on `PATH`. Run `mbt start`
+from any directory to open that installation's Web UI. It authenticates a local
+status read before opening the browser; when needed it starts the installed
+launchd/systemd job or WSL start script and waits up to thirty seconds for readiness.
+Existing running work is not restarted. It does not rebuild, regenerate settings,
+install dependencies or create model input. First browser pairing remains required.
+
+Use `mbt start --root PATH` for another installation, or `npm run mbt -- start`
+without a global link. Startup requires a configured fixed loopback Web port and
+an installed service; errors explain missing setup or identify the Host error log.
+If no browser can open, the ready Host's URL remains available in terminal output.
+An installation using `MYBOTS_INSTALL_ID` keeps that same override for startup.
+
+`mbt` without a subcommand remains terminal chat and connects to an already running
+Host; its default root is the caller's directory. Use `--root` from elsewhere.
+Neither path opens an independent Agent execution runtime.
 
 `owners` lists the single owner's namespaced platform identities; the local
 example uses `["cli:local"]`. Exactly one identity must be a `cli:` identity for

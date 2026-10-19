@@ -99,7 +99,7 @@ function waitFor(messages, predicate) {
   });
 }
 async function chat(text) {
-  const child = spawn(process.execPath, ["bin/mbt", "--root", root], {
+  const child = spawn(join(projectRoot, "bin/mbt"), ["--root", root], {
     cwd: projectRoot,
     stdio: "pipe",
   });

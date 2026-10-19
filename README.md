@@ -53,19 +53,30 @@ For the compiled host started by hand, `npm start` uses the existing build.
 `npm run mbt` always runs the CLI TypeScript source
 with Node.js, including when the host runs from its build.
 
-To expose the same CLI as a shell command, link this installed checkout:
+To expose the daily startup and terminal commands, link this installed checkout once:
 
 ```sh
 npm link --workspaces=false
-mbt
+mbt start
 ```
 
 `npm link --workspaces=false` is optional. The service step does not install `mbt` onto `PATH`.
 
 Ensure npm's global bin directory is on `PATH`. The executable launcher resolves
-its real location through npm symlinks and preserves the caller's working
-directory: `mbt` defaults `--root` to that directory. It connects to the existing
-host and never starts a host or Agent runtime.
+its real location through npm symlinks and uses the installation's `.tools/node`
+when available, otherwise Node on `PATH`. `mbt start` works from any directory:
+it opens the configured local Web UI, starting the installed background service
+and waiting for its authenticated API when needed. Repeated starts reuse the
+running Host without restarting work. The command prints the URL if a browser
+cannot open. Docker and the configured gateway must be running; missing setup or
+startup failure is reported with the next step or log path.
+
+`npm run mbt -- start` runs the same startup command without a global link.
+`mbt` without a subcommand keeps interactive terminal chat, with `--root`
+defaulting to the caller's current directory. Both modes accept `--root PATH`;
+`mbt start` defaults to the linked installation. Neither mode starts an independent
+Agent execution runtime. `mbt start` does not rebuild or replace an installation;
+use the setup steps after updating code.
 Missing runtime, image, gateway or mount prerequisites fail execution explicitly.
 
 ## Configure the assistant
@@ -163,6 +174,7 @@ CI runs `npm run verify` and isolated Git workflow tests on Node.js 24.21.0.
 | --- | --- | --- |
 | Development host | `npm run dev` | `packages/host/src/index.ts` |
 | Built host | `npm start` | `packages/host/dist/index.js` |
+| Daily Web startup | `mbt start` or `npm run mbt -- start` | `packages/host/src/cli/start.ts` |
 | Interactive CLI | `npm run mbt -- [arguments]` | `packages/host/src/cli/client.ts` |
 | Linked CLI | `mbt [arguments]` | `bin/mbt` to the same source CLI |
 

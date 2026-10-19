@@ -77,7 +77,7 @@ between sessions, with sequential delivery inside each session. See
 | Script | Required behavior |
 | --- | --- |
 | `dev` | Run the persistent host from TypeScript source. |
-| `mbt` | Run the interactive socket client from TypeScript source with Node.js. |
+| `mbt` | Run the source CLI through `bin/mbt`: interactive socket chat by default, or installed-service Web startup with `start`. |
 | `typecheck` | Check all four workspaces, root tests and configuration without emitting files. |
 | `check` | Check formatting, lint, and types without modifying files; do not run tests or build. |
 | `format` | Apply formatting fixes. |
@@ -92,7 +92,11 @@ without building or watching; restart manually after
 changes. `start` uses the existing host build without rebuilding. `mbt` runs the
 CLI source with Node.js native TypeScript support. The root package's executable
 `bin/mbt` exposes that same source client after `npm link --workspaces=false`,
-resolving npm symlinks while preserving the caller's current directory. Startup
+resolving npm symlinks while preserving the caller's current directory and preferring
+`.tools/node/bin/node`. `mbt start` uses the linked installation as its default root,
+starts its existing service without restarting a healthy Host, waits for an
+authenticated local API response, then opens the configured Web UI. Terminal chat
+keeps its caller-directory default. Startup
 smoke checks must exit without live credentials and cover executable entry points,
 not only imports.
 The offline startup checks also execute the compiled Pi provider against a local

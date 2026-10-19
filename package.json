@@ -22,7 +22,7 @@
     "prebuild": "node scripts/clean-build.mjs",
     "dev": "node --conditions=mybots-source packages/host/src/index.ts",
     "start": "node packages/host/dist/index.js",
-    "mbt": "node packages/host/src/cli/client.ts",
+    "mbt": "bin/mbt",
     "setup": "node setup/cli.ts",
     "setup:auto": "node setup/cli.ts",
     "test:browser": "npm run build && playwright test"
