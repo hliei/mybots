@@ -272,12 +272,21 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     const heading = document.createElement("h2");
     heading.textContent = active.name;
     selected.append(heading);
-    for (const text of [
+    const lines = [
       `Bot ID: ${active.id}`,
       `Workspace: ${active.workspace}`,
-      `Role: ${active.instructions}`,
-      `Model: ${active.model.provider}/${active.model.id}`,
-      `Tools: ${active.tools.join(", ") || "None"}`,
+      `Saved role: ${active.instructions}`,
+      `Saved model: ${active.model.provider}/${active.model.id}`,
+      `Saved tools: ${active.tools.join(", ") || "None"}`,
+    ];
+    if (active.savedVersion !== active.effectiveVersion)
+      lines.push(
+        `Effective role: ${active.effective.instructions}`,
+        `Effective model: ${active.effective.model.provider}/${active.effective.model.id}`,
+        `Effective tools: ${active.effective.tools.join(", ") || "None"}`,
+      );
+    for (const text of [
+      ...lines,
       `Saved configuration: ${active.savedVersion}`,
       `Effective configuration: ${active.effectiveVersion}`,
     ]) {
@@ -289,7 +298,7 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     settingsVersions.textContent =
       active.savedVersion === active.effectiveVersion
         ? `Saved and effective configuration ${active.savedVersion}.`
-        : `Saved configuration ${active.savedVersion}. Effective configuration ${active.effectiveVersion}: ${active.effective.instructions} The current Attempt finishes under the effective configuration.`;
+        : `Saved configuration ${active.savedVersion}. Effective configuration ${active.effectiveVersion}. The current Attempt finishes under the effective role, model, and tools.`;
     const identity = `${active.id}:${active.savedVersion}`;
     const editing = settingsFields.disabled || settingsFields.matches(":focus-within");
     if (!editing && (identity !== settingsIdentity || pendingSettings?.botId === active.id)) {
