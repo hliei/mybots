@@ -332,15 +332,12 @@ export class ThreadStore {
         .run(
           newRunId,
           run.task_id,
-          run.background_boundary,
+          thread.background_boundary,
           copied[0]?.messageId,
           now,
           now,
           run.id,
         );
-      this.db
-        .prepare("UPDATE runs SET selected_message_ids = ? WHERE id = ?")
-        .run(run.selected_message_ids, newRunId);
       for (const input of copied) {
         this.db
           .prepare("INSERT INTO run_inputs VALUES (?, ?, ?, ?, NULL, ?, NULL)")
@@ -660,7 +657,12 @@ export class ThreadStore {
       .get(run.source_message_id, thread.id)?.seq as number;
     return history(
       this.db,
-      { threadId: thread.id, backgroundBoundary: run.background_boundary, searchBeforeSeq: seq },
+      {
+        threadId: thread.id,
+        backgroundBoundary: run.background_boundary,
+        searchBeforeSeq: seq,
+        selectedMessageIds: JSON.parse(run.selected_message_ids) as string[],
+      },
       input,
     );
   }

@@ -150,6 +150,16 @@ it("captures a later chat background boundary without rewriting queued or active
   expect(restored.thread.backgroundBoundary).toBe(captured.backgroundBoundary);
   expect(runByText(restored, "Before reset").backgroundBoundary).toBe(0);
   expect(runByText(restored, "After reset").backgroundBoundary).toBe(captured.backgroundBoundary);
+  const resumed = await (
+    await post(`${path}/tasks`, { requestId: "resumed", text: "After restart" })
+  ).json();
+  const resumedDetail = await get(path);
+  const resumedRun = runByText(resumedDetail, "After restart");
+  expect(resumedRun).toMatchObject({
+    id: resumed.runId,
+    backgroundBoundary: captured.backgroundBoundary,
+  });
+  expect(JSON.stringify(resumedRun.references)).not.toContain('"text":"Before reset"');
   expect(
     (await fetch(`${base}${path}/history?query=${encodeURIComponent("Before reset")}`)).status,
   ).toBe(401);
@@ -314,10 +324,18 @@ it("keeps old and new Run history tools on the boundary captured at admission", 
       selectedTool = JSON.stringify(tools.at(-1)?.content);
       return { text: "Selected done" };
     }
+    if (latest.includes("restart lookup")) {
+      if (!tools.length) {
+        freshPrompt = background;
+        return search();
+      }
+      freshTool = JSON.stringify(tools.at(-1)?.content);
+      return { text: "Restart done" };
+    }
     return { text: "Noted" };
   });
   try {
-    await start(
+    const configuration = await start(
       piRunDriver(new PiProvider({ modelRuntime: service.runtime, model: service.model })),
     );
     const path = "/api/bots/personal/thread";
@@ -366,7 +384,7 @@ it("keeps old and new Run history tools on the boundary captured at admission", 
     expect(freshPrompt).not.toContain("alpha-token-old");
     expect(freshTool).not.toContain(old.messageId);
     expect(selectedPrompt).toContain("alpha-token-old");
-    expect(selectedTool).not.toContain(old.messageId);
+    expect(selectedTool).toContain(old.messageId);
     const detail = await get(path);
     expect(runByText(detail, "active lookup")).toMatchObject({
       id: active.runId,
@@ -375,6 +393,23 @@ it("keeps old and new Run history tools on the boundary captured at admission", 
     expect(runByText(detail, "fresh lookup").backgroundBoundary).toBe(reset.backgroundBoundary);
     expect(runByText(detail, "selected lookup").backgroundBoundary).toBe(reset.backgroundBoundary);
     expect(fresh.runId).not.toBe(selected.runId);
+    await channel.close();
+    await host.stop();
+    host = await Host.start({
+      root,
+      configuration,
+      driver: piRunDriver(new PiProvider({ modelRuntime: service.runtime, model: service.model })),
+    });
+    await listen(configuration);
+    freshPrompt = "";
+    freshTool = "";
+    await post(`${path}/tasks`, { requestId: "restarted", text: "restart lookup" });
+    await vi.waitFor(
+      async () => expect(runByText(await get(path), "restart lookup").state).toBe("succeeded"),
+      { timeout: 20000 },
+    );
+    expect(freshPrompt).not.toContain("alpha-token-old");
+    expect(freshTool).not.toContain(old.messageId);
   } finally {
     release.resolve();
     await service.close();
