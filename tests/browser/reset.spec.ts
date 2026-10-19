@@ -82,6 +82,19 @@ test("reset chat background while a Run continues, then select an earlier messag
     await expect(page.locator("#selected-chat")).toContainText("Chat background boundary:");
     await expect(page.locator("#thread-messages")).toContainText("Hold chat");
     await expect(page.locator("#chat-works")).toContainText("Execution: active");
+    await page.getByLabel("Bot name").fill("Writer");
+    await page.getByLabel("Role instructions").fill("Write reports.");
+    await page.getByLabel("Model", { exact: true }).selectOption("deepseek/deepseek-chat");
+    await page.getByRole("button", { name: "Create Bot", exact: true }).click();
+    await expect(page.locator("#selected-bot")).toContainText("Writer");
+    await page.getByRole("button", { name: "Select Personal", exact: true }).click();
+    await page.getByRole("checkbox", { name: "Use in next Run background: Hold chat" }).check();
+    await page.route("**/api/bots/*/thread", (route) => route.abort());
+    await page.getByRole("button", { name: "Select Writer", exact: true }).click();
+    await page.getByLabel("Message", { exact: true }).fill("Independent writing");
+    const admission = page.waitForResponse((response) => response.url().endsWith("/thread/tasks"));
+    await page.getByRole("button", { name: "New task", exact: true }).click();
+    expect((await admission).status()).toBe(202);
     expect(errors).toEqual([]);
   } finally {
     await stop();

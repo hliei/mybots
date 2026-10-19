@@ -175,6 +175,7 @@ function controls(): void {
 export async function showChat(selectedBotId: string | undefined): Promise<void> {
   window.clearTimeout(refreshTimer);
   if (botId !== selectedBotId) {
+    clearBackgroundSelection();
     botId = selectedBotId;
     text.value = "";
     target.replaceChildren();
