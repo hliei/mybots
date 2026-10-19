@@ -105,6 +105,9 @@ it("rejects invalid credential, Host and Origin on HTTP and the existing live-ev
     for (const [path, method] of [
       ["/api/status", "GET"],
       ["/api/pair", "POST"],
+      ["/api/bots", "POST"],
+      ["/api/bots", "GET"],
+      ["/api/bot-options", "GET"],
       ["/ws", "GET"],
     ]) {
       const status = await new Promise<number>((resolve, reject) => {

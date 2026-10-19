@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Mybots · Local status</title>
+    <title>Mybots · Bots</title>
     <link rel="stylesheet" href="/style.css">
     <script type="module" src="/main.js"></script>
   </head>
   <body>
     <main>
       <header><p class="eyebrow">MYBOTS / LOCAL HOST</p><h1>Your Bots, at a glance.</h1>
-        <p>Inspect the Bots and sessions on this computer.</p></header>
+        <p>Create and select independent Bots on this computer.</p></header>
       <p id="connection" role="status">Connecting to Host…</p>
       <section id="pairing" hidden>
         <h2>Connect this browser</h2>
@@ -24,7 +24,24 @@
       <section id="status" hidden>
         <div class="section-title"><h2>Bots and sessions</h2><button id="refresh" type="button">Refresh status</button></div>
         <p id="updated"></p><div id="bots"></div>
-        <p class="note">This view is read-only. Container state and mailbox acknowledgements describe execution progress; they do not establish a successful work outcome.</p>
+        <article id="selected-bot" aria-label="Selected Bot" hidden></article>
+        <section aria-labelledby="create-heading">
+          <h2 id="create-heading">Create a Bot</h2>
+          <p>Give this Bot its own role and working materials. Settings are fixed at creation in this version.</p>
+          <form id="create-form">
+            <fieldset id="create-fields">
+              <label for="bot-name">Bot name</label>
+              <input id="bot-name" required maxlength="120" autocomplete="off">
+              <label for="instructions">Role instructions</label>
+              <textarea id="instructions" required maxlength="32000" rows="4"></textarea>
+              <label for="model">Model</label><select id="model" required></select>
+              <fieldset id="tools"><legend>Tools</legend></fieldset>
+            </fieldset>
+            <button id="create-button" type="submit">Create Bot</button>
+          </form>
+          <p id="create-message" aria-live="polite"></p>
+        </section>
+        <p class="note">Container state and mailbox acknowledgements describe execution progress; they do not establish a successful work outcome.</p>
       </section>
       <footer>The Host must be running on this computer. A phone cannot reach this desktop’s localhost.</footer>
     </main>

@@ -2,7 +2,8 @@
 
 The git checkout is the install root. `bash mybots.sh` writes `.env` and generates
 `host.json` from [the CLI/WebSocket example](../examples/host/host.json). Do not
-hand-edit the model, gateway, container, or token fields. The host reads `.env`
+hand-edit generated model, gateway, container, or token fields. Installation-approved
+model choices may be maintained separately in `host.json` as described below. The host reads `.env`
 on every start and those values override the same fields in `host.json`. A
 missing `host.json` fails startup and tells the operator to run setup.
 
@@ -67,8 +68,8 @@ an HTTP/HTTPS fallback, and loopback addresses always bypass the outbound proxy.
 They are not read from `.env` and are not written back. `MYBOTS_SKIP` names wizard
 steps to skip. `MYBOTS_INSTALL_ID` overrides the service slug.
 
-`.env` changes apply after the service restarts. Restart reloads host process
-settings and future session provisioning. An existing session's immutable context
+`.env` changes apply after the service restarts. Restart reloads installation
+settings; existing Bot settings remain authoritative in `data/host.db`. An existing session's immutable context
 stays until the explicit replacement path.
 
 ## Identity, model and resources
@@ -76,7 +77,7 @@ stays until the explicit replacement path.
 | Field | Meaning |
 | --- | --- |
 | `owners` | The owner's namespaced platform identities; exactly one `cli:` identity, plus `telegram:<user-id>` for a configured chat |
-| `agent.id`, `name`, `folder` | Persistent Agent identity and shared `groups/<folder>/` directory |
+| `agent.id`, `name`, `folder` | First-start Bot seed and shared `groups/<folder>/` directory; ignored for existing Bot settings |
 | `agent.model.provider`, `id` | Model backend and model ID; the execution harness is Pi |
 | `agent.model.baseUrl` | HTTPS endpoint without credentials, query or fragment |
 | `agent.model.contextWindow`, `maxTokens` | Positive token limits; context window must cover the output allowance |
@@ -85,6 +86,27 @@ stays until the explicit replacement path.
 | `agent.resources.tools` | Selected Pi built-ins and configured web tools; omitted selects `read`, `write`, `edit`, `bash`; empty disables all tools |
 | `agent.web.search` | Optional `{ "provider": "brave" \| "serpapi", "endpoint": "https://..." }` |
 | `agent.web.fetch` | Optional `true` to enable content fetching |
+
+The Host persists Bot names, roles, models and tools in `data/host.db`. The
+`agent` seed applies once, including its initial model and resources. Changing or
+re-running setup does not overwrite these managed settings at restart. Legacy
+CLI/WebSocket destinations remain attached to the bootstrap Bot; the browser
+can create and select additional Bots without changing those routes. Initial
+creation exposes no execution-time settings editor or Skill activation control.
+
+`approvedModels` is an optional installation-level array in `host.json`. Each
+entry has the same fields as `agent.model`; entries must have unique model IDs
+and use the same provider and endpoint as the installation model. Omission
+approves just `agent.model`. For example, an installation may approve both
+`deepseek-chat` and `deepseek-reasoner` with their configured token limits. These
+are approved choices, not a live provider availability check. Keep approval
+entries consistent with any `.env` provider/endpoint overrides. Re-running setup
+may regenerate `host.json`; retain installation additions when doing so.
+
+The client chooses only a `{ provider, id }` from that set. Credentials stay in
+the gateway, while endpoint/token limits stay in installation configuration and
+Host-owned runner context. Available tools include SDK built-ins and only web
+operations configured in `agent.web`. New Bots start with no enabled Skills.
 
 Selected web tool names (`web_search`, `fetch_content`) require their matching
 `agent.web` operation. Search endpoints are non-secret configuration; the gateway

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolveWebTools, validateAgentResources, validateWebConfiguration } from "@mybots/mailbox";
+import type { ModelConfiguration } from "../drivers/types.ts";
 import type { HostConfiguration } from "../host.ts";
 
 function object(value: unknown): Record<string, unknown> {
@@ -18,10 +19,8 @@ function name(value: unknown): string {
   return result;
 }
 
-export function validateHostConfiguration(value: unknown): HostConfiguration {
-  const source = object(value);
-  const agent = object(source.agent);
-  const model = object(agent.model);
+function modelConfiguration(value: unknown): ModelConfiguration {
+  const model = object(value);
   const endpoint = new URL(text(model.baseUrl));
   if (
     endpoint.protocol !== "https:" ||
@@ -38,6 +37,34 @@ export function validateHostConfiguration(value: unknown): HostConfiguration {
     (model.contextWindow as number) < (model.maxTokens as number)
   )
     throw new Error("Invalid model limits");
+  return {
+    provider: name(model.provider),
+    id: text(model.id),
+    baseUrl: endpoint.href,
+    contextWindow: model.contextWindow as number,
+    maxTokens: model.maxTokens as number,
+  };
+}
+
+export function validateHostConfiguration(value: unknown): HostConfiguration {
+  const source = object(value);
+  const agent = object(source.agent);
+  const model = modelConfiguration(agent.model);
+  let approvedModels: ModelConfiguration[] | undefined;
+  if (source.approvedModels !== undefined) {
+    if (!Array.isArray(source.approvedModels) || source.approvedModels.length === 0)
+      throw new Error("Configure at least one approved model");
+    approvedModels = source.approvedModels.map(modelConfiguration);
+    if (
+      approvedModels.some(
+        (candidate) => candidate.provider !== model.provider || candidate.baseUrl !== model.baseUrl,
+      ) ||
+      new Set(approvedModels.map((candidate) => candidate.id)).size !== approvedModels.length
+    )
+      throw new Error(
+        "Approved models must be unique and use the installation provider and endpoint",
+      );
+  }
   if (!Array.isArray(source.destinations) || source.destinations.length === 0)
     throw new Error("Configure at least one messaging destination");
   const destinations = source.destinations.map((value) => {
@@ -78,14 +105,9 @@ export function validateHostConfiguration(value: unknown): HostConfiguration {
       instructions: agent.instructions === undefined ? undefined : text(agent.instructions),
       resources,
       web,
-      model: {
-        provider: name(model.provider),
-        id: text(model.id),
-        baseUrl: endpoint.href,
-        contextWindow: model.contextWindow as number,
-        maxTokens: model.maxTokens as number,
-      },
+      model,
     },
+    ...(approvedModels ? { approvedModels } : {}),
     destinations,
   };
 }

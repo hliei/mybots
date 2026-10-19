@@ -11,6 +11,10 @@ const port = Number(process.argv[3]);
 const { configuration } = await loadHostSettings(
   new URL("../examples/host/host.json", import.meta.url),
 );
+configuration.approvedModels = [
+  configuration.agent.model,
+  { ...configuration.agent.model, id: "deepseek-reasoner" },
+];
 const driver = new MailboxDriver();
 const started = Promise.withResolvers();
 const release = Promise.withResolvers();
