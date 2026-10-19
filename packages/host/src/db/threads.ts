@@ -24,6 +24,7 @@ interface RunRow {
   prior_run_id: string | null;
   stop_error: string | null;
   held: number;
+  selected_message_ids: string;
 }
 interface RunInput {
   rowid: number;
@@ -100,12 +101,20 @@ export class ThreadStore {
     }
   }
   send(
-    input: { requestId: string; botId: string; text: string; newTask: boolean; taskId?: string },
+    input: {
+      requestId: string;
+      botId: string;
+      text: string;
+      newTask: boolean;
+      taskId?: string;
+      selectedMessageIds?: string[];
+    },
     now: string,
     destinationId = "local-client",
   ) {
     return this.admit(input.requestId, { ...input, destinationId }, () => {
       const thread = this.thread(input.botId);
+      const selected = input.selectedMessageIds ?? [];
       let run: RunRow | undefined;
       if (input.taskId) {
         run = this.db
@@ -122,7 +131,19 @@ export class ThreadStore {
           .get(thread.id) as unknown as RunRow | undefined;
       }
       const messageId = randomUUID();
+      if (run && selected.length)
+        throw new ChatRequestError(
+          "Older messages can be selected only when starting a conversational Run.",
+          409,
+        );
       if (!run) {
+        for (const id of selected) {
+          const found = this.db
+            .prepare("SELECT id FROM thread_messages WHERE id = ? AND thread_id = ?")
+            .get(id, thread.id);
+          if (!found)
+            throw new ChatRequestError("Selected message was not found on this Thread.", 404);
+        }
         const taskId = randomUUID();
         const runId = randomUUID();
         this.db.prepare("INSERT INTO tasks VALUES (?, ?, 'chat', ?)").run(taskId, thread.id, now);
@@ -139,6 +160,9 @@ export class ThreadStore {
  id, task_id, state, background_boundary, source_message_id, context, outcome, created_at, updated_at
 ) VALUES (?, ?, 'queued', ?, ?, NULL, NULL, ?, ?)`)
           .run(runId, taskId, thread.background_boundary, messageId, now, now);
+        this.db
+          .prepare("UPDATE runs SET selected_message_ids = ? WHERE id = ?")
+          .run(JSON.stringify(selected), runId);
         run = this.run(runId);
       }
       this.db
@@ -308,12 +332,15 @@ export class ThreadStore {
         .run(
           newRunId,
           run.task_id,
-          thread.background_boundary,
+          run.background_boundary,
           copied[0]?.messageId,
           now,
           now,
           run.id,
         );
+      this.db
+        .prepare("UPDATE runs SET selected_message_ids = ? WHERE id = ?")
+        .run(run.selected_message_ids, newRunId);
       for (const input of copied) {
         this.db
           .prepare("INSERT INTO run_inputs VALUES (?, ?, ?, ?, NULL, ?, NULL)")
@@ -386,14 +413,26 @@ export class ThreadStore {
     const sourceSeq = this.db
       .prepare("SELECT seq FROM thread_messages WHERE id = ?")
       .get(run.source_message_id)?.seq as number;
-    const references = (
-      this.db
-        .prepare(`SELECT id, seq, role, content, run_id, created_at FROM thread_messages
+    const selectedIds = JSON.parse(run.selected_message_ids) as string[];
+    const selected = selectedIds.length
+      ? (this.db
+          .prepare(`SELECT id, seq, role, content, run_id, created_at FROM thread_messages
+   WHERE thread_id = ? AND seq < ? AND id IN (${selectedIds.map(() => "?").join(", ")})
+   ORDER BY seq`)
+          .all(thread, sourceSeq, ...selectedIds) as unknown as Original[])
+      : [];
+    const references = [
+      ...selected,
+      ...(
+        this.db
+          .prepare(`SELECT id, seq, role, content, run_id, created_at FROM thread_messages
    WHERE thread_id = ? AND seq >= ? AND seq < ? AND run_id != ? ORDER BY seq DESC LIMIT 200`)
-        .all(thread, run.background_boundary, sourceSeq, id) as unknown as Original[]
-    )
-      .slice(0, 7)
-      .reverse();
+          .all(thread, run.background_boundary, sourceSeq, id) as unknown as Original[]
+      )
+        .filter((row) => !selectedIds.includes(row.id))
+        .slice(0, Math.max(0, 7 - selected.length))
+        .reverse(),
+    ];
     const context = {
       references,
       sourceMessageId: run.source_message_id,
@@ -595,6 +634,21 @@ export class ThreadStore {
     }
   }
 
+  /** Move the default background for later conversational Runs. Admitted Runs stay as captured. */
+  reset(botId: string, requestId: string) {
+    return this.admit(requestId, { operation: "reset", botId }, () => {
+      const thread = this.thread(botId);
+      const latest = this.db
+        .prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM thread_messages WHERE thread_id = ?")
+        .get(thread.id) as { seq: number };
+      const backgroundBoundary = Math.max(thread.background_boundary, latest.seq + 1);
+      this.db
+        .prepare("UPDATE threads SET background_boundary = ? WHERE id = ?")
+        .run(backgroundBoundary, thread.id);
+      return { botId, threadId: thread.id, backgroundBoundary };
+    });
+  }
+
   history(botId: string, input: unknown, runId?: string) {
     const thread = this.thread(botId);
     if (!runId) return history(this.db, { threadId: thread.id, backgroundBoundary: 0 }, input);
@@ -609,6 +663,19 @@ export class ThreadStore {
       { threadId: thread.id, backgroundBoundary: run.background_boundary, searchBeforeSeq: seq },
       input,
     );
+  }
+
+  private references(run: RunRow) {
+    if (!run.context) return [];
+    const context = JSON.parse(run.context) as {
+      references?: { id: string; role: string; content: string }[];
+    };
+    return (context.references ?? []).map((reference) => ({
+      id: reference.id,
+      role: reference.role,
+      text: preview(reference.content).text,
+      truncated: preview(reference.content).truncated,
+    }));
   }
 
   attempts(runId: string) {
@@ -650,6 +717,7 @@ export class ThreadStore {
             createdAt: row.createdAt,
           })),
           backgroundBoundary: run.background_boundary,
+          references: this.references(run),
           sourceMessageId: run.source_message_id,
           outcome: outcomePreview(run.outcome),
           inputs: this.inputs(run.id)

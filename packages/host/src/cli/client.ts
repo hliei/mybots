@@ -20,7 +20,7 @@ export async function runCli(args: string[]): Promise<number> {
         "Connect to the owner-local host at PATH/data/cli.sock (PATH defaults to the current directory).",
       );
       console.log(
-        "Enter messages; quit, exit, q, EOF or Ctrl+C disconnect the terminal. Agent work stays on the host. /reset starts a fresh conversation after current work.",
+        "Enter messages; quit, exit, q, EOF or Ctrl+C disconnect the terminal. Agent work stays on the host. /reset sets the chat background boundary for later conversational Runs and leaves existing Runs unchanged.",
       );
       console.log(
         "mbt start opens the local Web client, starting its installed service if needed. Its root defaults to this installation, from any directory.",

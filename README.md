@@ -98,13 +98,15 @@ shows an already paired owner. The setup wizard writes `TELEGRAM_BOT_TOKEN` to `
 
 Place shared instructions and saved materials under `groups/<folder>/`. Select
 Skills from `groups/<folder>/skills/<id>/SKILL.md` through `agent.resources.skills`.
-The repository's development Skills are not assistant resources. Chat background
-reset is deferred; `/reset` returns an explicit unavailable error. Other slash
-input is ordinary Agent text.
+The repository's development Skills are not assistant resources. Reset chat
+background from the Thread page or with `/reset`. That captures a boundary for
+later conversational Runs. Existing Runs, Thread history, workspace files and
+memory stay. Other slash input is ordinary Agent text.
 
 Open `http://127.0.0.1:8787/` on the Host computer to create and select Bots and
 use the Bot's direct Thread. Send ordinary chat, choose New task for independent
-work, or select an active/queued Task as the input target. Inspect Task/Run identity,
+work, or select an active/queued Task as the input target. Reset chat background
+while other Runs continue, and choose earlier messages for the next Run. Inspect Task/Run identity,
 queue state, Attempts and final outcomes. The Host prints the URL at startup. Copy the locally
 generated `data/client-credential` into the pairing form once; the browser keeps
 an HttpOnly connection cookie for later visits. Each new Bot has its own role,

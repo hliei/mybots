@@ -9,9 +9,8 @@ import type { SessionDriver } from "../packages/host/src/drivers/types.ts";
 import { Host, type HostConfiguration } from "../packages/host/src/host.ts";
 import { startPiService } from "./pi-fixture.ts";
 
-test("legacy SDK reset is retired rather than rewriting a live Run", async () => {
-  const root = await mkdtemp(join(tmpdir(), "mybots-reset-retired-"));
-  const service = await startPiService(() => ({ text: "Reply" }));
+test("owner reset captures a chat background boundary without starting a Run", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mybots-reset-boundary-"));
   const configuration: HostConfiguration = {
     owners: ["cli:local"],
     agent: {
@@ -28,23 +27,18 @@ test("legacy SDK reset is retired rather than rewriting a live Run", async () =>
     },
     destinations: [{ id: "terminal", channelType: "cli", platformId: "local", instance: "cli" }],
   };
-  const { piRunDriver } = await import("./pi-run-driver.ts");
-  const host = await Host.start({
-    root,
-    configuration,
-    driver: piRunDriver(new PiProvider({ modelRuntime: service.runtime, model: service.model })),
-  });
+  const { MailboxDriver } = await import("./host-fixture.ts");
+  const host = await Host.start({ root, configuration, driver: new MailboxDriver() });
   try {
     await expect(
       host.accept({ destinationId: "terminal", userId: "cli:local", text: "/reset" }),
-    ).rejects.toThrow("background reset is not available");
+    ).resolves.toMatchObject({ backgroundBoundary: 1 });
     await expect(
       host.accept({ destinationId: "terminal", userId: "cli:stranger", text: "/reset" }),
     ).rejects.toThrow("Owner");
     expect(host.sessions()).toEqual([]);
   } finally {
     await host.stop();
-    await service.close();
     await rm(root, { recursive: true, force: true });
   }
 });

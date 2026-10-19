@@ -75,7 +75,7 @@ the owner Skill panel to import and activate updates. `agent.resources.tools` se
 tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
 Selecting a web tool requires matching `agent.web` configuration. The execution
 harness is Pi; the model backend is specified separately by `model.provider` and
-`model.id`. The central store uses schema version 10 for host routing, Bot configuration,
+`model.id`. The central store uses schema version 11 for host routing, Bot configuration,
 Threads, original messages, Tasks, Runs, Attempts and stable input admissions.
 An older store containing sessions requires fresh runtime records; see the
 [replacement instructions](../README.md#persistence-and-reliability). The central store saves the model
@@ -244,9 +244,10 @@ subsequent replies, without guaranteed replay of disconnected output.
 
 Blank terminal lines are ignored. `quit`, `exit`, `q` and EOF disconnect with
 status 0; Ctrl+C disconnects with 130. Startup, host-disconnect and terminal
-failures return 1. `/reset` reports that chat background reset is unavailable;
-it cannot replace a live Run ledger. Prospective background reset is a later
-capability. Other slash input remains ordinary Agent text.
+failures return 1. `/reset` captures a chat background boundary for later
+conversational Runs and confirms that boundary on the terminal. It does not
+cancel existing Runs or replace their ledgers. Other slash input remains
+ordinary Agent text.
 
 ## Interrupted-execution recovery
 

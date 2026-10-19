@@ -1,4 +1,10 @@
-import { showHistory, showRunHistory } from "./history.ts";
+import {
+  clearBackgroundSelection,
+  selectedBackgroundIds,
+  setBackgroundBoundary,
+  showHistory,
+  showRunHistory,
+} from "./history.ts";
 
 interface Outcome {
   kind: string;
@@ -10,6 +16,8 @@ interface Run {
   state: string;
   held?: boolean;
   stopError?: string | null;
+  backgroundBoundary: number;
+  references: { id: string; role: string; text: string }[];
   outcome: Outcome | null;
   lateEvidence?: { text: string }[];
   inputs: {
@@ -32,17 +40,18 @@ interface Task {
   runs: Run[];
 }
 interface Detail {
-  thread: { id: string; botId: string };
+  thread: { id: string; botId: string; backgroundBoundary: number };
   tasks: Task[];
   messages: { id: string; runId: string; role: string; content: string }[];
 }
 interface Pending {
   botId: string;
   requestId: string;
-  operation: "message" | "new-task" | "task" | "stop" | "retry" | "close";
+  operation: "message" | "new-task" | "task" | "stop" | "retry" | "close" | "reset";
   text: string;
   taskId?: string;
   runId?: string;
+  selectedMessageIds?: string[];
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -58,6 +67,7 @@ function isDetail(value: unknown): value is Detail {
     record(value) &&
     record(value.thread) &&
     typeof value.thread.id === "string" &&
+    typeof value.thread.backgroundBoundary === "number" &&
     Array.isArray(value.messages) &&
     value.messages.every(
       (message: unknown) =>
@@ -78,6 +88,15 @@ function isDetail(value: unknown): value is Detail {
             record(run) &&
             typeof run.id === "string" &&
             typeof run.state === "string" &&
+            typeof run.backgroundBoundary === "number" &&
+            Array.isArray(run.references) &&
+            run.references.every(
+              (reference: unknown) =>
+                record(reference) &&
+                [reference.id, reference.role, reference.text].every(
+                  (item) => typeof item === "string",
+                ),
+            ) &&
             outcome(run.outcome) &&
             Array.isArray(run.inputs) &&
             run.inputs.every(
@@ -104,7 +123,12 @@ function isPending(value: unknown): value is Pending {
   return (
     record(value) &&
     [value.botId, value.requestId, value.text].every((item) => typeof item === "string") &&
-    ["message", "new-task", "task", "stop", "retry", "close"].includes(value.operation as string) &&
+    ["message", "new-task", "task", "stop", "retry", "close", "reset"].includes(
+      value.operation as string,
+    ) &&
+    (value.selectedMessageIds === undefined ||
+      (Array.isArray(value.selectedMessageIds) &&
+        value.selectedMessageIds.every((id: unknown) => typeof id === "string"))) &&
     (value.operation !== "task" || typeof value.taskId === "string") &&
     (!["stop", "retry", "close"].includes(value.operation as string) ||
       typeof value.runId === "string")
@@ -127,6 +151,7 @@ const form = element<HTMLFormElement>("message-form");
 const text = element<HTMLTextAreaElement>("message-text");
 const target = element<HTMLSelectElement>("input-target");
 const retry = element<HTMLButtonElement>("retry-chat");
+const resetBackground = element<HTMLButtonElement>("reset-background");
 const pendingKey = "mybots.pending-thread-input";
 let botId: string | undefined;
 let version = 0;
@@ -174,7 +199,8 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
     const detail: unknown = await response.json();
     if (!isDetail(detail)) throw new Error();
     if (current !== version) return;
-    selected.textContent = `Thread ID: ${detail.thread.id}`;
+    setBackgroundBoundary(detail.thread.backgroundBoundary);
+    selected.textContent = `Thread ID: ${detail.thread.id} · Chat background boundary: ${detail.thread.backgroundBoundary}`;
     const priorTarget = target.value;
     target.replaceChildren(
       Object.assign(document.createElement("option"), {
@@ -209,6 +235,10 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
           article.append(
             paragraph(`Run ID: ${run.id}`),
             paragraph(`Execution: ${run.state}`),
+            paragraph(`Captured background boundary: ${run.backgroundBoundary}`),
+            paragraph(
+              `Run background: ${run.references.length ? run.references.map((reference) => reference.text).join(" · ") : "none"}`,
+            ),
             paragraph(`Outcome: ${run.outcome?.kind ?? "unresolved"}`),
           );
           if (run.outcome)
@@ -322,6 +352,7 @@ async function submit(newTask = false): Promise<void> {
         text: text.value,
         operation: newTask ? "new-task" : target.value ? "task" : "message",
         ...(target.value && !newTask ? { taskId: target.value } : {}),
+        ...(selectedBackgroundIds().length ? { selectedMessageIds: selectedBackgroundIds() } : {}),
       };
       localStorage.setItem(pendingKey, JSON.stringify(draft));
       pending = draft;
@@ -333,18 +364,27 @@ async function submit(newTask = false): Promise<void> {
       admitted.operation === "stop" ||
       admitted.operation === "retry" ||
       admitted.operation === "close";
-    const path = runOperation
-      ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/${admitted.operation}`
-      : admitted.operation === "task"
-        ? `${prefix}/tasks/${encodeURIComponent(admitted.taskId as string)}/inputs`
-        : `${prefix}/thread/${admitted.operation === "new-task" ? "tasks" : "messages"}`;
+    const path =
+      admitted.operation === "reset"
+        ? `${prefix}/thread/reset`
+        : runOperation
+          ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/${admitted.operation}`
+          : admitted.operation === "task"
+            ? `${prefix}/tasks/${encodeURIComponent(admitted.taskId as string)}/inputs`
+            : `${prefix}/thread/${admitted.operation === "new-task" ? "tasks" : "messages"}`;
     const response = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(
-        runOperation
+        admitted.operation === "reset" || runOperation
           ? { requestId: admitted.requestId }
-          : { requestId: admitted.requestId, text: admitted.text },
+          : {
+              requestId: admitted.requestId,
+              text: admitted.text,
+              ...(admitted.selectedMessageIds
+                ? { selectedMessageIds: admitted.selectedMessageIds }
+                : {}),
+            },
       ),
     });
     const result: unknown = await response.json();
@@ -362,17 +402,24 @@ async function submit(newTask = false): Promise<void> {
     if (
       !record(result) ||
       result.requestId !== admitted.requestId ||
-      typeof result.taskId !== "string" ||
-      typeof result.runId !== "string" ||
-      (!runOperation && typeof result.messageId !== "string")
+      (admitted.operation === "reset"
+        ? typeof result.backgroundBoundary !== "number"
+        : typeof result.taskId !== "string" ||
+          typeof result.runId !== "string" ||
+          (!runOperation && typeof result.messageId !== "string"))
     )
       throw new Error();
     localStorage.removeItem(pendingKey);
     pending = undefined;
-    if (admitted.botId === botId && !runOperation) text.value = "";
-    notice.textContent = runOperation
-      ? `Recorded ${admitted.operation} for Run ${result.runId}. Refresh after the Run state changes.`
-      : `Admitted to Task ${result.taskId}, Run ${result.runId}. Await its durable outcome.`;
+    if (admitted.selectedMessageIds?.length) clearBackgroundSelection();
+    if (admitted.botId === botId && !runOperation && admitted.operation !== "reset")
+      text.value = "";
+    notice.textContent =
+      admitted.operation === "reset"
+        ? `Chat background boundary is ${result.backgroundBoundary}. Existing Runs keep their captured background.`
+        : runOperation
+          ? `Recorded ${admitted.operation} for Run ${result.runId}. Refresh after the Run state changes.`
+          : `Admitted to Task ${result.taskId}, Run ${result.runId}. Await its durable outcome.`;
     await showChat(botId);
   } catch {
     notice.textContent = pending
@@ -388,3 +435,9 @@ form.addEventListener("submit", (event) => {
   void submit((event.submitter as HTMLElement | null)?.id === "new-task");
 });
 retry.addEventListener("click", () => void submit());
+resetBackground.addEventListener("click", () => {
+  if (!botId || sending || pending) return;
+  pending = { botId, requestId: crypto.randomUUID(), operation: "reset", text: "" };
+  localStorage.setItem(pendingKey, JSON.stringify(pending));
+  void submit();
+});

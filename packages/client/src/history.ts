@@ -44,6 +44,23 @@ function button(label: string, action: () => void) {
   return b;
 }
 let botId: string | undefined;
+let boundary = 0;
+let boundaryChanged = false;
+const chosen = new Set<string>();
+export function setBackgroundBoundary(value: number): void {
+  if (boundary === value) return;
+  boundary = value;
+  boundaryChanged = true;
+  for (const id of chosen) chosen.delete(id);
+}
+export function selectedBackgroundIds(): string[] {
+  return [...chosen];
+}
+export function clearBackgroundSelection(): void {
+  if (!chosen.size) return;
+  chosen.clear();
+  boundaryChanged = true;
+}
 let params: Record<string, string> = {};
 let generation = 0;
 let revision = 0;
@@ -142,6 +159,18 @@ async function originals(next = params): Promise<void> {
           `Source: ${message.id} · ${message.createdAt} · offset ${message.textOffset}${message.truncated ? " · excerpt" : ""}`,
         ),
       );
+      if (message.seq < boundary) {
+        const label = document.createElement("label");
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = chosen.has(message.id);
+        box.addEventListener("change", () => {
+          if (box.checked) chosen.add(message.id);
+          else chosen.delete(message.id);
+        });
+        label.append(box, ` Use in next Run background: ${message.text}`);
+        article.append(label);
+      }
       article.append(button("Inspect Run evidence", () => void showRunHistory(message.runId)));
       if (message.nextTextOffset !== null)
         article.append(
@@ -316,7 +345,10 @@ export async function showHistory(
     }
   }
   renderLive();
-  if (!Object.keys(params).length || !node("thread-messages").children.length) await originals();
+  if (boundaryChanged || !Object.keys(params).length || !node("thread-messages").children.length) {
+    boundaryChanged = false;
+    await originals();
+  }
 }
 (node("history-search") as HTMLFormElement).addEventListener("submit", (event) => {
   event.preventDefault();
