@@ -1,23 +1,24 @@
 export const fairAdmissionSchema = `
 PRAGMA foreign_keys = OFF;
 BEGIN IMMEDIATE;
-CREATE TABLE runs_v11 (
+CREATE TABLE runs_v12 (
  id TEXT PRIMARY KEY REFERENCES sessions(id), task_id TEXT NOT NULL REFERENCES tasks(id),
  state TEXT NOT NULL CHECK (state IN ('queued', 'active', 'stopping', 'succeeded', 'failed', 'uncertain', 'closed', 'waiting')),
  background_boundary INTEGER NOT NULL, source_message_id TEXT NOT NULL,
  context TEXT, outcome TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
- prior_run_id TEXT, stop_error TEXT, held INTEGER NOT NULL DEFAULT 0, wait_reason TEXT
+ prior_run_id TEXT, stop_error TEXT, held INTEGER NOT NULL DEFAULT 0, wait_reason TEXT,
+ selected_message_ids TEXT NOT NULL DEFAULT '[]'
 );
-INSERT INTO runs_v11 (
+INSERT INTO runs_v12 (
  id, task_id, state, background_boundary, source_message_id, context, outcome, created_at, updated_at,
- prior_run_id, stop_error, held
+ prior_run_id, stop_error, held, selected_message_ids
 ) SELECT
  id, task_id, state, background_boundary, source_message_id, context, outcome, created_at, updated_at,
- prior_run_id, stop_error, held
+ prior_run_id, stop_error, held, selected_message_ids
 FROM runs;
 DROP INDEX unfinished_task_run;
 DROP TABLE runs;
-ALTER TABLE runs_v11 RENAME TO runs;
+ALTER TABLE runs_v12 RENAME TO runs;
 CREATE UNIQUE INDEX unfinished_task_run ON runs(task_id) WHERE state IN ('queued', 'active', 'stopping', 'uncertain', 'waiting');
 CREATE TABLE admission_scheduler (
  id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -64,7 +65,7 @@ CREATE TABLE admission_service (
 INSERT INTO admission_service (bot_id, served_seq)
 SELECT q.bot_id, q.seq FROM admission_queue q
 JOIN execution_reservations e ON e.run_id = q.run_id;
-PRAGMA user_version = 11;
+PRAGMA user_version = 12;
 COMMIT;
 PRAGMA foreign_keys = ON;
 `;

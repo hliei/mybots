@@ -624,3 +624,61 @@ it("releases the global slot when the driver fails to start", async () => {
     ).toBeGreaterThan(0),
   );
 });
+
+it("upgrades a reset-enabled store without losing selected originals or Run boundaries", async () => {
+  const configuration = await start(new MailboxDriver());
+  const path = "/api/bots/personal/thread";
+  const earlier = await (
+    await post(`${path}/messages`, { requestId: "earlier", text: "Earlier evidence" })
+  ).json();
+  await vi.waitFor(async () => expect((await get(path)).tasks[0].runs[0].state).toBe("succeeded"));
+  const reset = await (await post(`${path}/reset`, { requestId: "reset" })).json();
+  const selected = await (
+    await post(`${path}/tasks`, {
+      requestId: "selected",
+      text: "Use earlier evidence",
+      selectedMessageIds: [earlier.messageId],
+    })
+  ).json();
+  await vi.waitFor(async () => expect((await get(path)).tasks[1].runs[0].state).toBe("succeeded"));
+  await channel.close();
+  await host.stop();
+
+  // Recreate the reset-enabled schema before admission tables and durable waits existed.
+  const prior = new DatabaseSync(join(root, "data", "host.db"));
+  prior.exec(`
+    PRAGMA foreign_keys = OFF;
+    DROP TABLE execution_reservations;
+    DROP TABLE admission_service;
+    DROP TABLE admission_queue;
+    DROP TABLE admission_scheduler;
+    ALTER TABLE runs DROP COLUMN wait_reason;
+    PRAGMA user_version = 11;
+  `);
+  prior.close();
+
+  host = await Host.start({ root, configuration, driver: new MailboxDriver() });
+  await listen(configuration);
+  const restored = await get(path);
+  expect(restored.thread.backgroundBoundary).toBe(reset.backgroundBoundary);
+  expect(restored.tasks[0].runs[0].backgroundBoundary).toBe(0);
+  expect(restored.tasks[1].runs[0]).toMatchObject({
+    id: selected.runId,
+    backgroundBoundary: reset.backgroundBoundary,
+    references: [expect.objectContaining({ id: earlier.messageId, text: "Earlier evidence" })],
+  });
+  const upgraded = new DatabaseSync(join(root, "data", "host.db"));
+  try {
+    expect(upgraded.prepare("PRAGMA user_version").get()?.user_version).toBe(12);
+    expect(upgraded.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(
+      upgraded.prepare("SELECT selected_message_ids FROM runs WHERE id = ?").get(selected.runId),
+    ).toEqual({ selected_message_ids: JSON.stringify([earlier.messageId]) });
+  } finally {
+    upgraded.close();
+  }
+  expect(
+    (await post(`${path}/tasks`, { requestId: "after-upgrade", text: "Continue working" })).status,
+  ).toBe(202);
+  await vi.waitFor(async () => expect((await get(path)).tasks[2].runs[0].state).toBe("succeeded"));
+});

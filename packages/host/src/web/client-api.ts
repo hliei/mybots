@@ -131,13 +131,31 @@ export async function serveClient(
     }
     return;
   }
-  const threadRoute = /^\/api\/bots\/([^/]+)\/thread(?:\/(messages|tasks))?$/.exec(path);
+  const threadRoute = /^\/api\/bots\/([^/]+)\/thread(?:\/(messages|tasks|reset))?$/.exec(path);
   const taskRoute = /^\/api\/bots\/([^/]+)\/tasks\/([^/]+)\/inputs$/.exec(path);
   if (threadRoute || taskRoute) {
     try {
       let result: object;
       if (request.method === "GET" && threadRoute && !threadRoute[2]) {
         result = await host.threadDetail(threadRoute[1] as string);
+      } else if (request.method === "POST" && threadRoute?.[2] === "reset") {
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+          bytes += chunk.length;
+          if (bytes > 65536) {
+            request.resume();
+            throw new ChatRequestError("Chat request exceeds 64 KiB.", 413);
+          }
+          chunks.push(chunk);
+        }
+        let input: unknown;
+        try {
+          input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        } catch {
+          throw new ChatRequestError("Chat operations require valid JSON.");
+        }
+        result = await host.resetThread(threadRoute[1] as string, input);
       } else if (request.method === "POST" && (threadRoute?.[2] || taskRoute)) {
         const chunks: Buffer[] = [];
         let bytes = 0;

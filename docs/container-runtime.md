@@ -232,8 +232,9 @@ item, at most five items and three concurrent requests per call. Tool outcomes,
 including per-item errors, return to the model for continuation; cancellation
 stops active requests and awaited disposal releases their readers.
 
-The Host rejects legacy `/reset` controls. Future chat background reset must
-capture a new prospective Thread boundary without replacing existing Run ledgers.
+`/reset` and the Thread reset operation capture a new chat background boundary
+for later conversational Runs. Existing Run ledgers stay in place. Earlier
+messages enter a new Run only when the owner selects them.
 Automatic Run compaction and context restoration remain owned by Pi.
 
 ## Original-history mailbox operations

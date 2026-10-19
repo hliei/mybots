@@ -252,9 +252,10 @@ subsequent replies, without guaranteed replay of disconnected output.
 
 Blank terminal lines are ignored. `quit`, `exit`, `q` and EOF disconnect with
 status 0; Ctrl+C disconnects with 130. Startup, host-disconnect and terminal
-failures return 1. `/reset` reports that chat background reset is unavailable;
-it cannot replace a live Run ledger. Prospective background reset is a later
-capability. Other slash input remains ordinary Agent text.
+failures return 1. `/reset` captures a chat background boundary for later
+conversational Runs and confirms that boundary on the terminal. It does not
+cancel existing Runs or replace their ledgers. Other slash input remains
+ordinary Agent text.
 
 ## Interrupted-execution recovery
 
