@@ -26,8 +26,12 @@ task/delegation relationships, artifacts and incremental assistant text. Restore
 reconnect state through persistent snapshots and paginated history. Live text
 fragments are transient, not completion evidence or guaranteed replay.
 
-Stable correlated Mybots records form the client contract, while Pi retains
-original conversation/model-context ownership. Stable client request identity
+Stable correlated Mybots records form the client contract. Mybots owns the
+Thread and cross-Run selection; coding-agent SDK owns each Run-local execution
+ledger and compaction under
+[ADR 0024](0024-single-direct-thread-and-application-owned-context.md). Stable client request identity
 prevents a transport retry from accepting duplicate management/work operations;
 this does not establish exactly-once tool execution. Exact public record and
-event fields, and search/export beyond ordinary history, remain interface detail.
+event fields remain interface detail. Local original-history search/read follows
+[ADR 0027](0027-retrieval-based-thread-history.md); general export remains outside
+that retrieval contract.

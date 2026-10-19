@@ -8,6 +8,10 @@ The default single personal Agent across entry points is superseded by planned
 [independent Bots with owned sessions](0010-independent-bots-and-owned-sessions.md).
 The same-Agent workspace sharing and session execution rules below remain applicable.
 
+The planned replacement model supersedes same-Bot concurrent execution with
+serial Bot execution under [ADR 0026](0026-durable-runs-and-serial-bot-execution.md).
+Workspace sharing remains applicable.
+
 Personal entry points will use the same Agent identity and Agent workspace by
 default, with separate persistent Agent sessions per entry or chat. Returning
 to an entry continues its session rather than creating a new conversation on

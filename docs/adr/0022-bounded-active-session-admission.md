@@ -3,6 +3,13 @@
 Status: accepted
 Implementation: planned
 
+The planned replacement model uses one active Attempt per Bot instead of the
+two-per-Bot active-session default below; independent Bots may still execute
+concurrently within the four-global default. See
+[ADR 0026](0026-durable-runs-and-serial-bot-execution.md).
+That record also scopes the sixty-minute active budget to a Run across Attempts
+and makes admission non-preemptive while retaining durable fairness.
+
 Initially admit at most four actively executing Agent sessions across the Host
 and two per Bot, configurable in installation settings. Each session remains
 sequential. Persist excess runnable work in a fair queue, providing timely

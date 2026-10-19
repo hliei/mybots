@@ -3,27 +3,24 @@
 Status: accepted
 Implementation: planned
 
-Bot collaboration includes durable, tracked asynchronous delegation. A delegation
-has its own identity, source and target Bots, related sessions, observable work
-state, outcome, and associated results. Asynchronous messages carry the handoff
-and response; message delivery alone is not work completion.
+Bot collaboration is durable parent-owned delegation. Each request creates a
+target-Bot child Task and Run with selected inputs, source/target/parent and
+originating-Run links, state, outcome and results. Its SDK context is independent
+while it shares only its Bot's workspace and deliberate Memory. Explicit
+cross-Bot copies do not expose the source workspace or conversation.
 
-This lets the owner inspect whether requested work is still pending, completed,
-or failed without inferring its outcome from conversation text. It adds work
-coordination beyond reply routing, but does not require a general workflow-graph
-engine. Each delegation creates a dedicated session belonging to its target Bot,
-linked to the source session and retained with the delegation after completion.
-Unrelated delegations have separate conversation contexts while sharing the
-target Bot's workspace and deliberately persisted memory. This accepts more
-sessions to manage in exchange for independent work context and progress.
+The Host records necessary dependencies and ends the parent Attempt after
+complete tool results, releasing capacity and active budget. A correlated child
+outcome makes the same parent Run eligible for another Attempt using its ledger
+and effective settings; it does not create a new parent Task or restore a tool
+stack. Parent completion requires settled owned work and necessary decisions.
+This preserves useful asynchronous collaboration without a general workflow graph.
 
-When the originating work requires a delegation's result, the Host durably records
-that dependency and presents the work as waiting rather than completed. The
-current model execution ends; a correlated target result or failure makes later
-processing in the source session eligible to continue the originating work.
-Waiting need not retain a blocking tool invocation or container, and other
-sessions can progress. This is a Host-owned work continuation rather than
-restoration of a crashed SDK call stack.
+These lifetimes follow
+[ADR 0026](0026-durable-runs-and-serial-bot-execution.md).
+Owner additions can target actual child Tasks under
+[ADR 0024](0024-single-direct-thread-and-application-owned-context.md); they do
+not alter the Routine definition, target other work or settle parent dependencies.
 
 The owner controls directed source-to-target collaboration policy with deny,
 ask-each-time, and allow modes; the default is deny. Bots cannot grant themselves
@@ -48,7 +45,7 @@ approval of completed actions. Revocation does not wait for runner configuration
 cutover, but cancellation still requires confirmed termination and honest handling
 of uncertain outcomes.
 
-An originating work chain admits at most eight total delegations including
+An originating Run admits at most eight total delegations including
 descendants by default, beyond the separate simultaneous-execution limits.
 Denied operations and failed/cancelled children return a correlated outcome for
 the source to handle through a permitted alternative or an explicit inability to
@@ -58,8 +55,8 @@ an owner decision. Expired requests retain the owner-attention behavior of
 [ADR 0014](0014-controlled-host-action-approvals.md).
 
 Explicit source-work cancellation fences late child results from restarting that
-work while preserving them for inspection. Source-session input rules follow
-[ADR 0010](0010-independent-bots-and-owned-sessions.md). Work cancellation follows
+work while preserving them for inspection. Thread and explicit Task input rules follow
+[ADR 0024](0024-single-direct-thread-and-application-owned-context.md). Work cancellation follows
 [ADR 0017](0017-work-cancellation-task-pause-and-bot-disablement.md).
 Parent completion requires settled owned work/requests under
 [ADR 0023](0023-work-item-lifetimes-and-owned-dependencies.md).

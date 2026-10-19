@@ -3,6 +3,12 @@
 Status: accepted
 Implementation: planned
 
+The dedicated persistent conversation and automatic cross-occurrence context
+continuity below are superseded by
+[ADR 0025](0025-tasks-routines-and-independent-occurrence-context.md).
+Other scheduling behavior remains the baseline while Task/Run terminology and
+execution contracts are revised.
+
 Each scheduled task owns a dedicated persistent Agent session belonging to its
 Bot. Task runs reuse that session rather than joining the originating chat or
 creating a fresh session for every occurrence. Runs retain distinguishable state

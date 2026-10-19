@@ -5,6 +5,13 @@ Implementation: mailbox acknowledgement/output separation, FIFO follow-up
 acknowledgement, independent host delivery, persisted delivery-attempt accounting
 and bounded interrupted-execution recovery delivered
 
+For the planned replacement model, durable steering in
+[ADR 0024](0024-single-direct-thread-and-application-owned-context.md) and
+[ADR 0026](0026-durable-runs-and-serial-bot-execution.md) replaces reliance on an
+in-memory SDK queue as proof of durable input consumption. The delivered
+early-acknowledgement behavior below is the previous implementation baseline;
+other acknowledgement/output gaps and repeated-effect risks remain applicable.
+
 Processing acknowledgements and outbound messages remain separate container-owned
 mailbox records. Additional inputs pushed into an active SDK query are marked
 completed when queued, and the initial input batch is marked completed on the
