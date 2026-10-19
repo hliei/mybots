@@ -26,9 +26,39 @@ service. Missing `host.json` fails and tells the operator to run setup. Invalid
 configuration fails before opening the host.
 
 `npm link --workspaces=false` exposes `mbt` from the root package's `bin/mbt`
-launcher. It resolves the linked checkout and invokes the same CLI source with
-Node.js; no build is needed for the client. Run `mbt` from the install root, or
-pass `--root`. The launcher never starts the host automatically.
+launcher. It resolves the linked checkout and invokes the CLI source using
+`.tools/node/bin/node` when installed, otherwise Node on `PATH`. Run `mbt start`
+from any directory to open that installation's Web UI. It authenticates a local
+status read before opening the browser; when needed it starts the installed
+launchd/systemd job or WSL start script and waits up to thirty seconds for readiness.
+Existing running work is not restarted. It does not rebuild, regenerate settings,
+install dependencies or create model input. First browser pairing remains required.
+
+Use `mbt start --root PATH` for another installation, or `npm run mbt -- start`
+without a global link. Startup requires a configured fixed loopback Web port and
+an installed service; errors explain missing setup or identify the Host error log.
+If no browser can open, the ready Host's URL remains available in terminal output.
+An installation using `MYBOTS_INSTALL_ID` keeps that same override for startup.
+
+Run `mbt exit` to unload the installation's launchd job, stop its systemd unit,
+or signal the Host owned by its WSL start script. The command waits up to thirty
+seconds for Host shutdown and normal session-container cleanup. It retains saved
+Bot, chat and work data, and leaves the shared OneCLI gateway and its database
+running. An unresolved Host ownership record reports unconfirmed cleanup. Shutdown
+does not record a user cancellation or invent a work outcome; existing Host recovery
+handles unfinished work on the next start.
+
+Both commands serialize service control with a kernel-released SQLite transaction
+in `data/service-control.lock`, separate from `host.db`. No coordinator process
+remains after the command exits. This prevents overlapping starts from launching
+the installed WSL script twice and orders an exit after an in-progress start.
+Use `--root PATH` to stop another installation or `npm run mbt -- exit` without
+a global link. The same `MYBOTS_INSTALL_ID` override applies to exit.
+
+`mbt` without a subcommand remains terminal chat and connects to an already running
+Host; its default root is the caller's directory. Use `--root` from elsewhere.
+Typing `exit` within terminal chat only disconnects the terminal.
+Neither path opens an independent Agent execution runtime.
 
 `owners` lists the single owner's namespaced platform identities; the local
 example uses `["cli:local"]`. Exactly one identity must be a `cli:` identity for
