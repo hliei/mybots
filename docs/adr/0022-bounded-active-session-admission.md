@@ -1,7 +1,7 @@
 # Bounded active-session admission
 
 Status: accepted
-Implementation: planned
+Implementation: partial. One Attempt per Bot, the four-global default, and non-preemptive fair admission are implemented. Run budgets and idle-container reclamation remain planned.
 
 The planned replacement model uses one active Attempt per Bot instead of the
 two-per-Bot active-session default below; independent Bots may still execute

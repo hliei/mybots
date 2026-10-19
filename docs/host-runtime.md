@@ -75,7 +75,7 @@ the owner Skill panel to import and activate updates. `agent.resources.tools` se
 tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
 Selecting a web tool requires matching `agent.web` configuration. The execution
 harness is Pi; the model backend is specified separately by `model.provider` and
-`model.id`. The central store uses schema version 10 for host routing, Bot configuration,
+`model.id`. The central store uses schema version 11 for host routing, Bot configuration,
 Threads, original messages, Tasks, Runs, Attempts and stable input admissions.
 An older store containing sessions requires fresh runtime records; see the
 [replacement instructions](../README.md#persistence-and-reliability). The central store saves the model
@@ -183,9 +183,17 @@ response is lost or completion races admission.
 
 Internal executor sessions use Run IDs. Directional mailboxes and SDK state live
 at `data/sessions/<bot_id>/<run_id>/`; shared workspace files remain at
-`groups/<folder>/`. One actual executor per Bot holds its slot from startup until
-termination is confirmed. Same-Bot excess work persists in SQLite and other Bots
-can execute concurrently. Queue fairness and global limits remain later work.
+`groups/<folder>/`. One actual Attempt per Bot holds an execution slot from
+admission until that Attempt ends. Unconfirmed stop keeps the slot. A durable
+wait releases it only after every recorded tool call has a result and no tool is
+still current; an idle container is not execution. Excess runnable work stays in
+a durable queue. When both classes are waiting, interactive and background work
+alternate, and a Bot that has executed less recently is admitted first, so
+neither a class nor one Bot can starve the others. New and resumed work does not
+preempt an active Attempt. The Host runs at most four Attempts at once unless
+`admission.activeExecutionLimit` sets another integer from 1 to 64. Lowering the
+limit does not stop Attempts that already started. Other Bots progress inside
+the remaining slots.
 
 New Runs capture a background boundary and source-message identity. Mybots selects
 at most 200 recent original candidates before the source and up to seven reference

@@ -14,7 +14,16 @@ interface ThreadRow {
 interface RunRow {
   id: string;
   task_id: string;
-  state: "queued" | "active" | "stopping" | "succeeded" | "failed" | "uncertain" | "closed";
+  state:
+    | "queued"
+    | "active"
+    | "stopping"
+    | "succeeded"
+    | "failed"
+    | "uncertain"
+    | "closed"
+    | "waiting";
+  wait_reason: string | null;
   background_boundary: number;
   source_message_id: string;
   context: string | null;
@@ -139,6 +148,7 @@ export class ThreadStore {
  id, task_id, state, background_boundary, source_message_id, context, outcome, created_at, updated_at
 ) VALUES (?, ?, 'queued', ?, ?, NULL, NULL, ?, ?)`)
           .run(runId, taskId, thread.background_boundary, messageId, now, now);
+        this.enqueue(runId, input.botId, now);
         run = this.run(runId);
       }
       this.db
@@ -281,7 +291,7 @@ export class ThreadStore {
       const open = this.db
         .prepare(
           `SELECT id FROM runs WHERE task_id = ? AND id != ?
- AND state IN ('queued', 'active', 'stopping', 'uncertain')`,
+ AND state IN ('queued', 'active', 'stopping', 'uncertain', 'waiting')`,
         )
         .get(run.task_id, run.id);
       if (open) throw new ChatRequestError("Task already has an unfinished Run.", 409);
@@ -314,6 +324,7 @@ export class ThreadStore {
           now,
           run.id,
         );
+      this.enqueue(newRunId, botId, now);
       for (const input of copied) {
         this.db
           .prepare("INSERT INTO run_inputs VALUES (?, ?, ?, ?, NULL, ?, NULL)")
@@ -554,7 +565,12 @@ export class ThreadStore {
         )
           this.failInputs([input.message_id], now);
       }
-      if (run.state === "stopping" || run.state === "closed" || run.state === "uncertain") {
+      if (
+        run.state === "stopping" ||
+        run.state === "closed" ||
+        run.state === "uncertain" ||
+        run.state === "waiting"
+      ) {
         if (run.state === "uncertain")
           this.db.prepare("UPDATE runs SET held = 1 WHERE id = ? AND held = 0").run(id);
         this.db.exec("COMMIT");
@@ -611,6 +627,292 @@ export class ThreadStore {
     );
   }
 
+  /** Installation cap and durable queue. Chat work is interactive; every other origin is background. */
+  configureAdmission(limit: number, now: string): void {
+    this.db.prepare("UPDATE admission_scheduler SET active_limit = ? WHERE id = 1").run(limit);
+    this.restoreCapacity(now);
+  }
+
+  activeLimit(): number {
+    return (
+      this.db
+        .prepare("SELECT active_limit AS activeLimit FROM admission_scheduler WHERE id = 1")
+        .get() as {
+        activeLimit: number;
+      }
+    ).activeLimit;
+  }
+
+  holdsReservation(runId: string): boolean {
+    return Boolean(
+      this.db
+        .prepare("SELECT 1 AS present FROM execution_reservations WHERE run_id = ?")
+        .get(runId),
+    );
+  }
+
+  botIsReserved(botId: string): boolean {
+    return Boolean(
+      this.db
+        .prepare("SELECT 1 AS present FROM execution_reservations WHERE bot_id = ?")
+        .get(botId),
+    );
+  }
+
+  /**
+   * Reserve the next fair runnable Run when a global slot and its Bot are free.
+   * Interactive and background classes alternate; a Bot served less recently goes first.
+   */
+  reserveNext(limit: number, now: string): string | undefined {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const occupied = Number(
+        (this.db.prepare("SELECT COUNT(*) AS n FROM execution_reservations").get() as { n: number })
+          .n,
+      );
+      if (occupied >= limit) {
+        this.db.exec("COMMIT");
+        return;
+      }
+      const scheduler = this.db
+        .prepare("SELECT next_class AS nextClass FROM admission_scheduler WHERE id = 1")
+        .get() as { nextClass: "interactive" | "background" };
+      const eligible = this.db
+        .prepare(
+          `SELECT q.run_id AS runId, q.bot_id AS botId, q.admission_class AS admissionClass, q.seq AS seq,
+                  s.served_seq AS servedSeq
+           FROM admission_queue q
+           JOIN runs r ON r.id = q.run_id
+           LEFT JOIN admission_service s ON s.bot_id = q.bot_id
+           WHERE q.runnable = 1 AND r.state = 'queued'
+             AND NOT EXISTS (SELECT 1 FROM execution_reservations e WHERE e.bot_id = q.bot_id)
+           ORDER BY q.seq`,
+        )
+        .all() as {
+        runId: string;
+        botId: string;
+        admissionClass: "interactive" | "background";
+        seq: number;
+        servedSeq: number | null;
+      }[];
+      if (eligible.length === 0) {
+        this.db.exec("COMMIT");
+        return;
+      }
+      const preferred = eligible.filter((row) => row.admissionClass === scheduler.nextClass);
+      const pool = preferred.length > 0 ? preferred : eligible;
+      pool.sort((left, right) => {
+        const served = (left.servedSeq ?? -1) - (right.servedSeq ?? -1);
+        return served === 0 ? left.seq - right.seq : served;
+      });
+      const chosen = pool[0] as (typeof pool)[number];
+      this.db
+        .prepare(
+          "INSERT INTO execution_reservations (bot_id, run_id, reserved_at) VALUES (?, ?, ?)",
+        )
+        .run(chosen.botId, chosen.runId, now);
+      this.db
+        .prepare(
+          `INSERT INTO admission_service (bot_id, served_seq) VALUES (?, ?)
+           ON CONFLICT(bot_id) DO UPDATE SET served_seq = excluded.served_seq`,
+        )
+        .run(chosen.botId, chosen.seq);
+      if (chosen.admissionClass === scheduler.nextClass) {
+        this.db
+          .prepare("UPDATE admission_scheduler SET next_class = ? WHERE id = 1")
+          .run(chosen.admissionClass === "interactive" ? "background" : "interactive");
+      }
+      this.db.exec("COMMIT");
+      return chosen.runId;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  /** A queued Run that is waiting out recovery is not executing, so it leaves the active set. */
+  setRunnable(runId: string, ready: boolean): void {
+    this.db
+      .prepare("UPDATE admission_queue SET runnable = ? WHERE run_id = ?")
+      .run(ready ? 1 : 0, runId);
+  }
+
+  clearReservation(runId: string): void {
+    this.db.prepare("DELETE FROM execution_reservations WHERE run_id = ?").run(runId);
+  }
+
+  /** Drop a reserved slot after the driver fails to start, without treating the Run as finished. */
+  abandonAdmission(runId: string): void {
+    this.db.prepare("DELETE FROM execution_reservations WHERE run_id = ?").run(runId);
+    this.db.prepare("UPDATE admission_queue SET runnable = 0 WHERE run_id = ?").run(runId);
+  }
+
+  /** Release a slot once the Run is terminal or waiting. Active, stopping, and recovering Runs keep it. */
+  releaseAdmission(runId: string): void {
+    const run = this.run(runId);
+    if (run.state === "active" || run.state === "stopping" || run.state === "queued") return;
+    this.db.prepare("DELETE FROM execution_reservations WHERE run_id = ?").run(runId);
+    if (run.state === "waiting")
+      this.db.prepare("UPDATE admission_queue SET runnable = 0 WHERE run_id = ?").run(runId);
+    else this.db.prepare("DELETE FROM admission_queue WHERE run_id = ?").run(runId);
+  }
+
+  beginWait(runId: string, reason: string, now: string): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const run = this.run(runId);
+      if (run.state !== "active") {
+        this.db.exec("COMMIT");
+        return;
+      }
+      this.db
+        .prepare("UPDATE runs SET state = 'waiting', wait_reason = ?, updated_at = ? WHERE id = ?")
+        .run(reason.slice(0, 200), now, runId);
+      this.db
+        .prepare("UPDATE attempts SET ended_at = ? WHERE run_id = ? AND ended_at IS NULL")
+        .run(now, runId);
+      this.db.prepare("DELETE FROM execution_reservations WHERE run_id = ?").run(runId);
+      this.db.prepare("UPDATE admission_queue SET runnable = 0 WHERE run_id = ?").run(runId);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  /** Resumed work joins the tail of the queue and does not become executing by itself. */
+  resumeWait(runId: string, now: string): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const run = this.run(runId);
+      if (run.state !== "waiting") {
+        this.db.exec("COMMIT");
+        return;
+      }
+      const scheduler = this.db
+        .prepare("SELECT last_seq AS lastSeq FROM admission_scheduler WHERE id = 1")
+        .get() as { lastSeq: number };
+      const seq = scheduler.lastSeq + 1;
+      this.db.prepare("UPDATE admission_scheduler SET last_seq = ? WHERE id = 1").run(seq);
+      this.db
+        .prepare(
+          "UPDATE runs SET state = 'queued', wait_reason = NULL, updated_at = ? WHERE id = ? AND state = 'waiting'",
+        )
+        .run(now, runId);
+      const updated = this.db
+        .prepare(
+          "UPDATE admission_queue SET seq = ?, runnable = 1, enqueued_at = ? WHERE run_id = ?",
+        )
+        .run(seq, now, runId);
+      if (updated.changes === 0) this.enqueue(runId, this.session(runId).agent_group_id, now);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private enqueue(runId: string, botId: string, now: string): void {
+    if (this.db.prepare("SELECT 1 AS present FROM admission_queue WHERE run_id = ?").get(runId))
+      return;
+    const origin = this.db
+      .prepare(
+        "SELECT t.origin AS origin FROM tasks t JOIN runs r ON r.task_id = t.id WHERE r.id = ?",
+      )
+      .get(runId) as { origin: string };
+    const scheduler = this.db
+      .prepare("SELECT last_seq AS lastSeq FROM admission_scheduler WHERE id = 1")
+      .get() as { lastSeq: number };
+    const seq = scheduler.lastSeq + 1;
+    this.db.prepare("UPDATE admission_scheduler SET last_seq = ? WHERE id = 1").run(seq);
+    this.db
+      .prepare(
+        `INSERT INTO admission_queue (run_id, bot_id, admission_class, seq, runnable, enqueued_at)
+         VALUES (?, ?, ?, ?, 1, ?)`,
+      )
+      .run(runId, botId, origin.origin === "chat" ? "interactive" : "background", seq, now);
+  }
+
+  private restoreCapacity(now: string): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const rows = this.db
+        .prepare(
+          `SELECT r.id AS id, s.agent_group_id AS botId FROM runs r JOIN sessions s ON s.id = r.id
+           WHERE r.state IN ('queued', 'active', 'stopping')`,
+        )
+        .all() as { id: string; botId: string }[];
+      for (const row of rows) this.enqueue(row.id, row.botId, now);
+      const holding = this.db
+        .prepare(
+          `SELECT r.id AS id, s.agent_group_id AS botId FROM runs r JOIN sessions s ON s.id = r.id
+           WHERE r.state IN ('active', 'stopping') ORDER BY r.rowid`,
+        )
+        .all() as { id: string; botId: string }[];
+      for (const row of holding) {
+        if (
+          this.db
+            .prepare("SELECT 1 AS present FROM execution_reservations WHERE bot_id = ?")
+            .get(row.botId)
+        )
+          continue;
+        this.db
+          .prepare(
+            "INSERT INTO execution_reservations (bot_id, run_id, reserved_at) VALUES (?, ?, ?)",
+          )
+          .run(row.botId, row.id, now);
+        const seq = this.db
+          .prepare("SELECT seq FROM admission_queue WHERE run_id = ?")
+          .get(row.id) as { seq: number } | undefined;
+        if (seq)
+          this.db
+            .prepare(
+              "INSERT INTO admission_service (bot_id, served_seq) VALUES (?, ?) ON CONFLICT(bot_id) DO NOTHING",
+            )
+            .run(row.botId, seq.seq);
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private admissionSnapshot() {
+    const scheduler = this.db
+      .prepare("SELECT active_limit AS activeLimit FROM admission_scheduler WHERE id = 1")
+      .get() as { activeLimit: number };
+    const activeCount = Number(
+      (this.db.prepare("SELECT COUNT(*) AS n FROM execution_reservations").get() as { n: number })
+        .n,
+    );
+    const rows = this.db
+      .prepare(
+        `SELECT q.run_id AS runId, q.admission_class AS admissionClass, q.runnable AS runnable, r.state AS state
+         FROM admission_queue q JOIN runs r ON r.id = q.run_id ORDER BY q.seq`,
+      )
+      .all() as {
+      runId: string;
+      admissionClass: "interactive" | "background";
+      runnable: number;
+      state: string;
+    }[];
+    let position = 0;
+    const placement = new Map<
+      string,
+      { admissionClass: "interactive" | "background"; queuePosition: number | null }
+    >();
+    for (const row of rows) {
+      const queued = row.runnable === 1 && row.state === "queued";
+      if (queued) position += 1;
+      placement.set(row.runId, {
+        admissionClass: row.admissionClass,
+        queuePosition: queued ? position : null,
+      });
+    }
+    return { activeLimit: scheduler.activeLimit, activeCount, placement };
+  }
+
   attempts(runId: string) {
     return this.db
       .prepare(
@@ -621,6 +923,7 @@ export class ThreadStore {
 
   detail(botId: string) {
     const thread = this.thread(botId);
+    const admission = this.admissionSnapshot();
     const tasks = this.db
       .prepare("SELECT * FROM tasks WHERE thread_id = ? ORDER BY rowid")
       .all(thread.id)
@@ -663,9 +966,13 @@ export class ThreadStore {
               outcome: outcomePreview(input.outcome),
             })),
           attempts: this.attempts(run.id).slice(0, 5),
+          admissionClass: admission.placement.get(run.id)?.admissionClass ?? null,
+          queuePosition: admission.placement.get(run.id)?.queuePosition ?? null,
+          waitReason: run.wait_reason,
         })),
       }));
     return {
+      admission: { activeLimit: admission.activeLimit, activeCount: admission.activeCount },
       thread: {
         id: thread.id,
         botId,

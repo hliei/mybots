@@ -37,6 +37,19 @@ import { LocalSkills } from "./skills.ts";
 const MAX_DELIVERY_ATTEMPTS = 3;
 
 /** Bounded, credential-free text persisted for an in-flight delivery failure. */
+/** A wait is complete when no tool is current and every tool call has its result. */
+function toolResultsComplete(records: ExecutionRecord[], currentTool: string | null): boolean {
+  if (currentTool) return false;
+  const open = new Set<string>();
+  for (const record of records) {
+    if (record.kind === "tool-call") {
+      if (!record.toolCallId) return false;
+      open.add(record.toolCallId);
+    } else if (record.kind === "tool-result" && record.toolCallId) open.delete(record.toolCallId);
+  }
+  return open.size === 0;
+}
+
 function deliveryFailureReason(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.slice(0, 200) || "Delivery failed";
@@ -56,6 +69,8 @@ export interface HostConfiguration {
   };
   /** Installation-approved models; defaults to the bootstrap model. */
   approvedModels?: ModelConfiguration[];
+  /** Bounds actual Attempt execution. Omitted means four active Attempts. */
+  admission?: { activeExecutionLimit: number };
   destinations: { id: string; channelType: string; platformId: string; instance: string }[];
 }
 
@@ -185,7 +200,8 @@ export class Host {
   private readonly reconcileMs: number;
   private readonly controller = new AbortController();
   private readonly prepared = new Map<string, Promise<SessionExecution>>();
-  private readonly botSlots = new Map<string, string>();
+  private readonly live = new Map<string, SessionExecution>();
+  private readonly settlingWaits = new Set<string>();
   private readonly channels = new Map<string, HostChannel>();
   private readonly observers = new Set<(event: HostEvent) => void>();
   /** Highest outbound sequence already observed per session; seeded at startup. */
@@ -261,6 +277,10 @@ export class Host {
     try {
       store.stopOpenHostInstances(host.timestamp());
       store.registerHostInstance(instanceId, process.pid, host.timestamp());
+      store.threads.configureAdmission(
+        configuration.admission?.activeExecutionLimit ?? 4,
+        host.timestamp(),
+      );
       await host.reconcileStartup();
       host.polling = host.poll();
       return host;
@@ -303,6 +323,9 @@ export class Host {
       );
       if (observation) {
         await this.adopt(execution, observation);
+        // A completed Run must release its adopted container before startup resolves.
+        this.syncChat(execution);
+        if (execution.replacing) await execution.replacing;
         if (
           execution.route.session.purpose === "run" &&
           this.store.threads.run(session.id).state === "stopping"
@@ -310,6 +333,7 @@ export class Host {
           void this.executeStop(execution);
       } else await this.reconcileSession(execution);
     }
+    this.schedule();
   }
 
   private prepare(route: SessionRoute): Promise<SessionExecution> {
@@ -339,7 +363,12 @@ export class Host {
         cleanups: new Set<Promise<void>>(),
       }));
       this.prepared.set(route.session.id, pending);
-      void pending.catch(() => this.prepared.delete(route.session.id));
+      void pending.then(
+        (execution) => {
+          this.live.set(route.session.id, execution);
+        },
+        () => this.prepared.delete(route.session.id),
+      );
     }
     return pending;
   }
@@ -379,7 +408,7 @@ export class Host {
         content: source.content,
         timestamp: source.timestamp,
       });
-    this.wake(execution, { force: true });
+    this.schedule();
     return { sessionId: admitted.runId, messageId: admitted.messageId };
   }
 
@@ -425,10 +454,10 @@ export class Host {
       !["queued", "active"].includes(this.store.threads.run(id).state)
     )
       return;
-    const slot = this.botSlots.get(botId);
-    if (slot && slot !== id) return;
+    if (execution.route.session.purpose === "run") {
+      if (!this.store.threads.holdsReservation(id)) return;
+    } else if (this.store.threads.botIsReserved(botId)) return;
     if (!options.force && this.store.containerStatusOf(id) === "failed") return;
-    this.botSlots.set(botId, id);
     execution.starting = (async () => {
       const incarnation = this.store.tryClaimSession({
         sessionId: id,
@@ -437,10 +466,7 @@ export class Host {
         containerRef: null,
         now: this.timestamp(),
       });
-      if (incarnation === undefined) {
-        this.releaseBot(execution);
-        return;
-      }
+      if (incarnation === undefined) return;
       execution.incarnation = incarnation;
       if (execution.route.session.purpose === "run")
         this.store.threads.startAttempt(id, incarnation, this.timestamp());
@@ -457,6 +483,7 @@ export class Host {
         this.store.markContainerRef(id, handle.ref ?? null, this.timestamp());
       } catch {
         if (!this.stopped) {
+          this.store.threads.abandonAdmission(id);
           this.releaseBot(execution);
           this.store.containerStatus(id, "failed");
           this.emit({
@@ -480,7 +507,6 @@ export class Host {
     const incarnation = execution.incarnation;
     execution.handle = handle;
     execution.startedAtMs = startedAtMs;
-    this.botSlots.set(execution.route.session.agent_group_id, id);
     this.store.containerStatus(id, "running");
     const cleanup = (async () => {
       await handle
@@ -512,8 +538,7 @@ export class Host {
     handle: SessionHandle,
     error?: string,
   ): void {
-    if (this.stopped) return;
-    if (execution.incarnation !== incarnation) return;
+    if (this.stopped || execution.incarnation !== incarnation) return;
     const id = execution.route.session.id;
     this.store.containerStatus(id, "stopped");
     this.store.markContainerRef(id, null, this.timestamp());
@@ -583,7 +608,9 @@ export class Host {
             input.status === "pending" &&
             (!input.process_after || Date.parse(input.process_after) <= now),
         );
-      if (due) this.wake(execution);
+      this.refreshAdmission(execution);
+      if (due && this.store.threads.holdsReservation(id) && this.executionReady(execution))
+        this.wake(execution);
     } catch {
       if (!this.stopped)
         this.emit({ type: "failure", sessionId: id, error: "Session mailbox unavailable" });
@@ -654,6 +681,8 @@ export class Host {
     const signal = this.controller.signal;
     let nextReconcile = this.clock() + this.reconcileMs;
     while (!signal.aborted) {
+      for (const execution of this.live.values()) this.refreshAdmission(execution);
+      this.schedule();
       if (this.clock() >= nextReconcile) {
         nextReconcile = this.clock() + this.reconcileMs;
         await this.reconcile();
@@ -665,6 +694,7 @@ export class Host {
           if (signal.aborted) break;
           execution.mailbox.syncAcknowledgements();
           this.syncChat(execution);
+          await this.reconcileDurableWait(execution);
           this.historyOperations(execution);
           if (!execution.handle && !execution.starting && !execution.replacing)
             await this.reconcileSession(execution);
@@ -1096,7 +1126,7 @@ export class Host {
       this.store.route(this.store.threads.session(admitted.runId)),
     );
     this.syncChat(execution);
-    this.wake(execution, { force: true });
+    this.schedule();
     return admitted;
   }
 
@@ -1145,7 +1175,7 @@ export class Host {
       this.store.route(this.store.threads.session(admitted.runId)),
     );
     this.syncChat(execution);
-    this.wake(execution, { force: true });
+    this.schedule();
     return admitted;
   }
 
@@ -1220,14 +1250,38 @@ export class Host {
     this.syncChat(execution);
     this.store.threads.finishStop(id, execution.mailbox.acknowledgements(), this.timestamp());
     this.releaseBot(execution);
-    this.wakeBot(execution.route.session.agent_group_id);
   }
 
-  private wakeBot(botId: string): void {
-    for (const pending of this.prepared.values())
-      void pending.then((next) => {
-        if (next.route.session.agent_group_id === botId) this.wake(next);
+  /** Recovery backoff is not execution. The driver observes wall-clock process_after. */
+  private executionReady(execution: SessionExecution): boolean {
+    const pending = execution.mailbox.inputs().filter((input) => input.status === "pending");
+    if (pending.length === 0) return true;
+    const now = new Date().toISOString();
+    return pending.some((input) => !input.process_after || input.process_after <= now);
+  }
+
+  /** Keep a not-yet-due queued Run out of the active set so other runnable work can start. */
+  private refreshAdmission(execution: SessionExecution): void {
+    if (this.storeClosed || execution.route.session.purpose !== "run") return;
+    const id = execution.route.session.id;
+    if (this.store.threads.run(id).state !== "queued") return;
+    const ready = this.executionReady(execution);
+    this.store.threads.setRunnable(id, ready);
+    if (!ready) this.store.threads.clearReservation(id);
+  }
+
+  /** Fill free execution slots from the durable queue without interrupting an active Attempt. */
+  private schedule(): void {
+    if (this.stopped || this.storeClosed) return;
+    const limit = this.store.threads.activeLimit();
+    for (;;) {
+      const runId = this.store.threads.reserveNext(limit, this.timestamp());
+      if (!runId) return;
+      const session = this.store.threads.session(runId);
+      void this.prepare(this.store.route(session)).then((execution) => {
+        this.wake(execution);
       });
+    }
   }
 
   private syncChat(execution: SessionExecution): void {
@@ -1272,6 +1326,9 @@ export class Host {
           .finally(() => {
             execution.replacing = undefined;
           });
+      } else if (!execution.handle && !execution.starting && !execution.replacing) {
+        this.store.threads.releaseAdmission(id);
+        if (!this.stopped) this.schedule();
       }
       return;
     }
@@ -1390,11 +1447,65 @@ export class Host {
   private releaseBot(execution: SessionExecution, incarnation = execution.incarnation): void {
     if (execution.incarnation !== incarnation) return;
     const { session } = execution.route;
-    if (!this.storeClosed && session.purpose === "run")
+    if (!this.storeClosed && session.purpose === "run") {
       this.store.threads.endAttempt(session.id, this.timestamp());
-    if (this.botSlots.get(session.agent_group_id) === session.id)
-      this.botSlots.delete(session.agent_group_id);
+      this.store.threads.releaseAdmission(session.id);
+    }
     if (execution.cutover === "pending" && !this.stopped) void this.finishCutover(execution);
+    if (!this.stopped && !this.storeClosed) this.schedule();
+  }
+
+  /**
+   * A durable wait ends the Attempt only after recorded tool calls have results.
+   * An unconfirmed executor stop keeps the Bot slot.
+   */
+  private async reconcileDurableWait(execution: SessionExecution): Promise<void> {
+    if (this.stopped || execution.route.session.purpose !== "run") return;
+    const id = execution.route.session.id;
+    if (
+      this.settlingWaits.has(id) ||
+      execution.starting ||
+      execution.replacing ||
+      execution.cutover
+    )
+      return;
+    const state = this.store.threads.run(id).state;
+    if (state === "waiting" && execution.mailbox.durableResume()) {
+      this.store.threads.resumeWait(id, this.timestamp());
+      execution.mailbox.clearDurableSignal("durable-resume");
+      this.schedule();
+      return;
+    }
+    if (state !== "active") return;
+    const reason = execution.mailbox.durableWait();
+    if (
+      !reason ||
+      !toolResultsComplete(
+        execution.mailbox.executionRecords(),
+        execution.mailbox.activity()?.current_tool ?? null,
+      )
+    )
+      return;
+    this.settlingWaits.add(id);
+    try {
+      const handle = execution.handle;
+      if (handle) {
+        execution.superseded.add(handle);
+        try {
+          await handle.stop();
+          if (execution.handle === handle) execution.handle = undefined;
+        } catch {
+          execution.superseded.delete(handle);
+          return;
+        }
+      }
+      if (this.stopped || this.store.threads.run(id).state !== "active") return;
+      this.store.threads.beginWait(id, reason, this.timestamp());
+      execution.mailbox.clearDurableSignal("durable-wait");
+      this.schedule();
+    } finally {
+      this.settlingWaits.delete(id);
+    }
   }
 
   /** Read-only client projection. Mailbox acknowledgement is not a work outcome. */
