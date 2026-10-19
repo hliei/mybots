@@ -2,7 +2,7 @@
 
 Status: accepted
 Implementation: saved and effective Bot configuration versions and the finite
-Attempt cutoff are delivered; protected Skill revisions remain planned
+Attempt cutoff and protected local Skill revisions are delivered
 
 The Host owns one durable authoritative configuration for each Bot. Web UI and
 management API edits persist across Host restarts, and chat, scheduled work,

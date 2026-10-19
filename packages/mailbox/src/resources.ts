@@ -18,6 +18,23 @@ export function validateAgentResources(value: unknown): AgentResources | undefin
       throw new Error("Invalid Agent Skill selection");
     result.skills = source.skills;
   }
+  if (source.skillRevisions !== undefined) {
+    const revisions = source.skillRevisions;
+    if (
+      !revisions ||
+      typeof revisions !== "object" ||
+      Array.isArray(revisions) ||
+      Object.entries(revisions).some(
+        ([id, revision]) =>
+          !result.skills?.includes(id) ||
+          typeof revision !== "string" ||
+          !/^[a-f0-9]{64}$/.test(revision),
+      ) ||
+      Object.keys(revisions).length !== (result.skills?.length ?? 0)
+    )
+      throw new Error("Invalid Agent Skill revisions");
+    result.skillRevisions = revisions as Record<string, string>;
+  }
   if (source.tools !== undefined) {
     if (
       !Array.isArray(source.tools) ||
@@ -39,7 +56,11 @@ export function validateAgentResources(value: unknown): AgentResources | undefin
       throw new Error("Invalid Agent tool selection");
     result.tools = source.tools;
   }
-  if (Object.keys(source).some((key) => key !== "skills" && key !== "tools"))
+  if (
+    Object.keys(source).some(
+      (key) => key !== "skills" && key !== "tools" && key !== "skillRevisions",
+    )
+  )
     throw new Error("Invalid Agent resources");
   return result;
 }

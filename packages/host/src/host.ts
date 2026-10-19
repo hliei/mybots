@@ -31,6 +31,7 @@ import {
   recoverAbandonedClaims,
   recoverUnclaimedInput,
 } from "./reconcile-session.ts";
+import { LocalSkills } from "./skills.ts";
 
 /** Total platform-delivery attempts for one outbound reply, including the first. */
 const MAX_DELIVERY_ATTEMPTS = 3;
@@ -873,9 +874,22 @@ export class Host {
     }
   }
 
+  localSkills(botId: string) {
+    if (!this.managedBots().some((bot) => bot.id === botId))
+      throw new BotRequestError("Bot not found.", 404);
+    return new LocalSkills(this.root).list(botId);
+  }
+
+  importSkill(botId: string, value: unknown) {
+    this.localSkills(botId);
+    return new LocalSkills(this.root).import(botId, value);
+  }
+
   updateBot(botId: string, value: unknown) {
     if (this.stopped) throw new Error("Host is stopped");
     const input = parseBotSettings(value);
+    this.localSkills(botId);
+    if (input.skills) new LocalSkills(this.root).selected(botId, input.skills);
     const model = (this.configuration.approvedModels ?? [this.configuration.agent.model]).find(
       (item) => item.provider === input.model.provider && item.id === input.model.id,
     );
@@ -890,6 +904,7 @@ export class Host {
         instructions: input.instructions,
         model: input.model,
         tools: input.tools,
+        ...(input.skills ? { skills: input.skills } : {}),
       },
       model,
     );
@@ -1359,13 +1374,17 @@ export class Host {
     if (execution.route.session.purpose !== "run" || execution.handle) return;
     const attempt = this.store.threads.openAttempt(execution.route.session.id);
     if (!attempt) return;
-    replaceSessionContext(
-      execution.material.contextFile,
-      this.store.configurationSnapshot(
-        execution.route.session.agent_group_id,
-        attempt.configurationVersion,
-      ),
+    const snapshot = this.store.configurationSnapshot(
+      execution.route.session.agent_group_id,
+      attempt.configurationVersion,
     );
+    if (snapshot.resources?.skillRevisions)
+      new LocalSkills(this.root).materialize(
+        execution.route.session.agent_group_id,
+        snapshot.resources.skillRevisions,
+        execution.material.skillsDirectory,
+      );
+    replaceSessionContext(execution.material.contextFile, snapshot);
   }
 
   private releaseBot(execution: SessionExecution, incarnation = execution.incarnation): void {

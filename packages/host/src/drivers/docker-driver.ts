@@ -93,6 +93,7 @@ export class DockerDriver implements ObservingSessionDriver {
         [material.directory, "/session", false],
         [join(material.directory, "inbound.db"), "/session/inbound.db", true],
         [material.workspace, "/workspace/group", false],
+        [material.skillsDirectory, "/session/skills", true],
         [material.contextFile, "/run/mybots/context.json", true],
         [trust, "/run/gateway/ca.pem", true],
       ] as const) {
@@ -216,6 +217,16 @@ export class DockerDriver implements ObservingSessionDriver {
       [material.directory, expectedDirectory],
       [material.workspace, expectedWorkspace],
       [material.contextFile, expectedContext],
+      [
+        material.skillsDirectory,
+        join(
+          material.root,
+          "data",
+          "protected-skills",
+          material.key.agentGroupId,
+          material.key.sessionId,
+        ),
+      ],
     ]) {
       if (actual !== expected || (await realpath(actual)) !== expected) throw new Error();
     }

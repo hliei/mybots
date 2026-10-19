@@ -76,7 +76,14 @@ export async function provisionSession(input: {
   const directory = join(root, "data", "sessions", input.key.agentGroupId, input.key.sessionId);
   const workspace = join(root, "groups", input.folder);
   const contextDirectory = join(root, "data", "sessions", input.key.agentGroupId, ".context");
-  for (const path of [directory, workspace, contextDirectory]) {
+  const skillsDirectory = join(
+    root,
+    "data",
+    "protected-skills",
+    input.key.agentGroupId,
+    input.key.sessionId,
+  );
+  for (const path of [directory, workspace, contextDirectory, skillsDirectory]) {
     // Refuse symlink ancestors before creating or mounting material.
     let current = root;
     for (const part of path.slice(root.length + 1).split("/")) {
@@ -104,7 +111,15 @@ export async function provisionSession(input: {
         "Immutable runner context differs; stop the session and replace its context explicitly",
       );
   });
-  return { root, key: input.key, folder: input.folder, directory, workspace, contextFile };
+  return {
+    root,
+    key: input.key,
+    folder: input.folder,
+    directory,
+    workspace,
+    contextFile,
+    skillsDirectory,
+  };
 }
 
 /** Replace a stopped session's immutable context while preserving its Run ledger and references. */

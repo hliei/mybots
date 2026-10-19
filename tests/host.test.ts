@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OutboundMessage } from "@mybots/mailbox";
@@ -359,6 +359,12 @@ it("discovers persisted output after a fresh host opens and keeps delivery separ
 it("materializes the selected Agent resources for every routed session after restart", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-host-resources-")));
   const driver = new MailboxDriver();
+  const skill = join(root, "groups", "personal", "skills", "brief");
+  await mkdir(skill, { recursive: true });
+  await writeFile(
+    join(skill, "SKILL.md"),
+    "---\nname: brief\ndescription: Seeded brief\n---\nSeeded instructions.",
+  );
   const selected = {
     ...configuration,
     agent: {
@@ -386,6 +392,7 @@ it("materializes the selected Agent resources for every routed session after res
     expect((await host?.inspect(first.sessionId))?.outputs).toHaveLength(1),
   );
   await host.stop();
+  await writeFile(join(skill, "SKILL.md"), "Unreviewed seed change");
   host = await Host.start({ root, configuration: selected, driver });
   const second = await host.accept({ destinationId: "notes", userId: "cli:local", text: "Second" });
   await vi.waitFor(async () =>
@@ -393,7 +400,14 @@ it("materializes the selected Agent resources for every routed session after res
   );
   for (const launch of driver.launches) {
     const context = JSON.parse(await readFile(launch.material.contextFile, "utf8"));
-    expect(context.resources).toEqual({ skills: ["brief"], tools: ["read", "web_search"] });
+    expect(context.resources).toEqual({
+      skills: ["brief"],
+      skillRevisions: { brief: expect.stringMatching(/^[a-f0-9]{64}$/) },
+      tools: ["read", "web_search"],
+    });
+    expect(
+      await readFile(join(launch.material.skillsDirectory, "brief", "SKILL.md"), "utf8"),
+    ).toContain("Seeded instructions.");
     expect(context.web).toEqual({
       search: { provider: "brave", endpoint: "https://api.search.brave.test/res/v1/web/search" },
     });

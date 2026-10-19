@@ -1,6 +1,8 @@
 /** Explicit Agent-owned SDK resource selection; paths resolve inside its shared workspace. */
 export interface AgentResources {
   skills?: readonly string[];
+  /** Owner-selected immutable content revisions, loaded from protected session material. */
+  skillRevisions?: Readonly<Record<string, string>>;
   tools?: readonly (
     | "read"
     | "write"

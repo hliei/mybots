@@ -35,10 +35,22 @@
               <label for="saved-model">Saved model</label>
               <select id="saved-model" required></select>
               <fieldset id="saved-tools"><legend>Saved tools</legend></fieldset>
+              <fieldset id="saved-skills"><legend>Skill revisions to activate on save</legend></fieldset>
             </fieldset>
             <button id="save-settings" type="submit">Save configuration</button>
           </form>
           <p id="settings-message" aria-live="polite"></p>
+        </section>
+        <section id="local-skills" hidden>
+          <h2>Local Skills</h2>
+          <p>Import a local directory on this Host, including proposed files from a Bot workspace. Imported revisions remain inactive until selected and saved. Limits: 256 files, 4 MiB; links are rejected.</p>
+          <form id="skill-import">
+            <label for="skill-id">Skill ID</label><input id="skill-id" name="skill-id" required pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}">
+            <label for="skill-path">Local Skill directory</label><input id="skill-path" name="skill-path" required>
+            <button type="submit">Import Skill for inspection</button>
+          </form>
+          <p id="skill-message" aria-live="polite"></p>
+          <div id="skill-library"></div>
         </section>
         <section id="chat" aria-labelledby="chat-heading" hidden>
           <h2 id="chat-heading">Direct Thread</h2>

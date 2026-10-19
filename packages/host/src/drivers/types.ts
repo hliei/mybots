@@ -15,6 +15,7 @@ export interface SessionMaterial {
   directory: string;
   workspace: string;
   contextFile: string;
+  skillsDirectory: string;
 }
 
 export interface SessionHandle {
