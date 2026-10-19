@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
-import type { AgentResources, RunnerMailbox, WebConfiguration } from "@mybots/mailbox";
+import type { AgentResources, RunContext, RunnerMailbox, WebConfiguration } from "@mybots/mailbox";
 import type { AgentProvider, AgentQuery, ProviderEvent } from "./providers/types.ts";
 
 async function* queryEvents(query: AgentQuery): AsyncGenerator<ProviderEvent> {
@@ -18,6 +19,7 @@ export interface PollLoopOptions {
   instructions?: string;
   resources?: AgentResources;
   web?: WebConfiguration;
+  runContext?: RunContext;
   signal: AbortSignal;
   pollMs?: number;
 }
@@ -41,6 +43,8 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
     mailbox.activity(null);
     const query = provider.query({
       prompt: input.content,
+      inputId: input.id,
+      runContext: options.runContext,
       cwd: options.cwd,
       sessionDir: options.sessionDir,
       continuation: mailbox.continuation(),
@@ -64,6 +68,7 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
     const polling = (async () => {
       while (!pollingSignal.aborted && !closed) {
         for (const followUp of mailbox.pending()) {
+          if (answering.some((row) => row.id === followUp.id)) continue;
           // Controls form a FIFO boundary: neither the control nor later messages
           // may enter the active SDK queue. The outer loop runs them after cleanup.
           if (
@@ -71,12 +76,12 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
             followUp.kind === "reset" ||
             closed ||
             pollingSignal.aborted ||
-            !query.push(followUp.content)
+            !query.push(followUp.content, followUp.id)
           )
             break;
           answering.push(followUp);
           // Deliberately early: SDK queue entries need not survive a hard crash.
-          mailbox.acknowledge(followUp.id, "completed");
+          if (!options.runContext) mailbox.acknowledge(followUp.id, "completed");
         }
         await setTimeout(options.pollMs ?? 100, undefined, { signal: pollingSignal }).catch(
           (error) => {
@@ -99,6 +104,9 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
       for await (const event of queryEvents(query)) {
         if (signal.aborted) break;
         switch (event.type) {
+          case "recorded":
+            mailbox.recordInput(event.inputId);
+            break;
           case "init":
             mailbox.saveContinuation(event.continuation);
             break;
@@ -112,6 +120,27 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
             mailbox.activity(event.message);
             break;
           case "result": {
+            if (options.runContext) {
+              const completed = answering.filter((row) => event.inputIds?.includes(row.id));
+              if (event.isError && !completed.length) completed.push(...answering);
+              mailbox.recordResultGroup(
+                randomUUID(),
+                completed.map((row) => row.id),
+              );
+              for (const current of completed) {
+                mailbox.acknowledge(current.id, event.isError ? "failed" : "completed");
+                mailbox.reply(
+                  current,
+                  event.isError ? (event.error ?? "Agent query failed.") : (event.text ?? ""),
+                  event.isError ? "error" : "message",
+                );
+                answering.splice(answering.indexOf(current), 1);
+              }
+              // Unconsumed steering stays pending for a later query of this Run.
+              closeAdmission();
+              answering.length = 0;
+              break;
+            }
             const current = answering.shift();
             if (!current) throw new Error("Agent query returned an uncorrelated result");
             // Deliberate separate commits: a crash here can lose the final reply.

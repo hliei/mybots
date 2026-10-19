@@ -221,8 +221,8 @@ normalization and transport cases remain in `tests/telegram-api.test.ts`.
 host/store/mailbox path with a controlled Bot API. It covers owner routing,
 unknown-sender and non-private/unconfigured-chat rejection, ordered message
 splitting at the Telegram limit, polling-offset advance and ignored updates,
-cancellation and bounded shutdown, Telegram/CLI separation within one shared
-workspace, restart affinity with exact continuation, token containment outside
+cancellation and bounded shutdown, Telegram/CLI admissions to the Bot's direct
+Thread, stable Thread identity across restart, token containment outside
 runner material, coherent `telegram` settings and entry-point start/stop. The
 `createTelegramApi` boundary is exercised separately with a mock `fetch`; no test
 contacts Telegram or uses a real token. Live Telegram acceptance remains part of
@@ -232,7 +232,7 @@ the separate actual-service pass.
 real host, central store and per-session mailboxes with the controlled mailbox
 driver and actual local sockets. It verifies validated input and rejection,
 correlated inbound/outbound envelopes with destination meaning, separate
-WebSocket/CLI conversations sharing one workspace, passive observation of another
+WebSocket/CLI inputs sharing the Bot's direct Thread and workspace, passive observation of another
 channel's undelivered output, slow-peer dropping, reconnect without event replay,
 host failure envelopes, loopback-only binding and bounded shutdown.
 
@@ -245,13 +245,12 @@ automatic compaction and exact summary reopening. An explicit reset persists a
 fresh SDK conversation without a model request and preserves previous logs.
 
 `tests/host-resources.test.ts` connects the public Host API to the production
-mailbox loop and real Pi adapter through an offline driver. It holds a model
-request, queues an owner reset and later input, checks the idle/FIFO boundary,
-authorization, separate session continuation and shared-file preservation, then
-restarts the host to verify the new continuation. This driver bypasses Docker
-and gateway transport; it establishes neither mount isolation nor live-provider
-compatibility. `tests/host.test.ts` also verifies selected resources and web
-configuration persist into each session's immutable runner context after host
+mailbox loop and real Pi adapter through an offline driver. It checks selected
+resources, shared instructions and files, tool execution, and correlated replies.
+The Host rejects owner reset until prospective reset is implemented. This driver
+bypasses Docker and gateway transport; it establishes neither mount isolation nor
+live-provider compatibility. `tests/host.test.ts` also verifies selected resources
+and web configuration persist into each Run's immutable runner context after Host
 restart.
 
 `tests/web-config.test.ts` covers the explicit web provider/endpoint selection,
@@ -274,9 +273,9 @@ host channel and receives persisted delivery acknowledgement.
 ## Integrated channel operation
 
 `tests/host-channels.test.ts` connects CLI sockets, controlled Telegram and real
-local WebSocket clients to one host. It checks overlapping conversations, shared
+local WebSocket clients to one Host. It checks common Thread admission, shared
 working material, a blocked Telegram send observed without acknowledgement by
-WebSocket, independent progress and preserved affinity after host restart.
+WebSocket, per-input delivery routing and retained Thread identity after restart.
 `tests/startup.test.ts` also exercises listener-bind startup rollback and verifies
 that the host entry point requires host settings even if old YAML settings are
 present.
@@ -299,20 +298,26 @@ SessionDriver; they do not require a client build.
 client and compiled Host, with the same controlled SessionDriver. It verifies
 rejected/successful pairing, processing and acknowledged input counts, retained
 browser connection on reload, and status recovery after Host restart. It asserts
-rendered content and owner actions rather than pixel snapshots. It also creates
-and selects Bot-owned chats, sends FIFO follow-ups, checks parallel Bot results,
-renames a session, and recovers a dropped message response and saved work after
-reload and Host restart. Browser checks
-remain offline and do not establish actual-container or actual-service evidence.
+rendered content and owner actions rather than pixel snapshots. It also selects
+a Bot's direct Thread, creates independent Tasks, targets additions to active and
+queued Tasks, checks cross-Bot progress, and recovers a dropped message response
+and saved work after reload and Host restart. Browser checks remain offline and
+do not establish actual-container or actual-service evidence.
 
-`tests/selected-session-chat.test.ts` exercises selected chat operations, request
-replay/conflicts, shared work lifetimes, parallel sessions, provider failure,
-early-acknowledgement loss, held follow-ups, queued recovery, retry exhaustion,
-and admission-before-publication recovery through public HTTP. It retains real
-Host/SQLite/mailboxes. A real Pi SDK case uses the production mailbox loop and a
-controlled streaming model service to check separate contexts, same-Bot shared
-files, cross-Bot isolation and explicit reopening after restart. The infrastructure
-suite also checks these workspace and session boundaries in actual containers.
+`tests/thread-execution.test.ts` exercises one-Thread operations through public
+HTTP with real Host/SQLite/mailboxes. It covers stable request replay/conflicts,
+completion races, targeted active/queued additions, admission-before-publication
+recovery, Host loss with durable steering, uncertain outcomes, original-reply
+projection, authenticated ownership, fresh runtime setup, and actual same-Bot
+serialization with cross-Bot progress. Real Pi cases use the production mailbox
+loop and a controlled streaming model service to check independent Run ledgers,
+quoted Thread originals, input consumption evidence and reopening across Attempts.
+
+`tests/run-sdk.test.ts` checks real SDK steering at a model boundary, Run-local
+recording and reopening without replaying known tools, lost continuation recovery,
+and reference reduction before long required input with visible capacity failure.
+The infrastructure suite also checks these workspace and Run boundaries in actual
+containers.
 
 Install Chromium with `npx playwright install chromium` (Linux can use
 `npx playwright install --with-deps chromium`). Run `npm run test:browser` for

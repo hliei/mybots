@@ -326,15 +326,8 @@ it("waits for session execution cleanup on exit and retains Bot and work data fo
   await invoke("start");
   const credential = (await readFile(join(root, "data", "client-credential"), "utf8")).trim();
   const headers = { Authorization: `Bearer ${credential}`, "Content-Type": "application/json" };
-  const created = await fetch(new URL("api/sessions", url), {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ requestId: "lifecycle-chat", botId: "personal", name: "Retained chat" }),
-  });
-  expect(created.status).toBe(201);
-  const { session } = await created.json();
   const admitted = await (
-    await fetch(new URL(`api/sessions/${session.id}/messages`, url), {
+    await fetch(new URL("api/bots/personal/thread/messages", url), {
       method: "POST",
       headers,
       body: JSON.stringify({ requestId: "lifecycle-work", text: "Keep this evidence" }),
@@ -352,11 +345,16 @@ it("waits for session execution cleanup on exit and retains Bot and work data fo
   await expect(fetch(new URL("api/status", url), { headers })).rejects.toThrow();
   await invoke("start");
   const restored = await (
-    await fetch(new URL(`api/sessions/${session.id}`, url), { headers })
+    await fetch(new URL("api/bots/personal/thread", url), { headers })
   ).json();
   expect(restored).toMatchObject({
-    session: { name: "Retained chat", botId: "personal" },
-    works: [{ id: admitted.workId, outcome: null, messages: [{ text: "Keep this evidence" }] }],
+    thread: { id: admitted.threadId, botId: "personal" },
+    tasks: [
+      {
+        id: admitted.taskId,
+        runs: [{ id: admitted.runId, outcome: null, inputs: [{ text: "Keep this evidence" }] }],
+      },
+    ],
   });
   expect((await invoke("exit")).stdout).toContain("Mybots stopped");
 }, 25000);

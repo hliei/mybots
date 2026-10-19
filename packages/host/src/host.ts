@@ -7,7 +7,7 @@ import { setTimeout } from "node:timers/promises";
 import type { AgentResources, OutboundMessage, WebConfiguration } from "@mybots/mailbox";
 import { HostMailbox } from "@mybots/mailbox/node";
 import { BotRequestError, parseBotCreate, publicModel } from "./bots.ts";
-import { chatInput } from "./chat.ts";
+import { ChatRequestError, chatInput } from "./chat.ts";
 import { validateHostConfiguration } from "./config/host.ts";
 import { provisionSession } from "./container-runner.ts";
 import { HostStore, type SavedSession, type SessionRoute } from "./db/index.ts";
@@ -167,6 +167,7 @@ export class Host {
   private readonly reconcileMs: number;
   private readonly controller = new AbortController();
   private readonly prepared = new Map<string, Promise<SessionExecution>>();
+  private readonly botSlots = new Map<string, string>();
   private readonly channels = new Map<string, HostChannel>();
   private readonly observers = new Set<(event: HostEvent) => void>();
   /** Highest outbound sequence already observed per session; seeded at startup. */
@@ -174,6 +175,7 @@ export class Host {
   private polling?: Promise<void>;
   private stopping?: Promise<void>;
   private stopped = false;
+  private storeClosed = false;
 
   private constructor(
     root: string,
@@ -296,6 +298,10 @@ export class Host {
         instructions: route.instructions,
         resources: route.resources,
         web: route.web,
+        runContext:
+          route.session.purpose === "run"
+            ? this.store.threads.context(route.session.id)
+            : undefined,
       }).then((material) => ({
         route,
         material,
@@ -315,50 +321,47 @@ export class Host {
     destinationId: string;
     userId: string;
     text: string;
+    requestId?: string;
   }): Promise<{ sessionId: string; messageId: string }> {
+    if (this.stopped) throw new Error("Host is stopped");
     if (input.text.trim() === "/reset") return this.reset(input);
-    return this.enqueue(input, "message");
+    const botId = this.store.ownerDestination(input.destinationId, input.userId);
+    const parsed = chatInput({ requestId: input.requestId ?? randomUUID(), text: input.text }, [
+      "text",
+    ]);
+    await this.threadDetail(botId);
+    const admitted = this.store.threads.send(
+      { requestId: parsed.requestId as string, botId, text: parsed.text as string, newTask: false },
+      this.timestamp(),
+      input.destinationId,
+    );
+    const execution = await this.prepare(
+      this.store.route(this.store.threads.session(admitted.runId)),
+    );
+    this.syncChat(execution);
+    const source = execution.mailbox.inputs().find((row) => row.id === admitted.messageId);
+    if (source && !admitted.replayed)
+      this.emit({
+        type: "input",
+        sessionId: admitted.runId,
+        messageId: admitted.messageId,
+        destinationId: input.destinationId,
+        channelType: source.channel_type,
+        platformId: source.platform_id,
+        threadId: source.thread_id,
+        content: source.content,
+        timestamp: source.timestamp,
+      });
+    this.wake(execution, { force: true });
+    return { sessionId: admitted.runId, messageId: admitted.messageId };
   }
 
-  /** Queue an owner control; the runner executes it after the active SDK query settles. */
-  reset(input: {
+  async reset(input: {
     destinationId: string;
     userId: string;
   }): Promise<{ sessionId: string; messageId: string }> {
-    return this.enqueue({ ...input, text: "Conversation reset by owner." }, "reset");
-  }
-
-  private async enqueue(
-    input: { destinationId: string; userId: string; text: string },
-    kind: "message" | "reset",
-  ): Promise<{ sessionId: string; messageId: string }> {
-    if (this.stopped) throw new Error("Host is stopped");
-    if (!input.text.trim()) throw new Error("Input text is required");
-    const route = this.store.resolve(input.destinationId, input.userId);
-    const execution = await this.prepare(route);
-    if (this.stopped) throw new Error("Host is stopped");
-    const messageId = randomUUID();
-    const message = execution.mailbox.submit({
-      id: messageId,
-      kind,
-      content: input.text,
-      channel_type: route.channel_type,
-      platform_id: route.platform_id,
-      thread_id: route.session.thread_id,
-    });
-    this.emit({
-      type: "input",
-      sessionId: route.session.id,
-      messageId: message.id,
-      destinationId: input.destinationId,
-      channelType: message.channel_type,
-      platformId: message.platform_id,
-      threadId: message.thread_id,
-      content: message.content,
-      timestamp: message.timestamp,
-    });
-    this.wake(execution, { force: true });
-    return { sessionId: route.session.id, messageId };
+    this.store.ownerDestination(input.destinationId, input.userId);
+    throw new ChatRequestError("Chat background reset is not available in this version.", 409);
   }
 
   /** Adopt a container the runtime already reports as running for this session. */
@@ -389,7 +392,16 @@ export class Host {
   private wake(execution: SessionExecution, options: { force?: boolean } = {}): void {
     if (this.stopped || execution.starting || execution.replacing || execution.handle) return;
     const id = execution.route.session.id;
+    const botId = execution.route.session.agent_group_id;
+    if (
+      execution.route.session.purpose === "run" &&
+      !["queued", "active"].includes(this.store.threads.run(id).state)
+    )
+      return;
+    const slot = this.botSlots.get(botId);
+    if (slot && slot !== id) return;
     if (!options.force && this.store.containerStatusOf(id) === "failed") return;
+    this.botSlots.set(botId, id);
     execution.starting = (async () => {
       const incarnation = this.store.tryClaimSession({
         sessionId: id,
@@ -398,8 +410,13 @@ export class Host {
         containerRef: null,
         now: this.timestamp(),
       });
-      if (incarnation === undefined) return;
+      if (incarnation === undefined) {
+        this.releaseBot(execution);
+        return;
+      }
       execution.incarnation = incarnation;
+      if (execution.route.session.purpose === "run")
+        this.store.threads.startAttempt(id, incarnation, this.timestamp());
       this.store.containerStatus(id, "starting");
       try {
         const handle = await this.driver.start(execution.material, this.controller.signal);
@@ -411,6 +428,7 @@ export class Host {
         this.store.markContainerRef(id, handle.ref ?? null, this.timestamp());
       } catch {
         if (!this.stopped) {
+          this.releaseBot(execution);
           this.store.containerStatus(id, "failed");
           this.emit({
             type: "failure",
@@ -433,6 +451,7 @@ export class Host {
     const incarnation = execution.incarnation;
     execution.handle = handle;
     execution.startedAtMs = startedAtMs;
+    this.botSlots.set(execution.route.session.agent_group_id, id);
     this.store.containerStatus(id, "running");
     const cleanup = (async () => {
       await handle
@@ -452,6 +471,7 @@ export class Host {
       });
       execution.superseded.delete(handle);
       if (execution.handle === handle) execution.handle = undefined;
+      this.releaseBot(execution, incarnation);
     })();
     execution.cleanups.add(cleanup);
     void cleanup.then(() => execution.cleanups.delete(cleanup));
@@ -481,7 +501,7 @@ export class Host {
   }
 
   private recordRecovery(execution: SessionExecution, outcome: RecoveryOutcome): void {
-    this.store.chat.failInputs(outcome.failed, this.timestamp());
+    this.store.threads.failInputs(outcome.failed, this.timestamp());
     if (outcome.failed.length === 0) return;
     this.emit({
       type: "failure",
@@ -512,7 +532,11 @@ export class Host {
     try {
       execution.mailbox.syncAcknowledgements();
       this.syncChat(execution);
-      if (this.store.chat.uncertain(id)) return;
+      if (
+        execution.route.session.purpose === "run" &&
+        this.store.threads.run(id).state === "uncertain"
+      )
+        return;
       if (execution.handle) {
         await this.enforceStall(execution, now);
         return;
@@ -608,6 +632,8 @@ export class Host {
           if (signal.aborted) break;
           execution.mailbox.syncAcknowledgements();
           this.syncChat(execution);
+          if (!execution.handle && !execution.starting && !execution.replacing)
+            await this.reconcileSession(execution);
           // Observe new rows even while an earlier channel delivery remains pending.
           const route = execution.route;
           if (!this.owned(route.session.id)) continue;
@@ -617,7 +643,13 @@ export class Host {
             this.emit({
               type: "output",
               sessionId: route.session.id,
-              destinationId: route.session.messaging_group_id,
+              destinationId:
+                route.session.purpose === "run"
+                  ? (this.store.threads
+                      .inputs(route.session.id)
+                      .find((input) => input.message_id === message.in_reply_to)?.destination_id ??
+                    route.session.messaging_group_id)
+                  : route.session.messaging_group_id,
               message,
             });
           }
@@ -661,13 +693,22 @@ export class Host {
           this.failDelivery(execution, message, "Outbound routing does not match its input");
           continue;
         }
-        const channel = this.channels.get(this.channelKey(route.channel_type, route.instance));
+        const destinationId =
+          route.session.purpose === "run"
+            ? this.store.threads
+                .inputs(route.session.id)
+                .find((row) => row.message_id === message.in_reply_to)?.destination_id
+            : route.session.messaging_group_id;
+        const destination = destinationId ? this.store.threads.destination(destinationId) : route;
+        const channel = this.channels.get(
+          this.channelKey(destination.channel_type, destination.instance),
+        );
         // A destination whose channel is not attached yet is not a failed send.
         if (!channel) continue;
         try {
           await channel.deliver(message, signal, {
             sessionId: route.session.id,
-            destinationId: route.session.messaging_group_id,
+            destinationId: destinationId ?? route.session.messaging_group_id,
           });
           if (signal.aborted) break;
           execution.mailbox.markDelivered(message.id, "delivered");
@@ -791,6 +832,7 @@ export class Host {
     }
     try {
       const bot = this.store.createBot(input, id, folder, model, this.configuration.agent.web);
+      this.store.threads.ensureThreads(this.timestamp());
       return { requestId: input.requestId, bot, replayed: false };
     } catch (error) {
       rmSync(workspace, { recursive: true, force: true });
@@ -802,80 +844,107 @@ export class Host {
     return this.store.sessions();
   }
 
-  createChat(value: unknown) {
-    const input = chatInput(value, ["botId", "name"]);
-    return this.store.chat.create(
-      input.requestId as string,
-      input.botId as string,
-      input.name as string,
-      this.timestamp(),
-    );
+  async threadDetail(botId: string) {
+    this.store.threads.thread(botId);
+    for (const pending of this.prepared.values()) {
+      const execution = await pending;
+      if (execution.route.session.agent_group_id === botId) this.syncChat(execution);
+    }
+    return this.store.threads.detail(botId);
   }
 
-  renameChat(id: string, value: unknown) {
-    const input = chatInput(value, ["name"]);
-    return this.store.chat.rename(input.requestId as string, id, input.name as string);
-  }
-
-  chatSessions(botId: string) {
-    return { sessions: this.store.chat.sessions(botId) };
-  }
-
-  async chatDetail(id: string) {
-    this.store.chat.session(id);
-    const execution = await this.prepared.get(id);
-    if (execution) this.syncChat(execution);
-    return this.store.chat.detail(id);
-  }
-
-  async messageChat(id: string, value: unknown) {
+  async sendThread(
+    botId: string,
+    value: unknown,
+    mode: "message" | "new-task" = "message",
+    taskId?: string,
+  ) {
     const input = chatInput(value, ["text"]);
-    const route = this.store.route(this.store.chat.session(id));
-    const execution = await this.prepare(route);
+    await this.threadDetail(botId);
     if (this.stopped) throw new Error("Host is stopped");
-    this.syncChat(execution);
-    const admitted = this.store.chat.message(
-      input.requestId as string,
-      id,
-      input.text as string,
+    const admitted = this.store.threads.send(
+      {
+        requestId: input.requestId as string,
+        botId,
+        text: input.text as string,
+        newTask: mode === "new-task",
+        ...(taskId ? { taskId } : {}),
+      },
       this.timestamp(),
     );
+    const execution = await this.prepare(
+      this.store.route(this.store.threads.session(admitted.runId)),
+    );
     this.syncChat(execution);
-    if (!this.store.chat.uncertain(id)) this.wake(execution, { force: true });
+    this.wake(execution, { force: true });
     return admitted;
   }
 
   private syncChat(execution: SessionExecution): void {
     const { mailbox, route } = execution;
-    if (route.session.purpose !== "chat") return;
+    if (route.session.purpose !== "run") return;
     const id = route.session.id;
     const inputs = mailbox.inputs();
-    this.store.chat.reconcile(
+    this.store.threads.reconcile(
       id,
       {
         inputs,
         acknowledgements: mailbox.acknowledgements(),
         outputs: mailbox.outputs(),
+        evidence: mailbox.inputEvidence(),
+        resultGroups: mailbox.resultGroups(),
         executionLost: !execution.handle && !execution.starting && !execution.replacing,
       },
       this.timestamp(),
     );
-    if (this.store.chat.uncertain(id)) {
-      for (const input of inputs) mailbox.holdInput(input.id);
+    const state = this.store.threads.run(id).state;
+    if (["uncertain", "succeeded", "failed"].includes(state)) {
+      if (state === "uncertain") for (const input of inputs) mailbox.holdInput(input.id);
+      if (execution.handle && !execution.replacing) {
+        const handle = execution.handle;
+        const incarnation = execution.incarnation;
+        execution.superseded.add(handle);
+        execution.replacing = handle
+          .stop()
+          .then(() => {
+            if (execution.handle === handle) execution.handle = undefined;
+            this.releaseBot(execution, incarnation);
+          })
+          .catch(() => {
+            execution.superseded.delete(handle);
+            this.emit({
+              type: "failure",
+              sessionId: id,
+              error: "Execution stop unconfirmed; Bot capacity retained",
+            });
+          })
+          .finally(() => {
+            execution.replacing = undefined;
+          });
+      }
       return;
     }
-    // Admission is durable before mailbox publication. Restart/retry fills only missing rows.
     const published = new Set(inputs.map((input) => input.id));
-    for (const input of this.store.chat.inputs(id)) {
+    for (const input of this.store.threads.inputs(id)) {
       if (input.outcome || published.has(input.message_id)) continue;
+      const destination = this.store.threads.destination(input.destination_id);
       mailbox.submit({
         id: input.message_id,
         content: input.content,
-        channel_type: route.channel_type,
-        platform_id: route.platform_id,
-        thread_id: route.session.thread_id,
+        channel_type: destination.channel_type,
+        platform_id: destination.platform_id,
+        thread_id: input.destination_id === "local-client" ? route.session.thread_id : null,
       });
     }
+  }
+
+  private releaseBot(execution: SessionExecution, incarnation = execution.incarnation): void {
+    if (execution.incarnation !== incarnation) return;
+    const { session } = execution.route;
+    if (!this.storeClosed && session.purpose === "run")
+      this.store.threads.endAttempt(session.id, this.timestamp());
+    if (this.botSlots.get(session.agent_group_id) === session.id)
+      this.botSlots.delete(session.agent_group_id);
   }
 
   /** Read-only client projection. Mailbox acknowledgement is not a work outcome. */
@@ -976,6 +1045,7 @@ export class Host {
         this.store.releaseClaims(this.instanceId, this.timestamp());
         this.store.stopHostInstance(this.instanceId, this.timestamp());
       }
+      this.storeClosed = true;
       this.store.close();
       if (clean) await rm(join(this.root, "data", "host.lock"), { recursive: true });
     }

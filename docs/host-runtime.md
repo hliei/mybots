@@ -1,8 +1,8 @@
 # Persistent host and local CLI
 
 The host owns owner identities/role grants, Agent identity and workspace, messaging
-destinations, destination-to-Agent wiring, container configuration and persistent
-sessions in `data/host.db`. The CLI connects to `data/cli.sock`; it opens no Agent
+destinations, destination-to-Agent wiring, container configuration and durable
+Thread/Task/Run/Attempt records in `data/host.db`. The CLI connects to `data/cli.sock`; it opens no Agent
 runtime and reads no model credentials. The production host runs the existing
 isolated Pi runner through `DockerDriver` and `OneCliGateway`.
 
@@ -73,10 +73,10 @@ do not overwrite the persisted identity or settings. Optional `agent.resources.s
 tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
 Selecting a web tool requires matching `agent.web` configuration. The execution
 harness is Pi; the model backend is specified separately by `model.provider` and
-`model.id`. The central store uses schema version 7 for host routing, resource
-selection, delivery attempts, lifecycle records, web configuration, Bot/chat
-admissions and durable chat work outcomes. Earlier schema versions upgrade
-additively. The central store saves the model
+`model.id`. The central store uses schema version 8 for host routing, Bot configuration,
+Threads, original messages, Tasks, Runs, Attempts and stable input admissions.
+An older store containing sessions requires fresh runtime records; see the
+[replacement instructions](../README.md#persistence-and-reliability). The central store saves the model
 selector as `provider/id` plus its endpoint and token limits. Endpoints must use
 HTTPS without URL credentials. Host configuration and gateway management material
 are outside runner mounts.
@@ -85,8 +85,8 @@ Each `destinations` entry names a messaging group with `id`, `channelType`,
 `platformId` and `instance`. It is wired to the personal Agent with shared session
 mode, no threads and owner-only sender authorization. The `cliDestinationId` must
 select a `cli` destination with platform ID `local`. Additional configured
-messaging destinations can use the same Agent workspace and different sessions
-through their host-side channel adapters.
+messaging destinations route into the same Bot Thread through common admission.
+Their per-input reply addresses remain independent.
 
 ### Web search and content fetching
 
@@ -150,8 +150,8 @@ The channel normalizes raw updates at the Bot API boundary, ignores non-text
 updates, non-private chats, unknown senders and unconfigured chats, and advances
 the polling offset past every returned update. Accepted input follows the same
 host/mailbox/runner path as CLI and replies to its own chat, split at Telegram's
-4096-code-point limit. Telegram and CLI share the Agent workspace but keep
-separate persistent conversations. Polling retries a failed long poll and stops
+4096-code-point limit. Telegram and CLI enter the same Bot Thread and admission path. Telegram
+notification-only behavior remains a later capability. Polling retries a failed long poll and stops
 with the host, aborting in-flight requests and awaiting dispatches.
 
 `container.image` and `container.network` select an existing runner image and
@@ -173,24 +173,36 @@ the active query's resource snapshot.
 
 ## Conversations and delivery
 
-Concurrent first inputs for an Agent/destination resolve to one saved session
-through a central transaction and a unique active-session index. The host writes
-the input mailbox before waking the driver. A reconnected terminal or fresh host
-uses that saved session. The runner opens the exact provider-qualified Pi
-continuation from its outbound mailbox; the host builds no model context.
+Each Bot owns one direct Thread. An ordinary send atomically appends to its latest
+eligible conversational Run or creates a new Task/Run. New task always creates
+independent work; explicit Task input retains that target. Terminal work is not
+implicitly retried. A stable request ID fixes the input association even when a
+response is lost or completion races admission.
 
-Session-private mailboxes and Pi state live beneath
-`data/sessions/<agent_group_id>/<session_id>/`. Shared materials live under
-`groups/<folder>/`. Different destinations share that workspace while retaining
-separate conversations. Host shutdown stops its running session containers;
-restarting and sending a new input recreates execution for the same session.
+Internal executor sessions use Run IDs. Directional mailboxes and SDK state live
+at `data/sessions/<bot_id>/<run_id>/`; shared workspace files remain at
+`groups/<folder>/`. One actual executor per Bot holds its slot from startup until
+termination is confirmed. Same-Bot excess work persists in SQLite and other Bots
+can execute concurrently. Queue fairness and global limits remain later work.
 
-Inputs within a session become ordered follow-ups during execution, with a
-separate result for each input. Other sessions execute independently against the
-shared writable workspace without a workspace-wide lock. Outbound delivery is
-sequential within each session and progresses independently across sessions;
-a held execution or delivery cannot block another session's reply. Processing
-acknowledgements continue to be mirrored while delivery is held.
+New Runs capture a background boundary and source-message identity. Mybots selects
+at most 200 recent original candidates before the source and up to seven reference
+groups, plus the current input. References are labelled quoted data. The runner
+uses a conservative UTF-8 byte token bound including system/tools and output
+reserve: remove older references before live inputs or steering. Required input
+that cannot fit fails visibly. Pi owns subsequent Run compaction.
+
+Active additions use SDK steering at a model boundary without interrupting tools.
+Input IDs are recorded in the SDK ledger; mailbox recording evidence follows
+SDK persistence, never memory queue insertion. Later Attempts reopen the same
+Run ledger, recovering a saved final answer without repeating known tools.
+Incomplete tool evidence fails visibly. A closing query leaves unconsumed additions
+pending in the same Run. An acknowledged output gap holds the affected Run as
+uncertain; unrelated work may proceed once execution has stopped.
+
+Delivery remains independent of execution, sequential within each Run and
+independent across Runs. Per-input channel/platform routing remains authoritative.
+Acknowledgements continue to be mirrored while delivery is held.
 
 The host mirrors terminal processing acknowledgements into inbound status and
 independently delivers persisted outbound rows to their original destination.
@@ -230,14 +242,9 @@ subsequent replies, without guaranteed replay of disconnected output.
 
 Blank terminal lines are ignored. `quit`, `exit`, `q` and EOF disconnect with
 status 0; Ctrl+C disconnects with 130. Startup, host-disconnect and terminal
-failures return 1. `/reset` queues an owner-authorized conversation reset. It waits
-for the active query (including SDK compaction and cleanup), then creates and saves
-a fresh Pi conversation for the same routed host session. Later inputs cannot
-cross that FIFO boundary. The reset returns `Conversation reset.` through the
-ordinary reply/delivery path and makes no model request. Previous private logs,
-other sessions, mailbox records and shared working files are preserved; the saved
-continuation selects only the new conversation on reconnect or host restart.
-Other slash input remains ordinary Agent text.
+failures return 1. `/reset` reports that chat background reset is unavailable;
+it cannot replace a live Run ledger. Prospective background reset is a later
+capability. Other slash input remains ordinary Agent text.
 
 ## Interrupted-execution recovery
 
@@ -347,57 +354,35 @@ retry retain its request identity. It remembers the selected Bot and shows that
 Bot's initial settings. Creation does not start a session or container. Runtime
 configuration editing is a subsequent capability.
 
-### Selected chat sessions and work outcomes
+### Direct Thread and Task/Run outcomes
 
-Select a Bot, create and name chat sessions, then select a session before sending
-messages. The client remembers the selected session per Bot. Same-Bot chats share
-working files while Pi retains separate conversations; different Bots have
-separate workspaces. Creation and renaming do not start execution.
+Selecting a Bot opens its single Thread. The client offers ordinary send,
+independent New task and explicit input targets for active/queued chat Tasks.
+It retains unconfirmed request payloads before sending and offers recovery after
+response loss or reload. The old `/api/sessions` operations return 404.
 
 | HTTP operation | Request / response |
 | --- | --- |
-| `POST /api/sessions` | `{ requestId, botId, name }`; 201 with `{ requestId, session, replayed }`, or 200 for a replay. |
-| `GET /api/sessions?botId=<id>` | `{ sessions }` for that Bot's explicitly created chats. |
-| `POST /api/sessions/<id>/name` | `{ requestId, name }`; 200 with the admitted session. |
-| `POST /api/sessions/<id>/messages` | `{ requestId, text }`; 202 with `{ requestId, botId, sessionId, workId, messageId, replayed }`. |
-| `GET /api/sessions/<id>` | `{ session, works }` with persisted input/result links and work outcomes. |
+| `GET /api/bots/<id>/thread` | `{ thread, tasks, messages }` with original message IDs and linked Run IDs. |
+| `POST /api/bots/<id>/thread/messages` | `{ requestId, text }`; 202 with `{ requestId, botId, threadId, taskId, runId, messageId, replayed }`. |
+| `POST /api/bots/<id>/thread/tasks` | Same payload/response; always creates independent work. |
+| `POST /api/bots/<id>/tasks/<taskId>/inputs` | Same payload/response; appends only to that Bot's eligible Task. |
 
-Names allow 120 characters; messages allow 32,000 characters, within the 64 KiB
-JSON request limit. These operations reject unknown fields, including execution
-configuration overrides. Reusing an ID for a different chat operation or payload
-returns 409. Unknown Bot/chat identities return 404; invalid JSON or fields return
-400. The client saves unconfirmed create/name/message requests before sending and
-provides a retry button after a lost response or reload. Retry the original
-request identity after 503 or an unconfirmed transport result.
+Messages allow 32,000 characters within a 256 KiB JSON limit. Unknown fields,
+including configuration overrides, return 400. A reused request ID with changed
+payload or target returns 409; unknown Bot or foreign Task returns 404. A terminal
+Task rejects new targeted additions, while a retry of an already accepted request
+returns its original association. Ordinary Thread sends remain usable after
+prior completion, failure or stopped uncertain work.
 
-Initial input in an idle chat starts a work item. FIFO follow-ups admitted before
-its terminal outcome join the same work, including while earlier turns finish.
-An input after terminal completion starts distinct work. Each session executes
-sequentially; separate sessions and Bots can progress concurrently. Global/per-Bot
-admission limits are a subsequent capability.
-
-Work records expose `id`, `botId`, `sessionId`, `state`, `outcome`, timestamps,
-and admitted `messages`. Each message includes its stable `id`, input `text`, and
-correlated final `outcome` with `messageId`, `resultId`, `reply`, `kind` and time.
-A successful work outcome identifies the last input/result; a failed work outcome
-identifies the first failed input/result, retaining each later reply separately. Bounded recovery exhaustion has a failure reason without a
-runner `resultId`. States distinguish `queued`, `active`, `succeeded`, `failed`,
-and `uncertain`; unresolved work has no terminal outcome. Result delivery remains
-independent of work success.
-
-The Host reconciles correlated final mailbox output into durable outcomes. Early
-acknowledgements and partial model text do not establish success. If execution is
-lost after acknowledgement without final evidence, the work becomes `uncertain`;
-pending follow-ups stay held and ordinary replacement input returns 409. Other
-sessions remain usable. The client retains available per-message evidence and
-shows the unresolved work. Owner resolution/stop controls, full SDK history and
-streaming are subsequent capabilities. This view shows admitted chat inputs and
-final outcomes; it does not claim complete tool or SDK conversation history.
-
-Admission commits before mailbox publication. Restart or retry publishes missing
-inputs using their existing identity, reconciles saved replies, and preserves
-terminal outcomes and uncertainty. This does not close the runner's accepted
-acknowledgement/output crash windows or promise exactly-once tool effects.
+Each Task exposes origin and Runs. Runs expose state (`queued`, `active`,
+`succeeded`, `failed`, `uncertain`), source message, captured background boundary,
+input identities, durable recording timestamps, final outcomes and Attempts.
+Each Attempt exposes fenced incarnation, effective configuration version (initially
+1), start and confirmed end. Outcomes correlate to final mailbox evidence, never
+queue acceptance or partial text. Complete SDK history, lexical retrieval, live
+streaming, owner stop/uncertainty resolution and configuration cutover remain later
+capabilities.
 
 All private HTTP routes and WebSocket upgrades require the credential, either
 as a Bearer header or the paired cookie. An explicit invalid Authorization header
@@ -413,13 +398,12 @@ supported. The Host computer must remain available. A locator received on a phon
 does not provide access to the desktop's localhost. Omit `websocket` to disable
 the combined listener. Without WebSocket destinations it still provides Bot creation,
 status and observation. When destinations are configured, they share one channel
-instance and input resolves through the same central Agent/session records as CLI.
+instance and input uses the same Thread/Task/Run admission as CLI.
 
 ## Local WebSocket interface
 
 Connect to the configured path with the same credential and Host/Origin checks.
-A WebSocket destination shares its Bot workspace and keeps a separate persistent
-conversation. This existing input protocol remains available to authenticated
+A WebSocket destination enters its Bot's Thread through the same admission. This existing input protocol remains available to authenticated
 native clients; the Web page uses the HTTP management and status routes.
 
 A client sends one JSON text frame per input:
@@ -458,7 +442,7 @@ interface before stopping the host.
 ## Public lifecycle and verification
 
 `Host.start({ root, configuration, driver })`, `accept`, `sessions`, `clientStatus`, `inspect`,
-`reset({ destinationId, userId })`, `observe`, `attachChannel` and `stop` are the host boundary. The driver accepts
+`threadDetail`, `sendThread`, `observe`, `attachChannel` and `stop` are the host boundary. The driver accepts
 session material and an abort signal and returns an awaited stop/exit handle.
 `CliChannel.listen` and `close` in `packages/host/src/cli/socket-server.ts` own the local listener
 and its connected sockets. The independent `packages/host/src/cli/client.ts` parses CLI arguments
@@ -488,7 +472,7 @@ A delivery that settles after cancellation is not marked successfully delivered.
 
 `npm run demo:host` builds and runs compiled host/CLI modules with the controlled
 mailbox driver fixture. It shows an input/reply, CLI reconnect and host restart
-with one saved session and its exact continuation. `verify` includes the same
+with one retained Thread and independent Run contexts. `verify` includes the same
 bounded demonstration and executable help/configuration-failure checks. Host
 integration tests use real central/session SQLite and the same driver boundary.
 `tests/host-telegram.test.ts` drives the channel with a controlled Bot API: owner
@@ -530,6 +514,7 @@ writable working directory.
 
 Long conversations use Pi's default automatic compaction and SDK-owned history.
 Reopening the explicit `pi:` continuation restores the retained summary and
-messages. The host does not estimate tokens, reconstruct active context from its
-mailbox or copy conversation messages into shared files. Persist working materials
+messages. The Host selects quoted original Thread references for new Runs; within-Run
+context and compaction remain SDK-owned. Conversation messages are not copied
+into shared files. Persist working materials
 explicitly when they should be accessible from another session.

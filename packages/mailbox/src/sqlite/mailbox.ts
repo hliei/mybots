@@ -175,6 +175,30 @@ export function createMailbox(withDatabase: WithDatabase) {
       );
     }
 
+    inputEvidence(): { messageId: string; recordedAt: string }[] {
+      return withDatabase(
+        this.directory,
+        "outbound",
+        true,
+        (db) =>
+          db.all(
+            "SELECT substr(key, 7) AS messageId, updated_at AS recordedAt FROM session_state WHERE key LIKE 'input:%'",
+          ) as { messageId: string; recordedAt: string }[],
+      );
+    }
+
+    resultGroups(): { messageId: string; groupId: string }[] {
+      return withDatabase(
+        this.directory,
+        "outbound",
+        true,
+        (db) =>
+          db.all(
+            "SELECT substr(key, 8) AS messageId, value AS groupId FROM session_state WHERE key LIKE 'result:%'",
+          ) as { messageId: string; groupId: string }[],
+      );
+    }
+
     activity(): ContainerState | undefined {
       return withDatabase(
         this.directory,
@@ -293,6 +317,28 @@ export function createMailbox(withDatabase: WithDatabase) {
         db.run(
           "INSERT OR REPLACE INTO session_state VALUES ('continuation', ?, ?)",
           value,
+          new Date().toISOString(),
+        ),
+      );
+    }
+
+    recordResultGroup(groupId: string, inputIds: string[]): void {
+      withDatabase(this.directory, "outbound", false, (db) => {
+        for (const id of inputIds)
+          db.run(
+            "INSERT OR IGNORE INTO session_state VALUES (?, ?, ?)",
+            `result:${id}`,
+            groupId,
+            new Date().toISOString(),
+          );
+      });
+    }
+
+    recordInput(id: string): void {
+      withDatabase(this.directory, "outbound", false, (db) =>
+        db.run(
+          "INSERT OR IGNORE INTO session_state VALUES (?, 'recorded', ?)",
+          `input:${id}`,
           new Date().toISOString(),
         ),
       );

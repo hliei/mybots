@@ -71,3 +71,10 @@ export interface ContainerState {
   tool_started_at: string | null;
   updated_at: string;
 }
+
+/** Immutable context selected for an independent Run, separate from its live inputs. */
+export interface RunContext {
+  sourceMessageId: string;
+  backgroundBoundary: number;
+  references: { id: string; role: string; content: string }[];
+}

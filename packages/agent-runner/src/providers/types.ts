@@ -1,6 +1,8 @@
-import type { AgentResources, WebConfiguration } from "@mybots/mailbox";
+import type { AgentResources, RunContext, WebConfiguration } from "@mybots/mailbox";
 export interface QueryInput {
   prompt: string;
+  inputId?: string;
+  runContext?: RunContext;
   cwd: string;
   /** Session-local Pi state, separate from the shared Agent workspace. */
   sessionDir: string;
@@ -10,17 +12,18 @@ export interface QueryInput {
 }
 
 export type ProviderEvent =
+  | { type: "recorded"; inputId: string }
   | { type: "init"; continuation: string }
   | { type: "activity" }
   | { type: "tool"; name: string | null; timeoutMs?: number }
   | { type: "text"; text: string }
   | { type: "progress"; message: string }
-  | { type: "result"; text: string | null; isError?: boolean; error?: string };
+  | { type: "result"; text: string | null; isError?: boolean; error?: string; inputIds?: string[] };
 
 export interface AgentQuery {
   events: AsyncIterable<ProviderEvent>;
   /** Queue one follow-up; false leaves it outside this query for a later query. */
-  push(message: string): boolean;
+  push(message: string, inputId?: string): boolean;
   /** Close admission without cancelling work already queued. */
   end(): void;
   /** Stop execution and await SDK cleanup. */

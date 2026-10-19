@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OutboundMessage } from "@mybots/mailbox";
@@ -30,101 +30,52 @@ afterEach(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-it("another session writes shared materials and replies while execution and delivery are held", async () => {
-  root = await realpath(await mkdtemp(join(tmpdir(), "mybots-host-independent-")));
+it("same-Bot channel input appends durably while its execution is held", async () => {
+  root = await realpath(await mkdtemp(join(tmpdir(), "mybots-host-serial-")));
   const driver = new MailboxDriver();
-  const heldExecution = Promise.withResolvers<void>();
-  const heldDelivery = Promise.withResolvers<void>();
-  const started = Promise.withResolvers<void>();
-  const delivering = Promise.withResolvers<void>();
-  driver.respond = async (input, material, signal) => {
-    if (input.content === "Held execution") {
-      started.resolve();
-      const release = () => heldExecution.resolve();
-      signal.addEventListener("abort", release, { once: true });
-      try {
-        await heldExecution.promise;
-      } finally {
-        signal.removeEventListener("abort", release);
-      }
-    } else if (input.content === "Independent") {
-      await writeFile(join(material.workspace, "shared.txt"), "Independent work");
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  driver.respond = async (input, _material, signal) => {
+    if (input.content === "First") {
+      entered.resolve();
+      await Promise.race([
+        release.promise,
+        new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        ),
+      ]);
     }
-    return `Reply: ${input.content}`;
+    return input.content;
   };
-  host = await Host.start({
-    root,
-    driver,
-    configuration: {
-      ...configuration,
-      destinations: [
-        ...configuration.destinations,
-        { id: "notes", channelType: "cli", platformId: "notes", instance: "cli" },
-        { id: "other", channelType: "cli", platformId: "other", instance: "cli" },
-      ],
-    },
-  });
-  const received: OutboundMessage[] = [];
-  host.attachChannel({
-    channelType: "cli",
-    instance: "cli",
-    async deliver(message, signal) {
-      if (message.content === "Reply: Held delivery") {
-        delivering.resolve();
-        const release = () => heldDelivery.resolve();
-        signal.addEventListener("abort", release, { once: true });
-        try {
-          await heldDelivery.promise;
-        } finally {
-          signal.removeEventListener("abort", release);
-        }
-      }
-      received.push(message);
-    },
-  });
+  host = await Host.start({ root, configuration, driver });
   try {
-    const held = await host.accept({
+    const first = await host.accept({
       destinationId: "terminal",
       userId: "cli:local",
-      text: "Held execution",
+      text: "First",
     });
-    await vi.waitFor(() => expect(driver.launches).toHaveLength(1));
-    await waitForCheckpoint(started.promise, "held session execution");
-    await host.accept({ destinationId: "notes", userId: "cli:local", text: "Held delivery" });
-    await vi.waitFor(async () =>
-      expect((await host?.inspect(host.sessions()[1].id))?.outputs).toHaveLength(1),
-    );
-    await waitForCheckpoint(delivering.promise, "held session delivery");
-    const independent = await host.accept({
-      destinationId: "other",
+    await waitForCheckpoint(entered.promise, "first execution");
+    const second = await host.accept({
+      destinationId: "terminal",
       userId: "cli:local",
-      text: "Independent",
+      text: "Second",
     });
-    await vi.waitFor(() =>
-      expect(received).toContainEqual(
-        expect.objectContaining({
-          content: "Reply: Independent",
-          in_reply_to: independent.messageId,
-          platform_id: "other",
-        }),
-      ),
-    );
-    expect((await host.inspect(held.sessionId)).outputs).toEqual([]);
-    expect(await readFile(join(root, "groups", "personal", "shared.txt"), "utf8")).toBe(
-      "Independent work",
-    );
-    expect(driver.launches.map((launch) => launch.material.workspace)).toEqual([
-      join(root, "groups", "personal"),
-      join(root, "groups", "personal"),
-      join(root, "groups", "personal"),
+    expect(second.sessionId).toBe(first.sessionId);
+    expect((await host.inspect(first.sessionId)).inputs.map((row) => row.content)).toEqual([
+      "First",
+      "Second",
     ]);
+    expect(driver.launches).toHaveLength(1);
+    release.resolve();
+    await vi.waitFor(async () =>
+      expect((await host?.inspect(first.sessionId))?.outputs).toHaveLength(2),
+    );
   } finally {
-    heldExecution.resolve();
-    heldDelivery.resolve();
+    release.resolve();
   }
 });
 
-it("delivers persisted mailbox replies and explicitly continues the saved runner conversation after host restart", async () => {
+it("delivers persisted replies after restart and admits subsequent work into an independent Run", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-host-")));
   const driver = new MailboxDriver();
   const received: OutboundMessage[] = [];
@@ -169,11 +120,12 @@ it("delivers persisted mailbox replies and explicitly continues the saved runner
     userId: "cli:local",
     text: "Continue",
   });
-  expect(second.sessionId).toBe(first.sessionId);
+  expect(second.sessionId).not.toBe(first.sessionId);
   await vi.waitFor(() => expect(received).toHaveLength(2));
   expect(received[1]).toMatchObject({ content: "Reply: Continue", in_reply_to: second.messageId });
-  expect(driver.launches[1].continuation).toBe(
-    `pi:${join(material.directory, "pi", "sessions", "fixture.jsonl")}`,
+  expect(driver.launches[1].continuation).toBeUndefined();
+  expect(await readFile(driver.launches[1].material.contextFile, "utf8")).toContain(
+    "Remember Alice",
   );
 });
 
@@ -228,7 +180,7 @@ it("rejects a second host before it can own the same persisted state", async () 
   }
 });
 
-it("keeps configured destinations in separate conversations with one shared Agent workspace and denies unknown owners", async () => {
+it("routes configured destinations through one Thread and denies unknown owners", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-host-")));
   const driver = new MailboxDriver();
   host = await Host.start({
@@ -256,7 +208,7 @@ it("keeps configured destinations in separate conversations with one shared Agen
   expect(host.sessions()).toHaveLength(0);
   const a = await host.accept({ destinationId: "terminal", userId: "cli:local", text: "First" });
   const b = await host.accept({ destinationId: "notes", userId: "cli:local", text: "Second" });
-  expect(a.sessionId).not.toBe(b.sessionId);
+  expect(a.sessionId).toBe(b.sessionId);
   await vi.waitFor(() => expect(received).toHaveLength(2));
   expect(received).toEqual(
     expect.arrayContaining([
@@ -266,9 +218,7 @@ it("keeps configured destinations in separate conversations with one shared Agen
   );
   expect(driver.launches.map((launch) => launch.material.workspace)).toEqual([
     join(root, "groups", "personal"),
-    join(root, "groups", "personal"),
   ]);
-  expect(driver.launches[0].material.directory).not.toBe(driver.launches[1].material.directory);
 });
 
 it("exposes driver configuration failure without losing accepted input or leaking diagnostics", async () => {

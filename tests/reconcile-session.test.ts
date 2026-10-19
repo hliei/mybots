@@ -194,5 +194,6 @@ it("records a container heartbeat the host can observe", async () => {
     tool_declared_timeout_ms: 5000,
   });
   runner.touch();
-  expect(host.heartbeat()).toBeGreaterThanOrEqual(first ?? 0);
+  // Filesystem creation may retain finer precision than Date-based heartbeat updates.
+  expect(Math.floor(host.heartbeat() ?? 0)).toBeGreaterThanOrEqual(Math.floor(first ?? 0));
 });

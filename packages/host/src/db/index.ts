@@ -6,7 +6,6 @@ import type { AgentResources, WebConfiguration } from "@mybots/mailbox";
 import { BotRequestError, type BotSettings, type ManagedBot } from "../bots.ts";
 import type { ModelConfiguration } from "../drivers/types.ts";
 import type { HostConfiguration } from "../host.ts";
-import { ChatStore } from "./chat.ts";
 import { schema } from "./migrations/001-initial.ts";
 import { resourceSchema } from "./migrations/002-agent-resources.ts";
 import { deliveryAttemptSchema } from "./migrations/003-delivery-attempts.ts";
@@ -14,6 +13,8 @@ import { recoverySchema } from "./migrations/004-session-recovery.ts";
 import { webSchema } from "./migrations/005-web-tools.ts";
 import { managedBotSchema } from "./migrations/006-managed-bots.ts";
 import { chatSchema } from "./migrations/007-chat-work.ts";
+import { threadExecutionSchema } from "./migrations/008-thread-execution.ts";
+import { ThreadStore } from "./threads.ts";
 
 export interface HostInstance {
   instance_id: string;
@@ -71,7 +72,7 @@ export interface DeliveryAttempt {
 
 export class HostStore {
   private readonly db: DatabaseSync;
-  readonly chat: ChatStore;
+  readonly threads: ThreadStore;
   constructor(file: string, configuration: HostConfiguration) {
     this.db = new DatabaseSync(file);
     try {
@@ -81,7 +82,15 @@ export class HostStore {
       const { user_version } = this.db.prepare("PRAGMA user_version").get() as {
         user_version: number;
       };
-      if (user_version > 7) throw new Error("Unsupported host schema version");
+      if (user_version > 8) throw new Error("Unsupported host schema version");
+      if (
+        user_version > 0 &&
+        user_version < 8 &&
+        this.db.prepare("SELECT id FROM sessions LIMIT 1").get()
+      )
+        throw new Error(
+          "Fresh execution state required: stop the Host and remove data/host.db and data/sessions; retain deployment credentials and groups.",
+        );
       if (user_version === 0) this.db.exec(schema);
       if (user_version <= 1) this.db.exec(resourceSchema);
       if (user_version <= 2) this.db.exec(deliveryAttemptSchema);
@@ -89,8 +98,10 @@ export class HostStore {
       if (user_version <= 4) this.db.exec(webSchema);
       if (user_version <= 5) this.db.exec(managedBotSchema);
       if (user_version <= 6) this.db.exec(chatSchema);
+      if (user_version <= 7) this.db.exec(threadExecutionSchema);
       this.seed(configuration);
-      this.chat = new ChatStore(this.db);
+      this.threads = new ThreadStore(this.db);
+      this.threads.ensureThreads(new Date().toISOString());
     } catch (error) {
       this.db.close();
       throw error;
@@ -168,49 +179,22 @@ export class HostStore {
     }
   }
 
-  resolve(destinationId: string, userId: string): SessionRoute {
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
-      if (
-        !this.db
-          .prepare(
-            "SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'owner' AND agent_group_id IS NULL",
-          )
-          .get(userId)
+  ownerDestination(destinationId: string, userId: string): string {
+    if (
+      !this.db
+        .prepare(
+          "SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'owner' AND agent_group_id IS NULL",
+        )
+        .get(userId)
+    )
+      throw new Error("Owner identity required");
+    const routes = this.db
+      .prepare(
+        `SELECT agent_group_id FROM messaging_group_agents WHERE messaging_group_id = ? AND engage_mode = 'pattern' AND engage_pattern = '.' AND sender_scope = 'known' AND session_mode = 'shared' AND threads = 0`,
       )
-        throw new Error("Owner identity required");
-      const routes = this.db
-        .prepare(
-          `SELECT a.id AS agent_group_id FROM messaging_group_agents w JOIN agent_groups a ON a.id = w.agent_group_id WHERE w.messaging_group_id = ? AND w.engage_mode = 'pattern' AND w.engage_pattern = '.' AND w.sender_scope = 'known' AND w.session_mode = 'shared' AND w.threads = 0`,
-        )
-        .all(destinationId);
-      if (routes.length !== 1) throw new Error("Destination must be wired to one personal Agent");
-      const agentId = routes[0].agent_group_id as string;
-      let session = this.db
-        .prepare(
-          "SELECT * FROM sessions WHERE agent_group_id = ? AND messaging_group_id = ? AND thread_id IS NULL AND status = 'active'",
-        )
-        .get(agentId, destinationId) as unknown as SavedSession | undefined;
-      const now = new Date().toISOString();
-      if (!session) {
-        const id = randomUUID();
-        this.db
-          .prepare(
-            "INSERT INTO sessions (id, agent_group_id, messaging_group_id, created_at, last_active) VALUES (?, ?, ?, ?, ?)",
-          )
-          .run(id, agentId, destinationId, now, now);
-        session = this.db
-          .prepare("SELECT * FROM sessions WHERE id = ?")
-          .get(id) as unknown as SavedSession;
-      }
-      this.db.prepare("UPDATE sessions SET last_active = ? WHERE id = ?").run(now, session.id);
-      const route = this.route(session);
-      this.db.exec("COMMIT");
-      return route;
-    } catch (error) {
-      this.db.exec("ROLLBACK");
-      throw error;
-    }
+      .all(destinationId);
+    if (routes.length !== 1) throw new Error("Destination must be wired to one personal Agent");
+    return routes[0]?.agent_group_id as string;
   }
 
   route(session: SavedSession): SessionRoute {

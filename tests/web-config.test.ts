@@ -114,14 +114,14 @@ test.each([2, 3, 4])(
       });
       const store = new HostStore(file, configuration);
       try {
-        expect(store.resolve("terminal", "cli:local").web).toEqual({ fetch: true });
+        expect(store.ownerDestination("terminal", "cli:local")).toBe(hostBase.agent.id);
         if (version >= 3) expect(store.deliveryAttempt("saved-reply")?.attempts).toBe(2);
       } finally {
         store.close();
       }
       const upgraded = new DatabaseSync(file);
       try {
-        expect(upgraded.prepare("PRAGMA user_version").get()?.user_version).toBe(7);
+        expect(upgraded.prepare("PRAGMA user_version").get()?.user_version).toBe(8);
         if (version === 4)
           expect(upgraded.prepare("SELECT instance_id FROM host_instances").all()).toEqual([
             { instance_id: "previous-host" },

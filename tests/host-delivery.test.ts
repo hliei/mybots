@@ -198,12 +198,18 @@ it("exhausts a retried message across host restarts and never sends a terminal f
       received.push(message);
     },
   });
-  await host.accept({ destinationId: "terminal", userId: "cli:local", text: "Again" });
+  const subsequent = await host.accept({
+    destinationId: "terminal",
+    userId: "cli:local",
+    text: "Again",
+  });
   await vi.waitFor(() => expect(received).toHaveLength(1));
   expect(received[0].content).toBe("Reply: Again");
   expect(received.map((message) => message.id)).not.toContain(output.id);
   expect((await host.inspect(sessionId)).deliveries).toEqual([
     expect.objectContaining({ id: output.id, status: "failed", attempts: 0 }),
+  ]);
+  expect((await host.inspect(subsequent.sessionId)).deliveries).toEqual([
     expect.objectContaining({ status: "delivered" }),
   ]);
 });
@@ -305,7 +311,7 @@ it("keeps delivering later replies while an earlier reply in the same session ke
   expect(driver.launches).toHaveLength(1);
 });
 
-it("does not let a failed destination hold back an independent session", async () => {
+it("keeps per-input delivery independent within the same Run", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-delivery-")));
   const driver = new MailboxDriver();
   host = await Host.start({
@@ -349,11 +355,10 @@ it("does not let a failed destination hold back an independent session", async (
   await vi.waitFor(async () =>
     expect((await host?.inspect(broken.sessionId))?.deliveries).toEqual([
       expect.objectContaining({ status: "failed" }),
+      expect.objectContaining({ status: "delivered" }),
     ]),
   );
-  expect((await host.inspect(working.sessionId)).deliveries).toEqual([
-    expect.objectContaining({ status: "delivered" }),
-  ]);
+  expect(working.sessionId).toBe(broken.sessionId);
 });
 
 it("does not replay a destination whose delivery was accepted with no connected client", async () => {
@@ -387,7 +392,11 @@ it("does not replay a destination whose delivery was accepted with no connected 
       received.push(message);
     },
   });
-  await host.accept({ destinationId: "terminal", userId: "cli:local", text: "Again" });
+  const _subsequent = await host.accept({
+    destinationId: "terminal",
+    userId: "cli:local",
+    text: "Again",
+  });
   await vi.waitFor(() => expect(received).toHaveLength(1));
   expect(received[0].content).toBe("Reply: Again");
   expect(received.map((message) => message.content)).not.toContain("Reply: Offline");

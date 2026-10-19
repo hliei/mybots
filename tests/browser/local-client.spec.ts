@@ -52,6 +52,7 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
   try {
     const ready = await start();
     await page.goto(ready.url);
+    await expect(page).toHaveTitle("Mybots · Bots");
     await expect(page.getByLabel("Connection credential")).toBeVisible();
     await page.getByLabel("Connection credential").fill("incorrect");
     await page.getByRole("button", { name: "Pair with Host" }).click();
@@ -94,12 +95,10 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await expect(page.locator("#selected-bot")).toContainText("deepseek-reasoner");
     await page.getByRole("button", { name: "Select Researcher", exact: true }).click();
     await expect(page.locator("#selected-bot")).toContainText("Investigate sources.");
-    await page.getByLabel("Session name", { exact: true }).fill("Sources");
-    await page.getByRole("button", { name: "Create session", exact: true }).click();
-    await expect(page.locator("#selected-chat")).toContainText("Sources");
+    await expect(page.locator("#selected-chat")).toContainText("Thread ID:");
     await page.getByLabel("Message", { exact: true }).fill("Research first");
     let lostMessage = false;
-    await page.route("**/api/sessions/*/messages", async (route) => {
+    await page.route("**/api/bots/*/thread/messages", async (route) => {
       if (!lostMessage) {
         lostMessage = true;
         await route.fetch();
@@ -112,34 +111,41 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await page.getByRole("button", { name: "Retry chat request", exact: true }).click();
     await expect(page.locator("#chat-works")).toContainText("Final: Research first");
     await expect(page.locator("#chat-works article")).toHaveCount(1);
-    await page.getByLabel("Session name", { exact: true }).fill("Analysis");
-    await page.getByRole("button", { name: "Create session", exact: true }).click();
     await page.getByLabel("Message", { exact: true }).fill("Hold chat");
-    await page.getByRole("button", { name: "Send message", exact: true }).click();
-    await expect(page.locator("#chat-works")).toContainText("Execution: active");
+    await page.getByRole("button", { name: "New task", exact: true }).click();
+    await expect(page.locator("#chat-works article").nth(1)).toContainText("Execution: active");
+    await page.getByLabel("Message", { exact: true }).fill("Independent work");
+    await page.getByRole("button", { name: "New task", exact: true }).click();
+    await expect(page.locator("#chat-works article").nth(2)).toContainText("Execution: queued");
+    const target = await page.locator("#chat-works article").nth(1).getAttribute("data-task-id");
+    await page.getByLabel("Input target").selectOption(target as string);
     await page.getByLabel("Message", { exact: true }).fill("Follow-up");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
-    await expect(page.locator("#chat-works .chat-input")).toHaveCount(2);
-    await expect(page.locator("#chat-works article")).toHaveCount(1);
+    await expect(page.locator("#chat-works article").nth(1)).toContainText("Follow-up");
+    await expect(page.locator("#chat-works article").nth(2)).not.toContainText("Follow-up");
     await page.getByRole("button", { name: "Select Writer", exact: true }).click();
-    await page.getByLabel("Session name", { exact: true }).fill("Draft");
-    await page.getByRole("button", { name: "Create session", exact: true }).click();
     await page.getByLabel("Message", { exact: true }).fill("Write independently");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await expect(page.locator("#chat-works")).toContainText("Final: Write independently");
     await expect(page.locator("#chat-works")).not.toContainText("Research first");
     await page.getByRole("button", { name: "Select Researcher", exact: true }).click();
-    await expect(page.locator("#chat-works")).toContainText("Execution: active");
+    await expect(page.locator("#chat-works article").nth(1)).toContainText("Execution: active");
     child?.send("complete-chat");
     await page.getByRole("button", { name: "Refresh status" }).click();
-    await expect(page.locator("#chat-works")).toContainText("Outcome: succeeded");
-    await expect(page.locator("#chat-works")).toContainText("Final: Follow-up");
-    await page.getByRole("button", { name: "Select session Sources", exact: true }).click();
-    await expect(page.locator("#chat-works")).toContainText("Final: Research first");
-    await expect(page.locator("#chat-works")).not.toContainText("Follow-up");
-    await page.getByLabel("Rename session").fill("Research sources");
-    await page.getByRole("button", { name: "Save session name", exact: true }).click();
-    await expect(page.locator("#selected-chat")).toContainText("Research sources");
+    await expect(page.locator("#chat-works article").nth(1)).toContainText("Outcome: succeeded");
+    await expect(page.locator("#chat-works article").nth(2)).toContainText("Outcome: succeeded");
+    await expect(page.locator("#chat-works")).toContainText("Run ID:");
+    await expect(page.locator("#chat-works")).toContainText("Attempt:");
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.locator("#chat-heading").evaluate((element) => element.scrollIntoView());
+    await page.screenshot({ path: "/tmp/mybots-thread-desktop.png" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.locator("#chat-heading").evaluate((element) => element.scrollIntoView());
+    await page.screenshot({ path: "/tmp/mybots-thread-mobile.png" });
+    await page.setViewportSize({ width: 1280, height: 900 });
     const cookie = (await context.cookies()).find((cookie) => cookie.name === "mybots_connection");
     expect(cookie).toMatchObject({ httpOnly: true, sameSite: "Strict" });
     await page.reload();
@@ -156,9 +162,9 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await expect(page.locator("#bots")).toContainText(ready.sessionId);
     await expect(page.locator("#bots")).toContainText("Container: stopped");
     await expect(page.locator("#selected-bot")).toContainText("Researcher");
-    await expect(page.locator("#selected-chat")).toContainText("Research sources");
+    await expect(page.locator("#selected-chat")).toContainText("Thread ID:");
     await expect(page.locator("#chat-works")).toContainText("Final: Research first");
-    await expect(page.locator("#chat-works article")).toHaveCount(1);
+    await expect(page.locator("#chat-works article")).toHaveCount(3);
     await page.getByRole("button", { name: "Select Writer", exact: true }).click();
     await expect(page.locator("#selected-bot")).toContainText("Write clear reports.");
     await expect(page.getByRole("button", { name: /save settings|edit bot/i })).toHaveCount(0);

@@ -143,26 +143,21 @@ try {
   await chat("Remember Alice");
   const sessionId = host.sessions().find((session) => session.messaging_group_id === "terminal").id;
   assert.notEqual(webSession.id, sessionId);
-  const continuation = (await host.inspect(sessionId)).continuation;
+  const threadId = (await host.threadDetail("personal")).thread.id;
   await chat("CLI reconnect");
-  assert.equal(
-    host.sessions().find((session) => session.messaging_group_id === "terminal").id,
-    sessionId,
-  );
+  assert.equal((await host.threadDetail("personal")).thread.id, threadId);
+  assert.equal((await host.threadDetail("personal")).tasks.length, 3);
   await close();
   await open();
   await observe("Observed after host restart");
   await chat("Host restart");
-  assert.equal(
-    host.sessions().find((session) => session.messaging_group_id === "terminal").id,
-    sessionId,
-  );
+  assert.equal((await host.threadDetail("personal")).thread.id, threadId);
   const restarted = driver.launches.at(-1);
-  assert.equal(restarted.material.directory, join(root, "data", "sessions", "personal", sessionId));
-  assert.equal(restarted.continuation, continuation);
-  assert.equal(host.sessions().length, 2);
+  assert.notEqual(restarted.material.key.sessionId, sessionId);
+  assert.equal(restarted.continuation, undefined);
+  assert.equal(host.sessions().length, 5);
   console.log(
-    "Persistent host routing, CLI/WebSocket conversations, reconnect and selected continuation passed (controlled mailbox driver).",
+    "Persistent Thread routing, CLI/WebSocket reconnect and independent Run contexts passed (controlled mailbox driver).",
   );
 } finally {
   await close();
