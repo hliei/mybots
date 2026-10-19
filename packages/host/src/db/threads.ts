@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { InboundMessage, OutboundMessage, ProcessingAck } from "@mybots/mailbox";
 import { ChatRequestError } from "../chat.ts";
+import { history } from "./history.ts";
 import type { SavedSession } from "./index.ts";
 
 interface ThreadRow {
@@ -37,6 +38,20 @@ interface Original {
   content: string;
   run_id: string;
   created_at: string;
+}
+
+function preview(text: string) {
+  const chars = Array.from(text);
+  return { text: chars.slice(0, 2000).join(""), truncated: chars.length > 2000 };
+}
+function outcomePreview(serialized: string | null) {
+  if (!serialized) return null;
+  const outcome = JSON.parse(serialized);
+  return {
+    ...outcome,
+    reply: preview(outcome.reply).text,
+    truncated: preview(outcome.reply).truncated,
+  };
 }
 
 /** Product conversation and execution identities; SDK state belongs to each Run's executor. */
@@ -321,6 +336,30 @@ export class ThreadStore {
     }
   }
 
+  history(botId: string, input: unknown, runId?: string) {
+    const thread = this.thread(botId);
+    if (!runId) return history(this.db, { threadId: thread.id, backgroundBoundary: 0 }, input);
+    const run = this.run(runId);
+    if (this.session(runId).agent_group_id !== botId)
+      throw new ChatRequestError("Run not found for this Bot.", 404);
+    const seq = this.db
+      .prepare("SELECT seq FROM thread_messages WHERE id = ? AND thread_id = ?")
+      .get(run.source_message_id, thread.id)?.seq as number;
+    return history(
+      this.db,
+      { threadId: thread.id, backgroundBoundary: run.background_boundary, searchBeforeSeq: seq },
+      input,
+    );
+  }
+
+  attempts(runId: string) {
+    return this.db
+      .prepare(
+        "SELECT id, incarnation, configuration_version AS configurationVersion, started_at AS startedAt, ended_at AS endedAt FROM attempts WHERE run_id = ? ORDER BY rowid",
+      )
+      .all(runId);
+  }
+
   detail(botId: string) {
     const thread = this.thread(botId);
     const tasks = this.db
@@ -339,19 +378,18 @@ export class ThreadStore {
           state: run.state,
           backgroundBoundary: run.background_boundary,
           sourceMessageId: run.source_message_id,
-          outcome: run.outcome ? JSON.parse(run.outcome) : null,
-          inputs: this.inputs(run.id).map((input) => ({
-            id: input.message_id,
-            text: input.content,
-            admittedAt: input.admitted_at,
-            recordedAt: input.recorded_at,
-            outcome: input.outcome ? JSON.parse(input.outcome) : null,
-          })),
-          attempts: this.db
-            .prepare(
-              "SELECT id, incarnation, configuration_version AS configurationVersion, started_at AS startedAt, ended_at AS endedAt FROM attempts WHERE run_id = ? ORDER BY rowid",
-            )
-            .all(run.id),
+          outcome: outcomePreview(run.outcome),
+          inputs: this.inputs(run.id)
+            .slice(0, 5)
+            .map((input) => ({
+              id: input.message_id,
+              text: preview(input.content).text,
+              truncated: preview(input.content).truncated,
+              admittedAt: input.admitted_at,
+              recordedAt: input.recorded_at,
+              outcome: outcomePreview(input.outcome),
+            })),
+          attempts: this.attempts(run.id).slice(0, 5),
         })),
       }));
     return {
@@ -359,9 +397,15 @@ export class ThreadStore {
       tasks,
       messages: this.db
         .prepare(
-          "SELECT id, seq, run_id AS runId, role, content, created_at AS createdAt FROM thread_messages WHERE thread_id = ? ORDER BY seq",
+          "SELECT id, seq, run_id AS runId, role, content, created_at AS createdAt FROM thread_messages WHERE thread_id = ? ORDER BY seq DESC LIMIT 5",
         )
-        .all(thread.id),
+        .all(thread.id)
+        .reverse()
+        .map((message) => ({
+          ...message,
+          content: preview(message.content as string).text,
+          truncated: preview(message.content as string).truncated,
+        })),
     };
   }
 }

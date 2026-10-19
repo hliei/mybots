@@ -28,6 +28,14 @@
         <section id="chat" aria-labelledby="chat-heading" hidden>
           <h2 id="chat-heading">Direct Thread</h2>
           <h3 id="selected-chat"></h3>
+          <form id="history-search">
+            <label for="history-query">Search original history</label>
+            <input id="history-query" maxlength="500" type="search">
+            <button type="submit">Search history</button>
+            <button id="history-latest" type="button">Latest originals</button>
+          </form>
+          <div id="history-navigation"></div>
+          <div id="live-execution" aria-live="polite"></div>
           <div id="thread-messages" aria-label="Conversation"></div>
           <form id="message-form">
             <label for="input-target">Input target</label>
@@ -38,6 +46,7 @@
             <button id="new-task" type="submit">New task</button>
           </form>
           <div id="chat-works" aria-label="Tasks and Runs"></div>
+          <section id="run-history" aria-label="Recorded Run evidence"></section>
           <p id="chat-message" aria-live="polite"></p>
           <button id="retry-chat" type="button" hidden>Retry chat request</button>
         </section>

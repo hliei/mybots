@@ -1,12 +1,21 @@
+import { showHistory, showRunHistory } from "./history.ts";
+
 interface Outcome {
   kind: string;
   reply: string;
+  truncated?: boolean;
 }
 interface Run {
   id: string;
   state: string;
   outcome: Outcome | null;
-  inputs: { id: string; text: string; recordedAt: string | null; outcome: Outcome | null }[];
+  inputs: {
+    id: string;
+    text: string;
+    truncated?: boolean;
+    recordedAt: string | null;
+    outcome: Outcome | null;
+  }[];
   attempts: {
     id: string;
     configurationVersion: number;
@@ -141,7 +150,10 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
     selected.textContent = "";
   }
   panel.hidden = !botId;
-  if (!botId) return;
+  if (!botId) {
+    await showHistory(undefined, []);
+    return;
+  }
   const current = ++version;
   controls();
   if (pending && !sending)
@@ -172,17 +184,13 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
         );
     if ([...target.options].some((option) => option.value === priorTarget))
       target.value = priorTarget;
-    messages.replaceChildren(
-      ...detail.messages.map((message) => {
-        const node = paragraph(`${message.role === "user" ? "You" : "Bot"}: ${message.content}`);
-        const task = detail.tasks.find((task) => task.runs.some((run) => run.id === message.runId));
-        const link = document.createElement("a");
-        link.href = `#task-${task?.id}`;
-        link.textContent = "View Task";
-        node.append(document.createTextNode(" "), link);
-        return node;
-      }),
+    await showHistory(
+      botId,
+      detail.tasks.flatMap((task) =>
+        task.runs.filter((run) => run.state === "active").map((run) => run.id),
+      ),
     );
+    if (current !== version) return;
     works.replaceChildren(
       ...detail.tasks.map((task) => {
         const article = document.createElement("article");
@@ -195,7 +203,12 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
             paragraph(`Execution: ${run.state}`),
             paragraph(`Outcome: ${run.outcome?.kind ?? "unresolved"}`),
           );
-          if (run.outcome) article.append(paragraph(`Final: ${run.outcome.reply}`));
+          if (run.outcome)
+            article.append(
+              paragraph(
+                `Final: ${run.outcome.reply}${run.outcome.truncated ? " [Excerpt; inspect Run evidence for the original.]" : ""}`,
+              ),
+            );
           if (run.state === "uncertain")
             article.append(
               paragraph(
@@ -205,7 +218,7 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
           const details = document.createElement("details");
           details.append(
             Object.assign(document.createElement("summary"), {
-              textContent: "Inputs and Attempts",
+              textContent: "Input and Attempt previews (first five)",
             }),
           );
           for (const attempt of run.attempts)
@@ -215,7 +228,9 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
               ),
             );
           for (const input of run.inputs) {
-            const node = paragraph(`You: ${input.text}`);
+            const node = paragraph(
+              `You: ${input.text}${input.truncated ? " [Excerpt; inspect Run inputs for the original.]" : ""}`,
+            );
             node.className = "chat-input";
             details.append(node);
             details.append(
@@ -226,6 +241,11 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
             if (input.outcome) details.append(paragraph(`Reply: ${input.outcome.reply}`));
           }
           article.append(details);
+          const inspect = document.createElement("button");
+          inspect.type = "button";
+          inspect.textContent = "Inspect Run evidence";
+          inspect.addEventListener("click", () => void showRunHistory(run.id));
+          article.append(inspect);
         }
         return article;
       }),

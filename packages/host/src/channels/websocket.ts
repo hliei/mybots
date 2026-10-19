@@ -339,6 +339,7 @@ export class WebSocketChannel {
     if (!this.admission) return;
     let payload: string;
     if (event.type === "input") payload = serializeInbound(event);
+    else if (event.type === "execution") payload = JSON.stringify(event);
     else if (event.type === "output") {
       // This channel's own destination output is sent by `deliver`, not observed.
       if (

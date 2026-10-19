@@ -3,6 +3,9 @@ import { existsSync, mkdirSync, statSync, utimesSync, writeFileSync } from "node
 import { join } from "node:path";
 import type {
   ContainerState,
+  ExecutionRecord,
+  ExecutionSnapshot,
+  HistoryRequest,
   InboundMessage,
   OutboundMessage,
   ProcessingAck,
@@ -10,7 +13,7 @@ import type {
 } from "../types.ts";
 import type { WithDatabase } from "./connection.ts";
 import { clearMailboxLocks } from "./lock.ts";
-import { INBOUND_SCHEMA, OUTBOUND_SCHEMA } from "./schema.ts";
+import { HOST_OPERATIONS_SCHEMA, INBOUND_SCHEMA, OUTBOUND_SCHEMA } from "./schema.ts";
 
 export function createMailbox(withDatabase: WithDatabase) {
   /**
@@ -56,12 +59,70 @@ export function createMailbox(withDatabase: WithDatabase) {
         });
       }
     }
+    withDatabase(directory, "inbound", false, (db) => db.exec(HOST_OPERATIONS_SCHEMA));
   }
 
   class HostMailbox {
     readonly directory: string;
     constructor(directory: string) {
       this.directory = directory;
+    }
+
+    setExecutionIncarnation(incarnation: number): void {
+      withDatabase(this.directory, "inbound", false, (db) =>
+        db.run(
+          "INSERT OR REPLACE INTO host_operation_state VALUES ('incarnation', ?)",
+          String(incarnation),
+        ),
+      );
+    }
+    executionIncarnation(): number {
+      return withDatabase(this.directory, "inbound", true, (db) =>
+        Number(
+          (
+            db.get("SELECT value FROM host_operation_state WHERE key = 'incarnation'") as
+              | { value: string }
+              | undefined
+          )?.value ?? 0,
+        ),
+      );
+    }
+    operationResponse(id: string): { result?: unknown; error?: string } | undefined {
+      return withDatabase(this.directory, "inbound", true, (db) => {
+        const row = db.get(
+          "SELECT value FROM host_operation_state WHERE key = ?",
+          `response:${id}`,
+        ) as { value: string } | undefined;
+        return row ? JSON.parse(row.value) : undefined;
+      });
+    }
+    respondOperation(id: string, response: { result?: unknown; error?: string }): void {
+      withDatabase(this.directory, "inbound", false, (db) =>
+        db.run(
+          "INSERT OR IGNORE INTO host_operation_state VALUES (?, ?)",
+          `response:${id}`,
+          JSON.stringify(response),
+        ),
+      );
+    }
+    private state<T>(prefix: string): T[] {
+      return withDatabase(this.directory, "outbound", true, (db) =>
+        (
+          db.all(
+            "SELECT value FROM session_state WHERE key LIKE ? ORDER BY rowid",
+            `${prefix}:%`,
+          ) as { value: string }[]
+        ).map((row) => JSON.parse(row.value) as T),
+      );
+    }
+    historyRequests(): HistoryRequest[] {
+      return this.state<HistoryRequest>("request");
+    }
+    executionRecords(): ExecutionRecord[] {
+      return this.state<ExecutionRecord>("evidence");
+    }
+    executionSnapshot(): ExecutionSnapshot | undefined {
+      return this.state<ExecutionSnapshot>("live").at(-1);
     }
 
     submit(
@@ -253,6 +314,39 @@ export function createMailbox(withDatabase: WithDatabase) {
     readonly directory: string;
     constructor(directory: string) {
       this.directory = directory;
+    }
+
+    executionIncarnation(): number {
+      return new HostMailbox(this.directory).executionIncarnation();
+    }
+    requestHistory(request: HistoryRequest): void {
+      this.saveState(`request:${request.id}`, request);
+    }
+    historyResponse(id: string) {
+      return new HostMailbox(this.directory).operationResponse(id);
+    }
+    recordExecution(record: ExecutionRecord): void {
+      withDatabase(this.directory, "outbound", false, (db) =>
+        db.run(
+          "INSERT OR IGNORE INTO session_state VALUES (?, ?, ?)",
+          `evidence:${record.id}`,
+          JSON.stringify(record),
+          new Date().toISOString(),
+        ),
+      );
+    }
+    saveSnapshot(snapshot: ExecutionSnapshot): void {
+      this.saveState("live:current", snapshot);
+    }
+    private saveState(key: string, value: unknown): void {
+      withDatabase(this.directory, "outbound", false, (db) =>
+        db.run(
+          "INSERT OR REPLACE INTO session_state VALUES (?, ?, ?)",
+          key,
+          JSON.stringify(value),
+          new Date().toISOString(),
+        ),
+      );
     }
 
     pending(): InboundMessage[] {

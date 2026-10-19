@@ -136,6 +136,15 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await expect(page.locator("#chat-works article").nth(2)).toContainText("Outcome: succeeded");
     await expect(page.locator("#chat-works")).toContainText("Run ID:");
     await expect(page.locator("#chat-works")).toContainText("Attempt:");
+    await page.getByLabel("Search original history").fill("Research");
+    await page.getByRole("button", { name: "Search history", exact: true }).click();
+    await expect(page.locator("#thread-messages")).toContainText("Research first");
+    await page.getByRole("button", { name: "Latest originals", exact: true }).click();
+    await expect(page.locator("#thread-messages")).toContainText("Independent work");
+    await page.getByRole("button", { name: "Older originals", exact: true }).click();
+    await expect(page.locator("#thread-messages")).toContainText("Research first");
+    await page.getByRole("button", { name: "Inspect Run evidence", exact: true }).first().click();
+    await expect(page.locator("#run-history")).toContainText("Recorded Run evidence");
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.locator("#chat-heading").evaluate((element) => element.scrollIntoView());
     await page.screenshot({ path: "/tmp/mybots-thread-desktop.png" });

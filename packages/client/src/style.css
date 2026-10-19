@@ -27,4 +27,7 @@ button[aria-pressed="true"] { outline: 3px solid #9bcfb3; }
 #selected-bot p { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 #selected-chat { margin: 24px 0; overflow-wrap: anywhere; }
-#thread-messages p, #chat-works p { white-space: pre-wrap; overflow-wrap: anywhere; }
+#thread-messages p, #chat-works p, #live-execution p, #run-history p { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+#history-navigation { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+#thread-messages button { margin: 4px 8px 4px 0; }

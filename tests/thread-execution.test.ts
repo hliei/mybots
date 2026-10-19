@@ -449,7 +449,16 @@ it("enforces authentication, Bot/Task ownership, stable payloads and visible inp
         outcome: { reply: "Required Run input exceeds model capacity." },
       }),
     );
-    expect((await get(path)).tasks[0].runs[0].inputs[0].text).toBe(huge);
+    expect((await get(path)).tasks[0].runs[0].inputs[0]).toMatchObject({ truncated: true });
+    let inputPage = await get(`/api/bots/personal/runs/${admitted.runId}/history?kind=inputs`);
+    let original = inputPage.records[0].text;
+    while (inputPage.records[0].nextTextOffset !== null) {
+      inputPage = await get(
+        `/api/bots/personal/runs/${admitted.runId}/history?kind=inputs&recordId=${admitted.messageId}&textOffset=${inputPage.records[0].nextTextOffset}`,
+      );
+      original += inputPage.records[0].text;
+    }
+    expect(original).toBe(huge);
     expect(service.requests).toHaveLength(0);
     expect(
       (await post(`${path}/messages`, { requestId: "too-large", text: "Changed" })).status,

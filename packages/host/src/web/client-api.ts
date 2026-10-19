@@ -8,6 +8,7 @@ import type { LocalAccess } from "./local-access.ts";
 const ASSETS = new Map([
   ["/", ["index.html", "text/html; charset=utf-8"]],
   ["/main.js", ["main.js", "text/javascript; charset=utf-8"]],
+  ["/history.js", ["history.js", "text/javascript; charset=utf-8"]],
   ["/chat.js", ["chat.js", "text/javascript; charset=utf-8"]],
   ["/style.css", ["style.css", "text/css; charset=utf-8"]],
 ]);
@@ -54,6 +55,34 @@ export async function serveClient(
   if (path === "/api/bots" && request.method === "GET") {
     response.writeHead(200, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ bots: host.managedBots() }));
+    return;
+  }
+  const runHistoryRoute = /^\/api\/bots\/([^/]+)\/runs\/([^/]+)\/history$/.exec(path);
+  const historyRoute = /^\/api\/bots\/([^/]+)\/thread\/history$/.exec(path);
+  if ((historyRoute || runHistoryRoute) && request.method === "GET") {
+    try {
+      const params = new URL(request.url ?? "/", "http://localhost").searchParams;
+      const input = Object.fromEntries(
+        [...params].map(([key, value]) => [
+          key,
+          ["beforeSeq", "textOffset"].includes(key) ? Number(value) : value,
+        ]),
+      );
+      const result = runHistoryRoute
+        ? await host.runHistory(runHistoryRoute[1] as string, runHistoryRoute[2] as string, input)
+        : await host.threadHistory(historyRoute?.[1] as string, input);
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(result));
+    } catch (error) {
+      response.writeHead(error instanceof ChatRequestError ? error.status : 503, {
+        "Content-Type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error: error instanceof ChatRequestError ? error.message : "History unavailable.",
+        }),
+      );
+    }
     return;
   }
   const threadRoute = /^\/api\/bots\/([^/]+)\/thread(?:\/(messages|tasks))?$/.exec(path);

@@ -112,6 +112,13 @@ approved model, tools and workspace; settings persist across Host restart. The
 page refreshes status while visible. The Host must stay running, and desktop localhost is not
 reachable from a phone. See [local client access](docs/host-runtime.md#local-client-access).
 
+The Thread includes local original-history search and paginated reading. Inspect
+Run evidence to page through complete inputs, Attempts and recorded model/tool
+activity. Live text is a bounded progress preview; reload/reconnect repairs it
+from persisted state. Historical originals remain readable after SDK compaction.
+See [original history](docs/host-runtime.md#original-history-and-run-evidence)
+for limits, cursor semantics and execution-scoped Agent tools.
+
 The example WebSocket endpoint is `ws://127.0.0.1:8787/ws`. Native clients must
 supply `Authorization: Bearer <credential>` during the upgrade. Browser clients
 use the paired cookie and a matching Origin. Send:
@@ -209,8 +216,8 @@ selects the mailbox source export; built startup uses its compiled export. See
 - `packages/host/src/host.ts`, `packages/host/src/reconcile-session.ts`: routing, delivery and bounded recovery.
 - `packages/host/src/db/`: central entities and schema migrations.
 - `packages/host/src/channels/`: Telegram and WebSocket host adapters and Bot API transport.
-- `packages/host/src/web/`: client asset serving, local pairing, Bot/session operations and HTTP reads.
-- `packages/client/src/`: browser Bot management, selected-session chat and work outcomes using the public Host API.
+- `packages/host/src/web/`: client asset serving, local pairing, Bot/Thread operations and HTTP reads.
+- `packages/client/src/`: browser Bot management, Thread chat, paginated originals and Run outcomes using the public Host API.
 - `packages/host/src/drivers/`, `packages/host/src/container-runner.ts`: isolated execution and session material.
 - `packages/host/src/gateway-providers/`: host-side credential gateway integration.
 - `packages/mailbox/src/`: shared directional mailbox package with Node and Bun entries.

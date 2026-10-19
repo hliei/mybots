@@ -380,9 +380,9 @@ Each Task exposes origin and Runs. Runs expose state (`queued`, `active`,
 input identities, durable recording timestamps, final outcomes and Attempts.
 Each Attempt exposes fenced incarnation, effective configuration version (initially
 1), start and confirmed end. Outcomes correlate to final mailbox evidence, never
-queue acceptance or partial text. Complete SDK history, lexical retrieval, live
-streaming, owner stop/uncertainty resolution and configuration cutover remain later
-capabilities.
+queue acceptance or partial text. Complete original history, lexical retrieval
+and live execution previews are described below. Owner stop/uncertainty resolution
+and configuration cutover remain later capabilities.
 
 All private HTTP routes and WebSocket upgrades require the credential, either
 as a Bearer header or the paired cookie. An explicit invalid Authorization header
@@ -399,6 +399,47 @@ does not provide access to the desktop's localhost. Omit `websocket` to disable
 the combined listener. Without WebSocket destinations it still provides Bot creation,
 status and observation. When destinations are configured, they share one channel
 instance and input uses the same Thread/Task/Run admission as CLI.
+
+### Original history and Run evidence
+
+`GET /api/bots/:botId/thread/history` returns up to five original messages,
+source IDs/sequences/roles/times/Run IDs, linked Run states and outcome-message
+anchors, coverage and cursors. Without an anchor, pages are newest first;
+`beforeSeq` continues older pages. `query` performs case-insensitive NFKC-normalized
+substring conjunction over whitespace-separated terms, including Chinese phrases.
+It is local lexical matching, with no semantic ranking or embedding service.
+
+`messageId` authorizes an original anchor. `direction=around|older|newer` reads
+actual same-Thread neighbors; `textOffset` reads only that anchor's next excerpt.
+Read pages use 2,000 Unicode code points per message and search uses 800.
+Complete history JSON is bounded to 10,000 UTF-8 bytes, including escaping;
+`truncated` and `nextTextOffset` identify shortened text. Follow text offsets to
+recover full originals and sequence/anchor cursors to cover the requested range.
+An exhausted query/page does not prove absence outside its range or keywords.
+
+`GET /api/bots/:botId/runs/:runId/history` returns up to five stable `records`
+with `nextAfter` pagination. `after` continues the record list; `recordId` and
+`textOffset` continue one long record. `kind=inputs|attempts|records` selects
+admitted input originals, Attempt identities/configuration/timing, or SDK-recorded
+input/assistant/tool-call/tool-result evidence. The same 2,000-character and
+10,000-byte bounds apply. The Thread snapshot contains bounded previews of the
+latest five messages and the first five inputs/Attempts per Run; inspect these
+paged endpoints for complete evidence. Run summaries label truncated replies.
+
+The runner projects stable SDK entry/block identities after recording, omitting
+historical seed references, hidden reasoning, system prompts and provider-only
+payloads. Original tool calls/results remain separate from Thread conversation
+and survive SDK compaction. Reads never execute or mutably reopen an SDK session.
+
+Production `search_history` and `read_history` tools use correlated directional
+mailbox requests. The Host derives Bot/Thread/Run scope from the owned execution
+mailbox and checks its actual executor incarnation. Payload identity fields are
+rejected. Search is bounded by the Run's captured background boundary and excludes
+its source message and all later messages; anchor reading may include later
+corrections in the same authorized range. Unknown/cross-Bot anchors and stale
+executors cannot widen that scope. Historical text is untrusted reference data,
+not instructions or approval. Outcome anchors use the same original-reading
+boundary; delivered artifacts extend that boundary when available.
 
 ## Local WebSocket interface
 
@@ -419,6 +460,14 @@ An `error` frame is `{"type":"error","message"}`; it is connection-scoped and
 carries no correlation identifier, so a client that pipelines frames should not
 rely on matching one error to one submission. Accepted input is ordinary persisted
 mailbox input; no parallel local routing store is created.
+
+Authenticated `execution` WebSocket envelopes carry `botId`, `threadId`,
+`taskId`, `runId` and a bounded `snapshot` (`id`, executor `incarnation`, `text`,
+Unicode `textOffset`, current `tool`). The runner publishes accumulated previews,
+so a missed frame does not require concatenating subsequent fragments. A preview
+is progress only; the persisted Run outcome establishes completion. The browser
+repairs missed frames and reloads from HTTP snapshots, including after Host
+restart. Preview text can be shorter than the complete recorded originals.
 
 Every connected client observes live host envelopes: `inbound` for accepted input
 (`session_id`, `message_id`, `destination`, `channel_type`, `platform_id`,
