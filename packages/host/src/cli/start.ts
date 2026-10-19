@@ -6,7 +6,6 @@ import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { promisify } from "node:util";
-import { loadHostSettings } from "../config/host.ts";
 import { installSlug, serviceLabel, serviceUnitName } from "../config/service.ts";
 
 const execute = promisify(execFile);
@@ -180,6 +179,7 @@ async function ready(root: string, url: string): Promise<boolean> {
 export async function startClient(root: string): Promise<number> {
   try {
     root = await realpath(root);
+    const { loadHostSettings } = await import("../config/host.ts");
     const settings = await loadHostSettings(join(root, "host.json"));
     if (!settings.websocket || settings.websocket.port === 0)
       throw new Error("Configure a fixed loopback Web port before using mbt start.");
