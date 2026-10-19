@@ -471,7 +471,7 @@ export class Host {
       });
       execution.superseded.delete(handle);
       if (execution.handle === handle) execution.handle = undefined;
-      this.releaseBot(execution);
+      this.releaseBot(execution, incarnation);
     })();
     execution.cleanups.add(cleanup);
     void cleanup.then(() => execution.cleanups.delete(cleanup));
@@ -902,12 +902,13 @@ export class Host {
       if (state === "uncertain") for (const input of inputs) mailbox.holdInput(input.id);
       if (execution.handle && !execution.replacing) {
         const handle = execution.handle;
+        const incarnation = execution.incarnation;
         execution.superseded.add(handle);
         execution.replacing = handle
           .stop()
           .then(() => {
             if (execution.handle === handle) execution.handle = undefined;
-            this.releaseBot(execution);
+            this.releaseBot(execution, incarnation);
           })
           .catch(() => {
             execution.superseded.delete(handle);
@@ -937,7 +938,8 @@ export class Host {
     }
   }
 
-  private releaseBot(execution: SessionExecution): void {
+  private releaseBot(execution: SessionExecution, incarnation = execution.incarnation): void {
+    if (execution.incarnation !== incarnation) return;
     const { session } = execution.route;
     if (!this.storeClosed && session.purpose === "run")
       this.store.threads.endAttempt(session.id, this.timestamp());

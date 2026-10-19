@@ -1,6 +1,6 @@
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { AgentResources, SessionKey, WebConfiguration } from "@mybots/mailbox";
+import type { AgentResources, RunContext, SessionKey, WebConfiguration } from "@mybots/mailbox";
 import { resolveWebTools, validateAgentResources, validateWebConfiguration } from "@mybots/mailbox";
 import { initializeMailbox } from "@mybots/mailbox/node";
 import type { ModelConfiguration, SessionMaterial } from "./drivers/types.ts";
@@ -18,11 +18,7 @@ export async function provisionSession(input: {
   instructions?: string;
   resources?: AgentResources;
   web?: WebConfiguration;
-  runContext?: {
-    references: { id: string; role: string; content: string }[];
-    sourceMessageId: string;
-    backgroundBoundary: number;
-  };
+  runContext?: RunContext;
 }): Promise<SessionMaterial> {
   if (![input.key.agentGroupId, input.key.sessionId, input.folder].every(legalName))
     throw new Error("Invalid Agent/session path identity");

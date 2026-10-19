@@ -260,7 +260,14 @@ it("ignores a superseded container's late exit and keeps the newer incarnation r
   await setTimeout(20);
   expect(handles[0].stopped).toBe(true);
   expect((await host.inspect(accepted.sessionId))?.session?.container_status).toBe("running");
-  handles[1].resolve();
+  try {
+    const detail = await host.threadDetail("personal");
+    expect(detail.tasks[0]?.runs[0]?.attempts[1]?.endedAt).toBeNull();
+    await host.sendThread("personal", { requestId: "independent", text: "Queued" }, "new-task");
+    expect(handles).toHaveLength(2);
+  } finally {
+    handles[1].resolve();
+  }
 });
 
 it("adopts the data directory after an abnormal host exit", async () => {
