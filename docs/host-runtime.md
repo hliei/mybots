@@ -349,8 +349,8 @@ admission limits are a subsequent capability.
 Work records expose `id`, `botId`, `sessionId`, `state`, `outcome`, timestamps,
 and admitted `messages`. Each message includes its stable `id`, input `text`, and
 correlated final `outcome` with `messageId`, `resultId`, `reply`, `kind` and time.
-A work outcome identifies the final input/result and reports failure if any of
-its inputs failed. Bounded recovery exhaustion has a failure reason without a
+A successful work outcome identifies the last input/result; a failed work outcome
+identifies the first failed input/result, retaining each later reply separately. Bounded recovery exhaustion has a failure reason without a
 runner `resultId`. States distinguish `queued`, `active`, `succeeded`, `failed`,
 and `uncertain`; unresolved work has no terminal outcome. Result delivery remains
 independent of work success.

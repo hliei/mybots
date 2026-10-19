@@ -23,7 +23,7 @@ export class MailboxDriver implements SessionDriver, ObservingSessionDriver {
     input: InboundMessage,
     material: SessionMaterial,
     signal: AbortSignal,
-  ) => Promise<string>;
+  ) => Promise<string | { error: string }>;
 
   async start(material: SessionMaterial, signal: AbortSignal): Promise<SessionHandle> {
     if (this.fail) throw new Error("Controlled driver unavailable");
@@ -50,8 +50,12 @@ export class MailboxDriver implements SessionDriver, ObservingSessionDriver {
             ? await this.respond(input, material, runningSignal)
             : `Reply: ${input.content}`;
           if (runningSignal.aborted) break;
-          mailbox.acknowledge(input.id, "completed");
-          mailbox.reply(input, reply);
+          mailbox.acknowledge(input.id, typeof reply === "string" ? "completed" : "failed");
+          mailbox.reply(
+            input,
+            typeof reply === "string" ? reply : reply.error,
+            typeof reply === "string" ? "message" : "error",
+          );
         }
         await setTimeout(5, undefined, { signal: runningSignal }).catch((error) => {
           if (!runningSignal.aborted) throw error;

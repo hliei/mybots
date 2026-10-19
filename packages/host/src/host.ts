@@ -472,6 +472,10 @@ export class Host {
     // bounded recovery schedule instead of restarting forever.
     if (!execution.superseded.has(handle)) {
       if (error) this.emit({ type: "failure", sessionId: id, error });
+      // A runner can exit immediately after persisting final evidence, before the poll sees it.
+      execution.mailbox.syncAcknowledgements();
+      this.syncChat(execution);
+      this.recordRecovery(execution, recoverAbandonedClaims(execution.mailbox, this.clock()));
       this.recordRecovery(execution, recoverUnclaimedInput(execution.mailbox, this.clock()));
     }
   }

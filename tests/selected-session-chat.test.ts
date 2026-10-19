@@ -163,7 +163,7 @@ it("persists provider failure as a correlated outcome and permits later distinct
     if (input.content === "Fail") {
       const mailbox = new RunnerMailbox(material.directory);
       mailbox.acknowledge(input.id, "completed");
-      mailbox.reply(input, "Provider unavailable", "error");
+      return { error: "Provider unavailable" };
     }
     return "Recovered reply";
   };
@@ -715,3 +715,161 @@ it("reports queued recovery when a later input was not acknowledged before execu
     release.resolve();
   }
 });
+
+it("preserves durable success when the final recovery attempt exits before Host acknowledgement sync", async () => {
+  const driver: SessionDriver = {
+    async start(material) {
+      const mailbox = new RunnerMailbox(material.directory);
+      const input = mailbox.pending()[0];
+      if (!input) throw new Error("Expected admitted input");
+      // Final allowed attempt, just before the Host observes its terminal acknowledgement.
+      const db = new DatabaseSync(join(material.directory, "inbound.db"));
+      db.prepare("UPDATE messages_in SET tries = 5 WHERE id = ?").run(input.id);
+      db.close();
+      mailbox.acknowledge(input.id, "completed");
+      mailbox.reply(input, "Durable success");
+      return {
+        wait: async () => {
+          throw new Error("Controlled exit after saved final evidence");
+        },
+        stop: async () => {},
+      };
+    },
+  };
+  await start(driver);
+  const { session } = await (
+    await post("/api/sessions", {
+      requestId: "last-attempt-chat",
+      botId: "personal",
+      name: "Final attempt",
+    })
+  ).json();
+  const path = `/api/sessions/${session.id}`;
+  const admitted = await (
+    await post(`${path}/messages`, { requestId: "last-attempt", text: "Finish on last attempt" })
+  ).json();
+  await vi.waitFor(async () =>
+    expect(await get(path)).toMatchObject({
+      works: [
+        {
+          state: "succeeded",
+          outcome: { reply: "Durable success", messageId: admitted.messageId },
+        },
+      ],
+    }),
+  );
+});
+
+it("links a failed work outcome to its failed input even when a later follow-up succeeds", async () => {
+  const driver = new MailboxDriver();
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  driver.respond = async (input, _material, signal) => {
+    if (input.content === "Fail first") {
+      entered.resolve();
+      await Promise.race([
+        release.promise,
+        new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        ),
+      ]);
+      return { error: "First input failed" };
+    }
+    return "Later input succeeded";
+  };
+  await start(driver);
+  const { session } = await (
+    await post("/api/sessions", {
+      requestId: "mixed-chat",
+      botId: "personal",
+      name: "Mixed outcomes",
+    })
+  ).json();
+  const path = `/api/sessions/${session.id}`;
+  try {
+    const initial = await (
+      await post(`${path}/messages`, { requestId: "mixed-initial", text: "Fail first" })
+    ).json();
+    await waitForCheckpoint(entered.promise, "first input");
+    const followUp = await (
+      await post(`${path}/messages`, { requestId: "mixed-followup", text: "Succeed later" })
+    ).json();
+    expect(followUp.workId).toBe(initial.workId);
+    release.resolve();
+    await vi.waitFor(async () =>
+      expect(await get(path)).toMatchObject({
+        works: [
+          {
+            state: "failed",
+            outcome: { kind: "failed", messageId: initial.messageId, reply: "First input failed" },
+            messages: [
+              { outcome: { kind: "failed" } },
+              { outcome: { kind: "succeeded", reply: "Later input succeeded" } },
+            ],
+          },
+        ],
+      }),
+    );
+  } finally {
+    release.resolve();
+  }
+});
+
+it.each(["unclaimed", "processing"])(
+  "does not execute a newer follow-up ahead of %s input waiting for bounded recovery",
+  async (claim) => {
+    let launches = 0;
+    const secondStart = Promise.withResolvers<void>();
+    const driver: SessionDriver = {
+      async start(material, signal) {
+        launches++;
+        if (launches === 1) {
+          if (claim === "processing") {
+            const mailbox = new RunnerMailbox(material.directory);
+            const input = mailbox.pending()[0];
+            if (!input) throw new Error("Expected admitted input");
+            mailbox.acknowledge(input.id, "processing");
+          }
+          return {
+            wait: async () => {
+              throw new Error("Controlled unfinished crash");
+            },
+            stop: async () => {},
+          };
+        }
+        const mailbox = new RunnerMailbox(material.directory);
+        for (const input of mailbox.pending()) {
+          mailbox.acknowledge(input.id, "completed");
+          mailbox.reply(input, "Executed before the earlier retry");
+        }
+        secondStart.resolve();
+        const stopped = Promise.withResolvers<void>();
+        signal.addEventListener("abort", () => stopped.resolve(), { once: true });
+        return { wait: () => stopped.promise, stop: async () => stopped.resolve() };
+      },
+    };
+    await start(driver);
+    const { session } = await (
+      await post("/api/sessions", {
+        requestId: "retry-fifo-chat",
+        botId: "personal",
+        name: "Recovery order",
+      })
+    ).json();
+    const path = `/api/sessions/${session.id}`;
+    const first = await (
+      await post(`${path}/messages`, { requestId: "retry-fifo-initial", text: "Earlier" })
+    ).json();
+    await vi.waitFor(async () =>
+      expect((await get("/api/status")).sessions).toMatchObject([{ containerStatus: "stopped" }]),
+    );
+    const second = await (
+      await post(`${path}/messages`, { requestId: "retry-fifo-later", text: "Later" })
+    ).json();
+    expect(second.workId).toBe(first.workId);
+    await waitForCheckpoint(secondStart.promise, "restarted runner input selection");
+    expect(await get(path)).toMatchObject({
+      works: [{ outcome: null, messages: [{ outcome: null }, { outcome: null }] }],
+    });
+  },
+);

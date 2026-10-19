@@ -245,8 +245,9 @@ export class ChatStore {
       if (state !== "uncertain") {
         if (missing.length === 0) {
           const outcomes = messages.map((input) => JSON.parse(input.outcome as string));
-          state = outcomes.some((result) => result.kind === "failed") ? "failed" : "succeeded";
-          outcome = JSON.stringify({ ...outcomes.at(-1), kind: state });
+          const failure = outcomes.find((result) => result.kind === "failed");
+          state = failure ? "failed" : "succeeded";
+          outcome = JSON.stringify(failure ?? outcomes.at(-1));
         } else if (
           snapshot.executionLost &&
           missing.some((input) => {
