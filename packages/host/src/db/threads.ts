@@ -14,13 +14,16 @@ interface ThreadRow {
 interface RunRow {
   id: string;
   task_id: string;
-  state: "queued" | "active" | "succeeded" | "failed" | "uncertain";
+  state: "queued" | "active" | "stopping" | "succeeded" | "failed" | "uncertain" | "closed";
   background_boundary: number;
   source_message_id: string;
   context: string | null;
   outcome: string | null;
   created_at: string;
   updated_at: string;
+  prior_run_id: string | null;
+  stop_error: string | null;
+  held: number;
 }
 interface RunInput {
   message_id: string;
@@ -131,7 +134,9 @@ export class ThreadStore {
      VALUES (?, ?, ?, ?, 'run', ?)`)
           .run(runId, input.botId, destinationId, thread.id, now);
         this.db
-          .prepare("INSERT INTO runs VALUES (?, ?, 'queued', ?, ?, NULL, NULL, ?, ?)")
+          .prepare(`INSERT INTO runs (
+ id, task_id, state, background_boundary, source_message_id, context, outcome, created_at, updated_at
+) VALUES (?, ?, 'queued', ?, ?, NULL, NULL, ?, ?)`)
           .run(runId, taskId, thread.background_boundary, messageId, now, now);
         run = this.run(runId);
       }
@@ -162,6 +167,190 @@ export class ThreadStore {
       platform_id: row.platform_id as string,
       instance: row.instance as string,
     };
+  }
+  ownedRun(botId: string, runId: string): RunRow {
+    const run = this.run(runId);
+    if (this.session(runId).agent_group_id !== botId)
+      throw new ChatRequestError("Run not found for this Bot.", 404);
+    return run;
+  }
+  /** Persist an owner stop without waiting for the executor to exit. */
+  stop(botId: string, runId: string, requestId: string, now: string) {
+    return this.admit(requestId, { operation: "stop", botId, runId }, () =>
+      this.markStopping(this.ownedRun(botId, runId), now),
+    );
+  }
+  stopTask(botId: string, taskId: string, requestId: string, now: string) {
+    return this.admit(requestId, { operation: "stop", botId, taskId }, () => {
+      const run = this.db
+        .prepare(`SELECT r.* FROM runs r JOIN tasks t ON t.id = r.task_id
+ WHERE t.id = ? AND t.thread_id = ? AND r.state IN ('queued', 'active', 'stopping', 'uncertain')
+ ORDER BY r.rowid DESC LIMIT 1`)
+        .get(taskId, this.thread(botId).id) as unknown as RunRow | undefined;
+      if (!run) throw new ChatRequestError("Task has no running work to stop.", 409);
+      return this.markStopping(run, now);
+    });
+  }
+  markStopping(run: RunRow, now: string) {
+    if (["succeeded", "failed", "closed"].includes(run.state))
+      throw new ChatRequestError("Run is already terminal.", 409);
+    if (run.state !== "stopping")
+      this.db
+        .prepare(
+          "UPDATE runs SET state = 'stopping', stop_error = NULL, updated_at = ? WHERE id = ?",
+        )
+        .run(now, run.id);
+    return {
+      botId: this.session(run.id).agent_group_id,
+      taskId: run.task_id,
+      runId: run.id,
+      operation: "stop" as const,
+      state: "stopping" as const,
+    };
+  }
+  markStopUnconfirmed(id: string, error: string, now: string): void {
+    this.db
+      .prepare("UPDATE runs SET stop_error = ?, updated_at = ? WHERE id = ? AND state = 'stopping'")
+      .run(error, now, id);
+  }
+  finishStop(id: string, acknowledgements: ProcessingAck[], now: string): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const run = this.run(id);
+      if (!["stopping", "queued", "active"].includes(run.state)) {
+        this.db.exec("COMMIT");
+        return;
+      }
+      const inputs = this.inputs(id);
+      const missing = inputs.filter((row) => !row.outcome);
+      const gap = missing.some((input) =>
+        acknowledgements.some(
+          (ack) => ack.message_id === input.message_id && ack.status === "completed",
+        ),
+      );
+      let state: RunRow["state"];
+      let outcome = run.outcome;
+      let held = 0;
+      if (!missing.length && inputs.length) {
+        const results = inputs.map((row) => JSON.parse(row.outcome as string) as { kind: string });
+        const failure = results.find((row) => row.kind === "failed");
+        state = failure ? "failed" : "succeeded";
+        outcome = JSON.stringify(failure ?? results.at(-1));
+      } else if (gap) {
+        state = "uncertain";
+        held = 1;
+        outcome = JSON.stringify({ kind: "uncertain", reply: "Final evidence is missing." });
+      } else {
+        state = "closed";
+        outcome = JSON.stringify({
+          kind: "cancelled",
+          reply: "Stopped before a final result.",
+        });
+        for (const input of missing)
+          this.db.prepare("UPDATE run_inputs SET outcome = ? WHERE message_id = ?").run(
+            JSON.stringify({
+              kind: "cancelled",
+              messageId: input.message_id,
+              reply: "Stopped before a final result.",
+              at: now,
+            }),
+            input.message_id,
+          );
+      }
+      this.db
+        .prepare(
+          "UPDATE runs SET state = ?, outcome = ?, held = ?, stop_error = NULL, updated_at = ? WHERE id = ?",
+        )
+        .run(state, outcome, held, now, id);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+  retry(botId: string, runId: string, requestId: string, now: string) {
+    return this.admit(requestId, { operation: "retry", botId, runId }, () => {
+      const run = this.ownedRun(botId, runId);
+      if (["queued", "active", "stopping"].includes(run.state))
+        throw new ChatRequestError("Stop is unconfirmed.", 409);
+      if (run.state === "succeeded")
+        throw new ChatRequestError("A completed Run is not retried.", 409);
+      const open = this.db
+        .prepare(
+          `SELECT id FROM runs WHERE task_id = ? AND id != ?
+ AND state IN ('queued', 'active', 'stopping', 'uncertain')`,
+        )
+        .get(run.task_id, run.id);
+      if (open) throw new ChatRequestError("Task already has an unfinished Run.", 409);
+      const outcome =
+        run.outcome ?? JSON.stringify({ kind: "uncertain", reply: "Final evidence is missing." });
+      this.db
+        .prepare(
+          "UPDATE runs SET state = 'closed', held = 0, outcome = ?, stop_error = NULL, updated_at = ? WHERE id = ?",
+        )
+        .run(outcome, now, run.id);
+      const inputs = this.inputs(run.id);
+      if (!inputs.length) throw new ChatRequestError("Run has no admitted work to retry.", 409);
+      const thread = this.thread(botId);
+      const newRunId = randomUUID();
+      const copied = inputs.map((input) => ({ ...input, messageId: randomUUID() }));
+      this.db
+        .prepare(`INSERT INTO sessions (id, agent_group_id, messaging_group_id, thread_id, purpose, created_at)
+ VALUES (?, ?, ?, ?, 'run', ?)`)
+        .run(newRunId, botId, inputs[0]?.destination_id, thread.id, now);
+      this.db
+        .prepare(`INSERT INTO runs (
+ id, task_id, state, background_boundary, source_message_id, context, outcome, created_at, updated_at, prior_run_id
+) VALUES (?, ?, 'queued', ?, ?, NULL, NULL, ?, ?, ?)`)
+        .run(
+          newRunId,
+          run.task_id,
+          thread.background_boundary,
+          copied[0]?.messageId,
+          now,
+          now,
+          run.id,
+        );
+      for (const input of copied) {
+        this.db
+          .prepare("INSERT INTO run_inputs VALUES (?, ?, ?, ?, NULL, ?, NULL)")
+          .run(input.messageId, newRunId, input.content, now, input.destination_id);
+        this.db
+          .prepare(
+            `INSERT INTO thread_messages (id, thread_id, run_id, role, content, created_at) VALUES (?, ?, ?, 'user', ?, ?)`,
+          )
+          .run(input.messageId, thread.id, newRunId, input.content, now);
+      }
+      return {
+        botId,
+        threadId: thread.id,
+        taskId: run.task_id,
+        runId: newRunId,
+        priorRunId: run.id,
+        messageId: copied[0]?.messageId,
+        operation: "retry" as const,
+      };
+    });
+  }
+  close(botId: string, runId: string, requestId: string, now: string) {
+    return this.admit(requestId, { operation: "close", botId, runId }, () => {
+      const run = this.ownedRun(botId, runId);
+      if (run.state !== "uncertain")
+        throw new ChatRequestError("Run has no uncertain outcome to close.", 409);
+      const outcome =
+        run.outcome ?? JSON.stringify({ kind: "uncertain", reply: "Final evidence is missing." });
+      this.db
+        .prepare(
+          "UPDATE runs SET state = 'closed', held = 0, outcome = ?, stop_error = NULL, updated_at = ? WHERE id = ?",
+        )
+        .run(outcome, now, run.id);
+      return {
+        botId,
+        taskId: run.task_id,
+        runId: run.id,
+        operation: "close" as const,
+      };
+    });
   }
   run(id: string): RunRow {
     const row = this.db.prepare("SELECT * FROM runs WHERE id = ?").get(id) as unknown as
@@ -264,7 +453,6 @@ export class ThreadStore {
           )
           .run(row.recordedAt, row.messageId, id);
       for (const input of this.inputs(id)) {
-        if (input.outcome) continue;
         const source = snapshot.inputs.find((row) => row.id === input.message_id);
         const result = snapshot.outputs.find(
           (row) =>
@@ -274,6 +462,14 @@ export class ThreadStore {
             row.platform_id === source.platform_id &&
             row.thread_id === source.thread_id,
         );
+        const sealed = run.state === "closed" || run.state === "uncertain";
+        if (result && sealed) {
+          this.db
+            .prepare("INSERT OR IGNORE INTO late_results VALUES (?, ?, ?, ?)")
+            .run(result.id, id, result.content, result.timestamp);
+          continue;
+        }
+        if (input.outcome) continue;
         if (result) {
           this.db.prepare("UPDATE run_inputs SET outcome = ? WHERE message_id = ?").run(
             JSON.stringify({
@@ -298,37 +494,47 @@ export class ThreadStore {
               result.timestamp,
             );
         } else if (
+          !sealed &&
+          run.state !== "stopping" &&
           source?.status === "failed" &&
           !snapshot.acknowledgements.some((ack) => ack.message_id === input.message_id)
         )
           this.failInputs([input.message_id], now);
       }
+      if (run.state === "stopping" || run.state === "closed" || run.state === "uncertain") {
+        if (run.state === "uncertain")
+          this.db.prepare("UPDATE runs SET held = 1 WHERE id = ? AND held = 0").run(id);
+        this.db.exec("COMMIT");
+        return;
+      }
       const inputs = this.inputs(id);
       const missing = inputs.filter((row) => !row.outcome);
-      let state = run.state;
+      let state: RunRow["state"] = run.state;
       let outcome = run.outcome;
-      if (state !== "uncertain") {
-        if (!missing.length) {
-          const results = inputs.map((row) => JSON.parse(row.outcome as string));
-          const failure = results.find((row) => row.kind === "failed");
-          state = failure ? "failed" : "succeeded";
-          outcome = JSON.stringify(failure ?? results.at(-1));
-        } else if (
-          snapshot.executionLost &&
-          missing.some((input) =>
-            snapshot.acknowledgements.some(
-              (ack) => ack.message_id === input.message_id && ack.status !== "processing",
-            ),
-          )
+      if (!missing.length) {
+        const results = inputs.map((row) => JSON.parse(row.outcome as string));
+        const failure = results.find((row) => row.kind === "failed");
+        state = failure ? "failed" : "succeeded";
+        outcome = JSON.stringify(failure ?? results.at(-1));
+      } else if (
+        snapshot.executionLost &&
+        missing.some((input) =>
+          snapshot.acknowledgements.some(
+            (ack) => ack.message_id === input.message_id && ack.status !== "processing",
+          ),
         )
-          state = "uncertain";
-        else if (snapshot.executionLost) state = "queued";
-      }
+      ) {
+        state = "uncertain";
+        outcome ??= JSON.stringify({
+          kind: "uncertain",
+          reply: "Final evidence is missing.",
+        });
+      } else if (snapshot.executionLost) state = "queued";
       this.db
         .prepare(
-          "UPDATE runs SET state = ?, outcome = ?, updated_at = CASE WHEN state != ? OR outcome IS NOT ? THEN ? ELSE updated_at END WHERE id = ?",
+          "UPDATE runs SET state = ?, outcome = ?, held = ?, updated_at = CASE WHEN state != ? OR outcome IS NOT ? THEN ? ELSE updated_at END WHERE id = ?",
         )
-        .run(state, outcome, state, outcome, now, id);
+        .run(state, outcome, state === "uncertain" ? 1 : 0, state, outcome, now, id);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -376,6 +582,20 @@ export class ThreadStore {
         ).map((run) => ({
           id: run.id,
           state: run.state,
+          held: run.held === 1,
+          priorRunId: run.prior_run_id,
+          stopError: run.stop_error,
+          lateEvidence: (
+            this.db
+              .prepare(
+                "SELECT id, content, created_at AS createdAt FROM late_results WHERE run_id = ? ORDER BY rowid LIMIT 5",
+              )
+              .all(run.id) as unknown as { id: string; content: string; createdAt: string }[]
+          ).map((row) => ({
+            id: row.id,
+            ...preview(row.content),
+            createdAt: row.createdAt,
+          })),
           backgroundBoundary: run.background_boundary,
           sourceMessageId: run.source_message_id,
           outcome: outcomePreview(run.outcome),
@@ -393,7 +613,14 @@ export class ThreadStore {
         })),
       }));
     return {
-      thread: { id: thread.id, botId, backgroundBoundary: thread.background_boundary },
+      thread: {
+        id: thread.id,
+        botId,
+        backgroundBoundary: thread.background_boundary,
+        routineHolds: tasks.flatMap((task) =>
+          task.runs.filter((run) => run.held).map((run) => ({ taskId: task.id, runId: run.id })),
+        ),
+      },
       tasks,
       messages: this.db
         .prepare(

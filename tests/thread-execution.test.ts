@@ -2,12 +2,12 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { RunnerMailbox } from "@mybots/mailbox/node";
+import { HostMailbox, RunnerMailbox } from "@mybots/mailbox/node";
 import { afterEach, expect, it, vi } from "vitest";
 import { PiProvider } from "../packages/agent-runner/src/providers/pi.ts";
 import { WebSocketChannel } from "../packages/host/src/channels/websocket.ts";
 import { loadHostSettings } from "../packages/host/src/config/host.ts";
-import type { SessionDriver } from "../packages/host/src/drivers/types.ts";
+import type { ObservingSessionDriver, SessionDriver } from "../packages/host/src/drivers/types.ts";
 import { Host } from "../packages/host/src/host.ts";
 import { waitForCheckpoint } from "./checkpoint.ts";
 import { MailboxDriver } from "./host-fixture.ts";
@@ -578,6 +578,490 @@ it("retains original replies when projection is interrupted between input outcom
     );
   } finally {
     checkpoint.close();
+  }
+});
+
+it("shows stopping until the selected Run terminates and then retains its history", async () => {
+  const external = new MailboxDriver();
+  const release = Promise.withResolvers<void>();
+  external.respond = async (_input, _material, signal) => {
+    await new Promise<void>((resolve) => {
+      if (signal.aborted) resolve();
+      else signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    return "Final: Stop this work";
+  };
+  const driver: SessionDriver = {
+    start: async (material, signal) => {
+      const handle = await external.start(material, signal);
+      return {
+        wait: handle.wait,
+        stop: async () => {
+          await release.promise;
+          await handle.stop();
+        },
+      };
+    },
+  };
+  try {
+    await start(driver);
+    const path = "/api/bots/personal/thread";
+    const admitted = await (
+      await post(`${path}/messages`, { requestId: "stop-source", text: "Stop this work" })
+    ).json();
+    await vi.waitFor(async () => expect((await get(path)).tasks[0].runs[0].state).toBe("active"));
+    const stopping = await (
+      await post(`/api/bots/personal/runs/${admitted.runId}/stop`, { requestId: "stop-work" })
+    ).json();
+    expect(stopping).toMatchObject({
+      requestId: "stop-work",
+      runId: admitted.runId,
+      taskId: admitted.taskId,
+      state: "stopping",
+      replayed: false,
+    });
+    expect((await get(path)).tasks[0].runs[0]).toMatchObject({
+      state: "stopping",
+      inputs: [{ text: "Stop this work" }],
+    });
+    expect((await get(path)).messages).toContainEqual(
+      expect.objectContaining({ role: "user", content: "Stop this work" }),
+    );
+    release.resolve();
+    await vi.waitFor(async () =>
+      expect((await get(path)).tasks[0].runs[0]).toMatchObject({
+        state: "closed",
+        held: false,
+        outcome: { kind: "cancelled", reply: "Stopped before a final result." },
+      }),
+    );
+    expect(
+      await (
+        await post(`/api/bots/personal/runs/${admitted.runId}/stop`, {
+          requestId: "stop-work",
+        })
+      ).json(),
+    ).toMatchObject({ runId: admitted.runId, replayed: true });
+    expect((await get(path)).tasks[0].runs).toHaveLength(1);
+  } finally {
+    release.resolve();
+  }
+});
+
+it("retains the Bot slot after an unconfirmed stop while another Bot finishes", async () => {
+  const external = new MailboxDriver();
+  external.respond = async (input, _material, signal) => {
+    if (input.content === "Hold")
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    return `Final: ${input.content}`;
+  };
+  let ownerStops = 0;
+  const driver: SessionDriver = {
+    start: async (material, signal) => {
+      const handle = await external.start(material, signal);
+      return {
+        wait: handle.wait,
+        stop: async () => {
+          ownerStops += 1;
+          if (ownerStops === 1) throw new Error("Controlled stop failure");
+          await handle.stop();
+        },
+      };
+    },
+  };
+  await start(driver);
+  const path = "/api/bots/personal/thread";
+  const admitted = await (
+    await post(`${path}/messages`, { requestId: "hold-stop", text: "Hold" })
+  ).json();
+  await vi.waitFor(async () => expect((await get(path)).tasks[0].runs[0].state).toBe("active"));
+  expect(
+    (await post(`/api/bots/personal/tasks/${admitted.taskId}/stop`, { requestId: "fail-stop" }))
+      .status,
+  ).toBe(202);
+  await vi.waitFor(async () =>
+    expect((await get(path)).tasks[0].runs[0]).toMatchObject({
+      state: "stopping",
+      stopError: "Execution stop unconfirmed; Bot capacity retained",
+    }),
+  );
+  const queued = await (
+    await post(`${path}/tasks`, { requestId: "same-bot-queued", text: "After failed stop" })
+  ).json();
+  const bot = await (
+    await post("/api/bots", {
+      requestId: "writer-during-stop",
+      name: "Writer",
+      instructions: "Write",
+      model: { provider: "deepseek", id: "deepseek-chat" },
+      tools: [],
+    })
+  ).json();
+  await post(`/api/bots/${bot.bot.id}/thread/messages`, {
+    requestId: "writer-progress",
+    text: "Writer continues",
+  });
+  await vi.waitFor(async () =>
+    expect((await get(`/api/bots/${bot.bot.id}/thread`)).tasks[0].runs[0].state).toBe("succeeded"),
+  );
+  expect((await get(path)).tasks[1]).toMatchObject({
+    id: queued.taskId,
+    runs: [{ id: queued.runId, state: "queued", attempts: [] }],
+  });
+  expect((await get(path)).tasks[0].runs[0].state).toBe("stopping");
+  expect(external.launches.map((row) => row.material.key.sessionId)).toContain(admitted.runId);
+  expect(external.launches.some((row) => row.material.key.sessionId === queued.runId)).toBe(false);
+});
+
+it("releases capacity after confirmed stop, holds the uncertain Run, and retries a linked Run", async () => {
+  const external = new MailboxDriver();
+  const release = Promise.withResolvers<void>();
+  const releaseRetry = Promise.withResolvers<void>();
+  let gaps = 0;
+  external.respond = async (input, material, signal) => {
+    if (input.content === "Gap") {
+      gaps += 1;
+      if (gaps === 1) {
+        new RunnerMailbox(material.directory).acknowledge(input.id, "completed");
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      } else
+        await Promise.race([
+          releaseRetry.promise,
+          new Promise<void>((resolve) => {
+            if (signal.aborted) resolve();
+            else signal.addEventListener("abort", () => resolve(), { once: true });
+          }),
+        ]);
+    }
+    return `Final: ${input.content}`;
+  };
+  const driver: SessionDriver = {
+    start: async (material, signal) => {
+      const handle = await external.start(material, signal);
+      return {
+        wait: handle.wait,
+        stop: async () => {
+          await release.promise;
+          await handle.stop();
+        },
+      };
+    },
+  };
+  try {
+    await start(driver);
+    const path = "/api/bots/personal/thread";
+    const admitted = await (
+      await post(`${path}/messages`, { requestId: "gap-stop", text: "Gap" })
+    ).json();
+    await vi.waitFor(() => expect(gaps).toBe(1));
+    await post(`/api/bots/personal/runs/${admitted.runId}/stop`, { requestId: "confirm-stop" });
+    expect((await get(path)).tasks[0].runs[0].state).toBe("stopping");
+    release.resolve();
+    await vi.waitFor(async () =>
+      expect((await get(path)).thread.routineHolds).toEqual([
+        { taskId: admitted.taskId, runId: admitted.runId },
+      ]),
+    );
+    expect((await get(path)).tasks[0].runs[0]).toMatchObject({
+      state: "uncertain",
+      held: true,
+      outcome: { kind: "uncertain", reply: "Final evidence is missing." },
+    });
+    const unrelated = await (
+      await post(`${path}/tasks`, { requestId: "unrelated-after-stop", text: "Unrelated" })
+    ).json();
+    await vi.waitFor(async () =>
+      expect((await get(path)).tasks[1].runs[0]).toMatchObject({
+        id: unrelated.runId,
+        state: "succeeded",
+        outcome: { kind: "succeeded", reply: "Final: Unrelated" },
+      }),
+    );
+    expect((await get(path)).tasks[0].runs[0]).toMatchObject({
+      id: admitted.runId,
+      state: "uncertain",
+      held: true,
+    });
+    const ordinary = await (
+      await post(`${path}/messages`, { requestId: "ordinary-not-retry", text: "Not a retry" })
+    ).json();
+    expect(ordinary.taskId).not.toBe(admitted.taskId);
+    expect((await get(path)).tasks[0].runs).toHaveLength(1);
+    const retries = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        post(`/api/bots/personal/runs/${admitted.runId}/retry`, { requestId: "retry-once" }).then(
+          (response) => response.json(),
+        ),
+      ),
+    );
+    expect(new Set(retries.map((row) => row.runId)).size).toBe(1);
+    expect(retries.filter((row) => row.replayed)).toHaveLength(3);
+    const retried = retries[0];
+    expect(retried).toMatchObject({ priorRunId: admitted.runId, taskId: admitted.taskId });
+    expect(
+      (await post(`/api/bots/personal/runs/${admitted.runId}/retry`, { requestId: "retry-again" }))
+        .status,
+    ).toBe(409);
+    releaseRetry.resolve();
+    await vi.waitFor(async () =>
+      expect((await get(path)).tasks[0].runs[1]).toMatchObject({
+        id: retried.runId,
+        priorRunId: admitted.runId,
+        state: "succeeded",
+        outcome: { kind: "succeeded", reply: "Final: Gap" },
+      }),
+    );
+    expect((await get(path)).tasks[0].runs[0]).toMatchObject({
+      id: admitted.runId,
+      state: "closed",
+      held: false,
+      outcome: { kind: "uncertain", reply: "Final evidence is missing." },
+    });
+    expect((await get(path)).thread.routineHolds).toEqual([]);
+    expect(
+      (await get(path)).tasks[0].runs.filter((run: { state: string }) =>
+        ["queued", "active", "stopping", "uncertain"].includes(run.state),
+      ),
+    ).toHaveLength(0);
+  } finally {
+    release.resolve();
+    releaseRetry.resolve();
+  }
+});
+
+it("closes uncertain work without a new Run and keeps a late result from reviving it", async () => {
+  const external = new MailboxDriver();
+  external.respond = async (input, _material, signal) => {
+    if (input.content === "Cancel me")
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    return `Final: ${input.content}`;
+  };
+  const release = Promise.withResolvers<void>();
+  const driver: SessionDriver = {
+    start: async (material, signal) => {
+      const handle = await external.start(material, signal);
+      return {
+        wait: handle.wait,
+        stop: async () => {
+          await release.promise;
+          await handle.stop();
+        },
+      };
+    },
+  };
+  try {
+    await start(driver);
+    const path = "/api/bots/personal/thread";
+    const admitted = await (
+      await post(`${path}/messages`, { requestId: "cancel-me", text: "Cancel me" })
+    ).json();
+    await vi.waitFor(async () => expect((await get(path)).tasks[0].runs[0].state).toBe("active"));
+    const stops = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        post(`/api/bots/personal/runs/${admitted.runId}/stop`, { requestId: "stop-once" }).then(
+          (response) => response.json(),
+        ),
+      ),
+    );
+    expect(new Set(stops.map((row) => row.runId)).size).toBe(1);
+    expect(stops.filter((row) => row.replayed)).toHaveLength(3);
+    expect((await get(path)).tasks[0].runs[0].state).toBe("stopping");
+    release.resolve();
+    await vi.waitFor(async () => expect((await get(path)).tasks[0].runs[0].state).toBe("closed"));
+    const directory = external.launches[0]?.material.directory;
+    if (!directory) throw new Error("Stopped run has no mailbox for late evidence");
+    const input = new HostMailbox(directory).inputs()[0];
+    if (!input) throw new Error("Stopped run has no input to attach late evidence");
+    new RunnerMailbox(directory).reply(input, "Late evidence after stop", "message");
+    await vi.waitFor(async () =>
+      expect((await get(path)).tasks[0].runs[0].lateEvidence).toEqual([
+        expect.objectContaining({ text: "Late evidence after stop" }),
+      ]),
+    );
+    expect((await get(path)).tasks[0].runs[0]).toMatchObject({
+      state: "closed",
+      outcome: { kind: "cancelled" },
+    });
+    expect((await get(path)).tasks).toHaveLength(1);
+    expect(
+      (await post(`/api/bots/personal/runs/${admitted.runId}/close`, { requestId: "close-cancel" }))
+        .status,
+    ).toBe(409);
+  } finally {
+    release.resolve();
+  }
+});
+
+it("keeps an unconfirmed stop across restart when the container is still observed", async () => {
+  const external = new MailboxDriver();
+  const release = Promise.withResolvers<void>();
+  let gatedRun = "";
+  external.respond = async (input, _material, signal) => {
+    if (input.content === "Hold")
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    return `Final: ${input.content}`;
+  };
+  const driver: ObservingSessionDriver = {
+    start: async (material, signal) => {
+      const handle = await external.start(material, signal);
+      return {
+        wait: handle.wait,
+        stop: async () => {
+          if (material.key.sessionId === gatedRun) await release.promise;
+          await handle.stop();
+        },
+      };
+    },
+    list: () => external.list(),
+    adopt: (observation, material, signal) => external.adopt(observation, material, signal),
+  };
+  const configuration = await start(driver);
+  const admitted = await (
+    await post("/api/bots/personal/thread/messages", { requestId: "restart-stop", text: "Hold" })
+  ).json();
+  gatedRun = admitted.runId;
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("active"),
+  );
+  await post(`/api/bots/personal/runs/${admitted.runId}/stop`, { requestId: "restart-stop-op" });
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("stopping"),
+  );
+  await channel.close();
+  await expect(host.stop({ timeoutMs: 50 })).rejects.toThrow(/timed out/);
+  await rm(join(root, "data", "host.lock"), { recursive: true, force: true });
+  external.observations = [
+    { key: { agentGroupId: "personal", sessionId: admitted.runId }, ref: "still-live" },
+  ];
+  try {
+    host = await Host.start({ root, configuration, driver });
+    await listen(configuration);
+    expect((await get("/api/bots/personal/thread")).tasks[0].runs[0]).toMatchObject({
+      id: admitted.runId,
+      state: "stopping",
+    });
+    const queued = await (
+      await post("/api/bots/personal/thread/tasks", {
+        requestId: "queued-after-restart",
+        text: "Still blocked",
+      })
+    ).json();
+    const bot = await (
+      await post("/api/bots", {
+        requestId: "writer-after-restart",
+        name: "Writer",
+        instructions: "Write",
+        model: { provider: "deepseek", id: "deepseek-chat" },
+        tools: [],
+      })
+    ).json();
+    await post(`/api/bots/${bot.bot.id}/thread/messages`, {
+      requestId: "writer-after-restart-message",
+      text: "Other bot",
+    });
+    await vi.waitFor(async () =>
+      expect((await get(`/api/bots/${bot.bot.id}/thread`)).tasks[0].runs[0].state).toBe(
+        "succeeded",
+      ),
+    );
+    expect((await get("/api/bots/personal/thread")).tasks[1].runs[0]).toMatchObject({
+      id: queued.runId,
+      state: "queued",
+    });
+  } finally {
+    release.resolve();
+  }
+});
+
+it("confirms a stopped Run on restart when no container remains and closes uncertainty explicitly", async () => {
+  const external = new MailboxDriver();
+  let gaps = 0;
+  external.respond = async (input, material, signal) => {
+    if (input.content === "Gap") {
+      gaps += 1;
+      new RunnerMailbox(material.directory).acknowledge(input.id, "completed");
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    }
+    return `Final: ${input.content}`;
+  };
+  const release = Promise.withResolvers<void>();
+  const driver: ObservingSessionDriver = {
+    start: async (material, signal) => {
+      const handle = await external.start(material, signal);
+      return {
+        wait: handle.wait,
+        stop: async () => {
+          await release.promise;
+          await handle.stop();
+        },
+      };
+    },
+    list: () => external.list(),
+    adopt: (observation, material, signal) => external.adopt(observation, material, signal),
+  };
+  const configuration = await start(driver);
+  const admitted = await (
+    await post("/api/bots/personal/thread/messages", { requestId: "restart-gap", text: "Gap" })
+  ).json();
+  await vi.waitFor(() => expect(gaps).toBe(1));
+  await post(`/api/bots/personal/runs/${admitted.runId}/stop`, { requestId: "restart-gap-stop" });
+  await channel.close();
+  await expect(host.stop({ timeoutMs: 50 })).rejects.toThrow(/timed out/);
+  await rm(join(root, "data", "host.lock"), { recursive: true, force: true });
+  try {
+    host = await Host.start({ root, configuration, driver: new MailboxDriver() });
+    await listen(configuration);
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).tasks[0].runs[0]).toMatchObject({
+        id: admitted.runId,
+        state: "uncertain",
+        held: true,
+      }),
+    );
+    const closed = await (
+      await post(`/api/bots/personal/runs/${admitted.runId}/close`, { requestId: "close-gap" })
+    ).json();
+    expect(closed).toMatchObject({ runId: admitted.runId, operation: "close", replayed: false });
+    expect((await get("/api/bots/personal/thread")).tasks[0].runs[0]).toMatchObject({
+      id: admitted.runId,
+      state: "closed",
+      held: false,
+      outcome: { kind: "uncertain", reply: "Final evidence is missing." },
+    });
+    expect((await get("/api/bots/personal/thread")).tasks[0].runs).toHaveLength(1);
+    expect((await get("/api/bots/personal/thread")).thread.routineHolds).toEqual([]);
+    const next = await (
+      await post("/api/bots/personal/thread/messages", {
+        requestId: "after-close",
+        text: "After close",
+      })
+    ).json();
+    expect(next.taskId).not.toBe(admitted.taskId);
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).tasks[1].runs[0].state).toBe("succeeded"),
+    );
+    expect(
+      await (
+        await post(`/api/bots/personal/runs/${admitted.runId}/close`, { requestId: "close-gap" })
+      ).json(),
+    ).toMatchObject({ replayed: true, runId: admitted.runId });
+  } finally {
+    release.resolve();
   }
 });
 

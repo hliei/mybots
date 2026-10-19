@@ -188,6 +188,7 @@ export class Host {
   /** Highest outbound sequence already observed per session; seeded at startup. */
   private readonly observed = new Map<string, number>();
   private polling?: Promise<void>;
+  private readonly stopJobs = new Map<string, Promise<void>>();
   private stopping?: Promise<void>;
   private stopped = false;
   private storeClosed = false;
@@ -548,11 +549,15 @@ export class Host {
     try {
       execution.mailbox.syncAcknowledgements();
       this.syncChat(execution);
-      if (
-        execution.route.session.purpose === "run" &&
-        this.store.threads.run(id).state === "uncertain"
-      )
-        return;
+      if (execution.route.session.purpose === "run") {
+        const state = this.store.threads.run(id).state;
+        if (state === "uncertain" || state === "closed") return;
+        if (state === "stopping") {
+          if (!execution.handle && !execution.starting && !execution.replacing)
+            this.finishConfirmedStop(execution);
+          return;
+        }
+      }
       if (execution.handle) {
         await this.enforceStall(execution, now);
         return;
@@ -1038,6 +1043,135 @@ export class Host {
     return admitted;
   }
 
+  async stopRun(botId: string, runId: string, value: unknown) {
+    const input = chatInput(value, []);
+    await this.threadDetail(botId);
+    if (this.stopped) throw new Error("Host is stopped");
+    const admitted = this.store.threads.stop(
+      botId,
+      runId,
+      input.requestId as string,
+      this.timestamp(),
+    );
+    await this.beginStop(admitted.runId);
+    const run = this.store.threads.run(admitted.runId);
+    return { ...admitted, state: run.state, stopError: run.stop_error };
+  }
+
+  async stopTask(botId: string, taskId: string, value: unknown) {
+    const input = chatInput(value, []);
+    await this.threadDetail(botId);
+    if (this.stopped) throw new Error("Host is stopped");
+    const admitted = this.store.threads.stopTask(
+      botId,
+      taskId,
+      input.requestId as string,
+      this.timestamp(),
+    );
+    await this.beginStop(admitted.runId);
+    const run = this.store.threads.run(admitted.runId);
+    return { ...admitted, state: run.state, stopError: run.stop_error };
+  }
+
+  async retryRun(botId: string, runId: string, value: unknown) {
+    const input = chatInput(value, []);
+    await this.threadDetail(botId);
+    if (this.stopped) throw new Error("Host is stopped");
+    await this.ensureStopped(botId, runId);
+    const admitted = this.store.threads.retry(
+      botId,
+      runId,
+      input.requestId as string,
+      this.timestamp(),
+    );
+    const execution = await this.prepare(
+      this.store.route(this.store.threads.session(admitted.runId)),
+    );
+    this.syncChat(execution);
+    this.wake(execution, { force: true });
+    return admitted;
+  }
+
+  async closeRun(botId: string, runId: string, value: unknown) {
+    const input = chatInput(value, []);
+    await this.threadDetail(botId);
+    if (this.stopped) throw new Error("Host is stopped");
+    await this.ensureStopped(botId, runId);
+    return this.store.threads.close(botId, runId, input.requestId as string, this.timestamp());
+  }
+
+  private async beginStop(runId: string): Promise<void> {
+    const execution = await this.prepare(this.store.route(this.store.threads.session(runId)));
+    void this.executeStop(execution);
+  }
+
+  private async ensureStopped(botId: string, runId: string): Promise<void> {
+    const current = this.store.threads.ownedRun(botId, runId);
+    if (!["queued", "active", "stopping"].includes(current.state)) return;
+    this.store.threads.markStopping(current, this.timestamp());
+    const execution = await this.prepare(this.store.route(this.store.threads.session(runId)));
+    await this.executeStop(execution);
+    if (this.store.threads.run(runId).state === "stopping")
+      throw new ChatRequestError("Stop is unconfirmed.", 409);
+  }
+
+  private executeStop(execution: SessionExecution): Promise<void> {
+    const id = execution.route.session.id;
+    const current = this.stopJobs.get(id);
+    if (current) return current;
+    const job = (async () => {
+      await execution.starting;
+      if (this.store.threads.run(id).state !== "stopping") return;
+      const handle = execution.handle;
+      if (!handle) {
+        this.finishConfirmedStop(execution);
+        return;
+      }
+      execution.superseded.add(handle);
+      try {
+        await handle.stop();
+        if (execution.handle === handle) execution.handle = undefined;
+        this.finishConfirmedStop(execution);
+      } catch {
+        execution.superseded.delete(handle);
+        this.store.threads.markStopUnconfirmed(
+          id,
+          "Execution stop unconfirmed; Bot capacity retained",
+          this.timestamp(),
+        );
+        this.emit({
+          type: "failure",
+          sessionId: id,
+          error: "Execution stop unconfirmed; Bot capacity retained",
+        });
+      }
+    })().catch(() => {
+      this.emit({ type: "failure", sessionId: id, error: "Run stop failed" });
+    });
+    const tracked = job.finally(() => {
+      if (this.stopJobs.get(id) === tracked) this.stopJobs.delete(id);
+    });
+    this.stopJobs.set(id, tracked);
+    return tracked;
+  }
+
+  /** Confirmed termination settles the business outcome and releases serial capacity. */
+  private finishConfirmedStop(execution: SessionExecution): void {
+    const id = execution.route.session.id;
+    execution.mailbox.syncAcknowledgements();
+    this.syncChat(execution);
+    this.store.threads.finishStop(id, execution.mailbox.acknowledgements(), this.timestamp());
+    this.releaseBot(execution);
+    this.wakeBot(execution.route.session.agent_group_id);
+  }
+
+  private wakeBot(botId: string): void {
+    for (const pending of this.prepared.values())
+      void pending.then((next) => {
+        if (next.route.session.agent_group_id === botId) this.wake(next);
+      });
+  }
+
   private syncChat(execution: SessionExecution): void {
     const { mailbox, route } = execution;
     if (route.session.purpose !== "run") return;
@@ -1056,7 +1190,8 @@ export class Host {
       this.timestamp(),
     );
     const state = this.store.threads.run(id).state;
-    if (["uncertain", "succeeded", "failed"].includes(state)) {
+    if (state === "stopping") return;
+    if (["uncertain", "succeeded", "failed", "closed"].includes(state)) {
       if (state === "uncertain") for (const input of inputs) mailbox.holdInput(input.id);
       if (execution.handle && !execution.replacing) {
         const handle = execution.handle;
@@ -1177,6 +1312,7 @@ export class Host {
     try {
       await Promise.race([
         (async () => {
+          await Promise.allSettled(this.stopJobs.values());
           const preparations = await Promise.allSettled(this.prepared.values());
           await Promise.all(
             preparations.map(async (result) => {
