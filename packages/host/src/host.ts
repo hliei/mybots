@@ -4,7 +4,13 @@ import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout } from "node:timers/promises";
-import type { AgentResources, OutboundMessage, WebConfiguration } from "@mybots/mailbox";
+import type {
+  AgentResources,
+  ExecutionRecord,
+  ExecutionSnapshot,
+  OutboundMessage,
+  WebConfiguration,
+} from "@mybots/mailbox";
 import { HostMailbox } from "@mybots/mailbox/node";
 import { BotRequestError, parseBotCreate, publicModel } from "./bots.ts";
 import { ChatRequestError, chatInput } from "./chat.ts";
@@ -77,6 +83,14 @@ export type HostEvent =
       timestamp: string;
     }
   | { type: "output"; sessionId: string; destinationId: string; message: OutboundMessage }
+  | {
+      type: "execution";
+      botId: string;
+      threadId: string;
+      taskId: string;
+      runId: string;
+      snapshot: ExecutionSnapshot;
+    }
   | { type: "failure"; sessionId?: string; error: string };
 
 interface SessionExecution {
@@ -85,6 +99,7 @@ interface SessionExecution {
   mailbox: HostMailbox;
   /** Fencing token for this host's ownership of the session. */
   incarnation: number;
+  observedSnapshot?: string;
   /** Clock time at which the current container incarnation began. */
   startedAtMs: number;
   starting?: Promise<void>;
@@ -419,6 +434,7 @@ export class Host {
         this.store.threads.startAttempt(id, incarnation, this.timestamp());
       this.store.containerStatus(id, "starting");
       try {
+        execution.mailbox.setExecutionIncarnation(incarnation);
         const handle = await this.driver.start(execution.material, this.controller.signal);
         if (this.stopped) {
           await handle.stop().catch(() => {});
@@ -632,6 +648,7 @@ export class Host {
           if (signal.aborted) break;
           execution.mailbox.syncAcknowledgements();
           this.syncChat(execution);
+          this.historyOperations(execution);
           if (!execution.handle && !execution.starting && !execution.replacing)
             await this.reconcileSession(execution);
           // Observe new rows even while an earlier channel delivery remains pending.
@@ -851,6 +868,147 @@ export class Host {
       if (execution.route.session.agent_group_id === botId) this.syncChat(execution);
     }
     return this.store.threads.detail(botId);
+  }
+
+  private historyOperations(execution: SessionExecution): void {
+    const { mailbox, route } = execution;
+    if (route.session.purpose !== "run" || !this.owned(route.session.id)) return;
+    for (const request of mailbox.historyRequests()) {
+      if (mailbox.operationResponse(request.id)) continue;
+      try {
+        if (
+          (!execution.handle && !execution.starting) ||
+          request.incarnation !== mailbox.executionIncarnation() ||
+          request.incarnation === 0
+        )
+          throw new ChatRequestError("Execution scope is no longer active.", 403);
+        if (!request.input || typeof request.input !== "object" || Array.isArray(request.input))
+          throw new ChatRequestError("Invalid history arguments.");
+        const input = request.input as Record<string, unknown>;
+        if (
+          request.operation === "search_history"
+            ? typeof input.query !== "string" || input.messageId !== undefined
+            : request.operation === "read_history"
+              ? typeof input.messageId !== "string" || input.query !== undefined
+              : true
+        )
+          throw new ChatRequestError("Invalid history operation.");
+        mailbox.respondOperation(request.id, {
+          result: this.store.threads.history(route.session.agent_group_id, input, route.session.id),
+        });
+      } catch (error) {
+        mailbox.respondOperation(request.id, {
+          error: error instanceof ChatRequestError ? error.message : "History unavailable.",
+        });
+      }
+    }
+    const snapshot = mailbox.executionSnapshot();
+    if (!snapshot || snapshot.incarnation !== mailbox.executionIncarnation()) return;
+    const serialized = JSON.stringify(snapshot);
+    if (serialized === execution.observedSnapshot) return;
+    execution.observedSnapshot = serialized;
+    this.emit({
+      type: "execution",
+      botId: route.session.agent_group_id,
+      threadId: route.session.thread_id as string,
+      taskId: this.store.threads.run(route.session.id).task_id,
+      runId: route.session.id,
+      snapshot,
+    });
+  }
+
+  async runHistory(botId: string, runId: string, input: Record<string, unknown>) {
+    const thread = this.store.threads.thread(botId);
+    const session = this.store.threads.session(runId);
+    if (session.agent_group_id !== botId || session.thread_id !== thread.id)
+      throw new ChatRequestError("Run not found for this Bot.", 404);
+    if (
+      Object.keys(input).some((key) => !["after", "recordId", "textOffset", "kind"].includes(key))
+    )
+      throw new ChatRequestError("Unknown Run history field.");
+    const offset = input.textOffset === undefined ? 0 : Number(input.textOffset);
+    if (
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      (input.after !== undefined && typeof input.after !== "string") ||
+      (input.recordId !== undefined && typeof input.recordId !== "string")
+    )
+      throw new ChatRequestError("Invalid Run history cursor.");
+    const prepared = this.prepared.get(runId);
+    if (!prepared) throw new ChatRequestError("Run evidence unavailable.", 503);
+    const execution = await prepared;
+    if (
+      input.kind !== undefined &&
+      !["inputs", "attempts", "records"].includes(input.kind as string)
+    )
+      throw new ChatRequestError("Invalid Run history kind.");
+    const all: ExecutionRecord[] =
+      input.kind === "inputs"
+        ? this.store.threads.inputs(runId).map((row) => ({
+            id: row.message_id,
+            kind: "input",
+            text: row.content,
+            createdAt: row.admitted_at,
+            inputId: row.message_id,
+          }))
+        : input.kind === "attempts"
+          ? this.store.threads.attempts(runId).map((row) => ({
+              id: row.id as string,
+              kind: "attempt",
+              text: `Configuration ${row.configurationVersion}; started ${row.startedAt}; ${row.endedAt ? `stopped ${row.endedAt}` : "executing"}`,
+              createdAt: row.startedAt as string,
+              incarnation: row.incarnation as number,
+            }))
+          : execution.mailbox.executionRecords();
+    const after =
+      input.after === undefined ? -1 : all.findIndex((record) => record.id === input.after);
+    if (input.after !== undefined && after < 0)
+      throw new ChatRequestError("Run history cursor not found.", 404);
+    const selected =
+      input.recordId === undefined
+        ? all.slice(after + 1, after + 7)
+        : all.filter((record) => record.id === input.recordId);
+    if (input.recordId !== undefined && !selected.length)
+      throw new ChatRequestError("Run record not found.", 404);
+    const records = selected.slice(0, 5).map((record) => {
+      const chars = Array.from(record.text);
+      return {
+        ...record,
+        text: chars.slice(offset, offset + 2000).join(""),
+        textOffset: offset,
+        nextTextOffset: offset + 2000 < chars.length ? offset + 2000 : null,
+        truncated: offset > 0 || offset + 2000 < chars.length,
+      };
+    });
+    const result = {
+      botId,
+      runId,
+      records,
+      snapshot: execution.mailbox.executionSnapshot() ?? null,
+      coverage: selected.length > 5 ? "partial" : "exhausted",
+      nextAfter: selected.length > 5 ? (records.at(-1)?.id ?? null) : null,
+    };
+    // The live preview is bounded independently; full original text has continuation offsets.
+    if (result.snapshot) {
+      const chars = Array.from(result.snapshot.text);
+      result.snapshot.textOffset += Math.max(0, chars.length - 1000);
+      result.snapshot.text = chars.slice(-1000).join("");
+    }
+    while (Buffer.byteLength(JSON.stringify(result)) > 10000) {
+      const longest = records.reduce((a, b) => (a.text.length > b.text.length ? a : b));
+      if (!longest.text)
+        throw new ChatRequestError("Run history metadata exceeds the response bound.", 413);
+      longest.text = Array.from(longest.text)
+        .slice(0, Math.floor(Array.from(longest.text).length / 2))
+        .join("");
+      longest.nextTextOffset = offset + Array.from(longest.text).length;
+      longest.truncated = true;
+    }
+    return result;
+  }
+
+  async threadHistory(botId: string, input: unknown) {
+    return this.store.threads.history(botId, input);
   }
 
   async sendThread(

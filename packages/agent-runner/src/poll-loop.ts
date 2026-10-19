@@ -26,6 +26,20 @@ export interface PollLoopOptions {
 
 export async function runMailbox(options: PollLoopOptions): Promise<void> {
   const { mailbox, provider, signal } = options;
+  const incarnation = mailbox.executionIncarnation();
+  let streamId = randomUUID();
+  let streamText = "";
+  let tool: string | null = null;
+  const snapshot = () => {
+    const chars = Array.from(streamText);
+    mailbox.saveSnapshot({
+      id: streamId,
+      text: chars.slice(-2000).join(""),
+      textOffset: Math.max(0, chars.length - 2000),
+      tool,
+      incarnation,
+    });
+  };
   while (!signal.aborted) {
     const input = mailbox.pending()[0];
     if (!input) {
@@ -43,6 +57,26 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
     mailbox.activity(null);
     const query = provider.query({
       prompt: input.content,
+      history: options.runContext
+        ? async (operation, input, toolSignal) => {
+            const id = randomUUID();
+            const requestSignal = AbortSignal.any([
+              signal,
+              ...(toolSignal ? [toolSignal] : []),
+              AbortSignal.timeout(30000),
+            ]);
+            mailbox.requestHistory({ id, incarnation, operation, input });
+            for (;;) {
+              requestSignal.throwIfAborted();
+              const response = mailbox.historyResponse(id);
+              if (response) {
+                if (response.error) throw new Error(response.error);
+                return response.result;
+              }
+              await setTimeout(options.pollMs ?? 100, undefined, { signal: requestSignal });
+            }
+          }
+        : undefined,
       inputId: input.id,
       runContext: options.runContext,
       cwd: options.cwd,
@@ -55,6 +89,10 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
         web: options.web,
       },
     });
+    streamId = randomUUID();
+    streamText = "";
+    tool = null;
+    snapshot();
     const answering = [input];
     const pollingController = new AbortController();
     const pollingSignal = AbortSignal.any([signal, pollingController.signal]);
@@ -104,6 +142,13 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
       for await (const event of queryEvents(query)) {
         if (signal.aborted) break;
         switch (event.type) {
+          case "evidence":
+            mailbox.recordExecution({ ...event.record, incarnation });
+            break;
+          case "text":
+            streamText += event.text;
+            snapshot();
+            break;
           case "recorded":
             mailbox.recordInput(event.inputId);
             break;
@@ -115,6 +160,8 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
             break;
           case "tool":
             mailbox.activity(event.name, event.timeoutMs ?? null);
+            tool = event.name;
+            snapshot();
             break;
           case "progress":
             mailbox.activity(event.message);

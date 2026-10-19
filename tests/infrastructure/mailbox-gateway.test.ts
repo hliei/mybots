@@ -355,6 +355,54 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
       await handle.stop();
       handle = undefined;
     }
+    const historyMaterial = await provisionSession({
+      root,
+      key: { agentGroupId: "personal", sessionId: "history-run" },
+      folder: "personal",
+      runContext: { sourceMessageId: "history", backgroundBoundary: 0, references: [] },
+      model: {
+        provider: "controlled",
+        id: "controlled-model",
+        baseUrl: "https://model.test:8443/v1",
+        contextWindow: 32768,
+        maxTokens: 4096,
+      },
+    });
+    const historyMailbox = new HostMailbox(historyMaterial.directory);
+    historyMailbox.setExecutionIncarnation(7);
+    historyMailbox.submit({
+      id: "history",
+      content: "Inspect original history",
+      channel_type: "client",
+      platform_id: "owner",
+      thread_id: null,
+    });
+    handle = await recoveredDriver.start(historyMaterial, signal);
+    const historyRequest = await eventually(() => historyMailbox.historyRequests()[0], signal);
+    expect(historyRequest).toMatchObject({
+      incarnation: 7,
+      operation: "search_history",
+      input: { query: "火星项目" },
+    });
+    expect(historyMailbox.executionSnapshot()?.text).toContain("Reading original history");
+    historyMailbox.respondOperation(historyRequest.id, {
+      result: {
+        untrusted: true,
+        messages: [{ id: "original", text: "火星项目更正：星期二" }],
+        nextBeforeSeq: null,
+      },
+    });
+    const historyReply = await eventually(() => historyMailbox.outputs()[0], signal);
+    expect(historyReply.content).toBe("History original received.");
+    expect(historyMailbox.executionRecords()).toContainEqual(
+      expect.objectContaining({
+        kind: "tool-result",
+        toolName: "search_history",
+        text: expect.stringContaining("火星项目更正"),
+      }),
+    );
+    await handle.stop();
+    handle = undefined;
     process.stdout.write(
       "Infrastructure passed: mounted freshness, tool isolation, gateway injection, streaming reply, explicit Pi reopening, runtime observation/adoption and observed container termination.\n",
     );

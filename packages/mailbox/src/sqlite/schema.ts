@@ -31,3 +31,8 @@ CREATE TABLE IF NOT EXISTS container_state (
  tool_declared_timeout_ms INTEGER, tool_started_at TEXT, updated_at TEXT NOT NULL
 );
 `;
+
+/** Host-owned operation replies and actual executor generation, never runner writable. */
+export const HOST_OPERATIONS_SCHEMA = `
+CREATE TABLE IF NOT EXISTS host_operation_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+`;

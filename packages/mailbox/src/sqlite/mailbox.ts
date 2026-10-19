@@ -3,6 +3,9 @@ import { existsSync, mkdirSync, statSync, utimesSync, writeFileSync } from "node
 import { join } from "node:path";
 import type {
   ContainerState,
+  ExecutionRecord,
+  ExecutionSnapshot,
+  HistoryRequest,
   InboundMessage,
   OutboundMessage,
   ProcessingAck,
@@ -10,7 +13,52 @@ import type {
 } from "../types.ts";
 import type { WithDatabase } from "./connection.ts";
 import { clearMailboxLocks } from "./lock.ts";
-import { INBOUND_SCHEMA, OUTBOUND_SCHEMA } from "./schema.ts";
+import { HOST_OPERATIONS_SCHEMA, INBOUND_SCHEMA, OUTBOUND_SCHEMA } from "./schema.ts";
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isHistoryRequest(value: unknown): value is HistoryRequest {
+  return (
+    isObject(value) &&
+    typeof value.id === "string" &&
+    value.id.length > 0 &&
+    Number.isSafeInteger(value.incarnation) &&
+    Number(value.incarnation) >= 0 &&
+    (value.operation === "search_history" || value.operation === "read_history") &&
+    "input" in value
+  );
+}
+
+function isExecutionRecord(value: unknown): value is ExecutionRecord {
+  return (
+    isObject(value) &&
+    typeof value.id === "string" &&
+    typeof value.kind === "string" &&
+    ["input", "assistant", "tool-call", "tool-result", "attempt"].includes(value.kind) &&
+    typeof value.text === "string" &&
+    typeof value.createdAt === "string" &&
+    [value.toolName, value.toolCallId, value.inputId].every(
+      (field) => field === undefined || typeof field === "string",
+    ) &&
+    (value.incarnation === undefined ||
+      (Number.isSafeInteger(value.incarnation) && Number(value.incarnation) >= 0))
+  );
+}
+
+function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot {
+  return (
+    isObject(value) &&
+    typeof value.id === "string" &&
+    typeof value.text === "string" &&
+    (value.tool === null || typeof value.tool === "string") &&
+    Number.isSafeInteger(value.textOffset) &&
+    Number(value.textOffset) >= 0 &&
+    Number.isSafeInteger(value.incarnation) &&
+    Number(value.incarnation) >= 0
+  );
+}
 
 export function createMailbox(withDatabase: WithDatabase) {
   /**
@@ -56,12 +104,77 @@ export function createMailbox(withDatabase: WithDatabase) {
         });
       }
     }
+    withDatabase(directory, "inbound", false, (db) => db.exec(HOST_OPERATIONS_SCHEMA));
   }
 
   class HostMailbox {
     readonly directory: string;
     constructor(directory: string) {
       this.directory = directory;
+    }
+
+    setExecutionIncarnation(incarnation: number): void {
+      withDatabase(this.directory, "inbound", false, (db) =>
+        db.run(
+          "INSERT OR REPLACE INTO host_operation_state VALUES ('incarnation', ?)",
+          String(incarnation),
+        ),
+      );
+    }
+    executionIncarnation(): number {
+      return withDatabase(this.directory, "inbound", true, (db) =>
+        Number(
+          (
+            db.get("SELECT value FROM host_operation_state WHERE key = 'incarnation'") as
+              | { value: string }
+              | undefined
+          )?.value ?? 0,
+        ),
+      );
+    }
+    operationResponse(id: string): { result?: unknown; error?: string } | undefined {
+      return withDatabase(this.directory, "inbound", true, (db) => {
+        const row = db.get(
+          "SELECT value FROM host_operation_state WHERE key = ?",
+          `response:${id}`,
+        ) as { value: string } | undefined;
+        return row ? JSON.parse(row.value) : undefined;
+      });
+    }
+    respondOperation(id: string, response: { result?: unknown; error?: string }): void {
+      withDatabase(this.directory, "inbound", false, (db) =>
+        db.run(
+          "INSERT OR IGNORE INTO host_operation_state VALUES (?, ?)",
+          `response:${id}`,
+          JSON.stringify(response),
+        ),
+      );
+    }
+    private state(prefix: string): unknown[] {
+      return withDatabase(this.directory, "outbound", true, (db) =>
+        (
+          db.all(
+            "SELECT value FROM session_state WHERE key LIKE ? ORDER BY rowid",
+            `${prefix}:%`,
+          ) as { value: string }[]
+        ).flatMap((row) => {
+          try {
+            const value: unknown = JSON.parse(row.value);
+            return [value];
+          } catch {
+            return [];
+          }
+        }),
+      );
+    }
+    historyRequests(): HistoryRequest[] {
+      return this.state("request").filter(isHistoryRequest);
+    }
+    executionRecords(): ExecutionRecord[] {
+      return this.state("evidence").filter(isExecutionRecord);
+    }
+    executionSnapshot(): ExecutionSnapshot | undefined {
+      return this.state("live").filter(isExecutionSnapshot).at(-1);
     }
 
     submit(
@@ -253,6 +366,39 @@ export function createMailbox(withDatabase: WithDatabase) {
     readonly directory: string;
     constructor(directory: string) {
       this.directory = directory;
+    }
+
+    executionIncarnation(): number {
+      return new HostMailbox(this.directory).executionIncarnation();
+    }
+    requestHistory(request: HistoryRequest): void {
+      this.saveState(`request:${request.id}`, request);
+    }
+    historyResponse(id: string) {
+      return new HostMailbox(this.directory).operationResponse(id);
+    }
+    recordExecution(record: ExecutionRecord): void {
+      withDatabase(this.directory, "outbound", false, (db) =>
+        db.run(
+          "INSERT OR IGNORE INTO session_state VALUES (?, ?, ?)",
+          `evidence:${record.id}`,
+          JSON.stringify(record),
+          new Date().toISOString(),
+        ),
+      );
+    }
+    saveSnapshot(snapshot: ExecutionSnapshot): void {
+      this.saveState("live:current", snapshot);
+    }
+    private saveState(key: string, value: unknown): void {
+      withDatabase(this.directory, "outbound", false, (db) =>
+        db.run(
+          "INSERT OR REPLACE INTO session_state VALUES (?, ?, ?)",
+          key,
+          JSON.stringify(value),
+          new Date().toISOString(),
+        ),
+      );
     }
 
     pending(): InboundMessage[] {

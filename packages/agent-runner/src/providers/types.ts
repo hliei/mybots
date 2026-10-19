@@ -1,6 +1,13 @@
-import type { AgentResources, RunContext, WebConfiguration } from "@mybots/mailbox";
+import type {
+  AgentResources,
+  ExecutionRecord,
+  HistoryOperation,
+  RunContext,
+  WebConfiguration,
+} from "@mybots/mailbox";
 export interface QueryInput {
   prompt: string;
+  history?: HistoryOperation;
   inputId?: string;
   runContext?: RunContext;
   cwd: string;
@@ -12,6 +19,7 @@ export interface QueryInput {
 }
 
 export type ProviderEvent =
+  | { type: "evidence"; record: ExecutionRecord }
   | { type: "recorded"; inputId: string }
   | { type: "init"; continuation: string }
   | { type: "activity" }

@@ -41,8 +41,11 @@ createServer({ key: readFileSync("/tls/key.pem"), cert: readFileSync("/tls/cert.
   const tools = body.messages.slice(latestIndex + 1).filter((message) => message.role === "tool");
   const reopened = JSON.stringify(latest?.content).includes("Continue");
   const search = JSON.stringify(latest?.content).includes("Search the web");
+  const inspectHistory = JSON.stringify(latest?.content).includes("Inspect original history");
   const inspectMaterials = JSON.stringify(latest?.content).includes("Inspect Bot materials");
-  const reply = inspectMaterials
+  const reply = inspectHistory
+    ? tools.length ? {text: "History original received."} : {tool: "search_history", arguments: {query: "火星项目"}, text: "Reading original history"}
+    : inspectMaterials
     ? tools.length > 0
       ? { text: JSON.stringify(tools).includes("Shared Agent note") ? "Shared material visible." : "Workspace starts empty." }
       : { tool: "bash", arguments: { command: "if test -f note.txt; then cat note.txt; else printf 'No shared note'; fi" } }

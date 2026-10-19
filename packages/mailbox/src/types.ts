@@ -78,3 +78,33 @@ export interface RunContext {
   backgroundBoundary: number;
   references: { id: string; role: string; content: string }[];
 }
+
+/** Stable product evidence, excluding hidden reasoning and provider-only payloads. */
+export interface ExecutionRecord {
+  id: string;
+  kind: "input" | "assistant" | "tool-call" | "tool-result" | "attempt";
+  text: string;
+  createdAt: string;
+  toolName?: string;
+  toolCallId?: string;
+  inputId?: string;
+  incarnation?: number;
+}
+export interface ExecutionSnapshot {
+  id: string;
+  textOffset: number;
+  text: string;
+  tool: string | null;
+  incarnation: number;
+}
+export interface HistoryRequest {
+  id: string;
+  incarnation: number;
+  operation: "search_history" | "read_history";
+  input: unknown;
+}
+export type HistoryOperation = (
+  operation: HistoryRequest["operation"],
+  input: unknown,
+  signal?: AbortSignal,
+) => Promise<unknown>;

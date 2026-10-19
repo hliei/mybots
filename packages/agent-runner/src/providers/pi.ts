@@ -10,6 +10,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { resolveWebTools, validateAgentResources } from "@mybots/mailbox";
+import { createHistoryTools, HISTORY_INSTRUCTIONS } from "../tools/history.ts";
 import { createWebTools } from "../tools/web.ts";
 import type { AgentProvider, AgentQuery, ProviderEvent, QueryInput } from "./types.ts";
 
@@ -104,9 +105,10 @@ export class PiProvider implements AgentProvider {
           noPromptTemplates: true,
           noThemes: true,
           noContextFiles: true,
-          appendSystemPrompt: input.systemContext?.instructions
-            ? [input.systemContext.instructions]
-            : [],
+          appendSystemPrompt: [
+            ...(input.systemContext?.instructions ? [input.systemContext.instructions] : []),
+            ...(input.history ? [HISTORY_INSTRUCTIONS] : []),
+          ],
         });
         await resourceLoader.reload();
         if (resourceLoader.getSkills().diagnostics.some((item) => item.type === "error"))
@@ -117,8 +119,8 @@ export class PiProvider implements AgentProvider {
           modelRuntime: this.options.modelRuntime,
           model: this.options.model,
           thinkingLevel: "off",
-          tools: selectedTools,
-          customTools: webTools,
+          tools: [...selectedTools, ...(input.history ? ["search_history", "read_history"] : [])],
+          customTools: [...webTools, ...(input.history ? createHistoryTools(input.history) : [])],
           sessionManager: manager,
           settingsManager,
           resourceLoader,
@@ -261,9 +263,58 @@ export class PiProvider implements AgentProvider {
         });
         // Successful tool-free turn_end follows persistence and precedes the next
         // FIFO input. prompt settlement resolves errors after SDK recovery.
+        const published = new Set<string>();
+        const publishEvidence = () => {
+          for (const entry of manager.getEntries()) {
+            if (entry.type !== "message" || "mybotsReference" in entry.message) continue;
+            const message = entry.message;
+            if (
+              message.role !== "user" &&
+              message.role !== "assistant" &&
+              message.role !== "toolResult"
+            )
+              continue;
+            const createdAt = entry.timestamp;
+            const content =
+              typeof message.content === "string"
+                ? [{ type: "text" as const, text: message.content }]
+                : message.content;
+            for (const [index, part] of content.entries()) {
+              if (part.type !== "text" && part.type !== "toolCall") continue;
+              const id = `${entry.id}:${index}`;
+              if (published.has(id)) continue;
+              published.add(id);
+              emit({
+                type: "evidence",
+                record: {
+                  id,
+                  kind:
+                    part.type === "toolCall"
+                      ? "tool-call"
+                      : message.role === "toolResult"
+                        ? "tool-result"
+                        : message.role === "user"
+                          ? "input"
+                          : "assistant",
+                  text: part.type === "text" ? part.text : JSON.stringify(part.arguments),
+                  createdAt,
+                  ...(part.type === "toolCall" ? { toolName: part.name, toolCallId: part.id } : {}),
+                  ...(message.role === "toolResult"
+                    ? { toolName: message.toolName, toolCallId: message.toolCallId }
+                    : {}),
+                  ...("mybotsInputId" in message && typeof message.mybotsInputId === "string"
+                    ? { inputId: message.mybotsInputId }
+                    : {}),
+                },
+              });
+            }
+          }
+        };
+        publishEvidence();
         if (durable) {
           // Agent listeners run after coding-agent's awaited persistence listener.
           unsubscribeRecorded = session.agent.subscribe((event) => {
+            if (event.type === "message_end") publishEvidence();
             if (
               event.type !== "message_end" ||
               event.message.role !== "user" ||
