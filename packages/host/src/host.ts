@@ -200,7 +200,7 @@ export class Host {
   private readonly reconcileMs: number;
   private readonly controller = new AbortController();
   private readonly prepared = new Map<string, Promise<SessionExecution>>();
-  private readonly live = new Map<string, SessionExecution>();
+  private readonly preparedExecutions = new Map<string, SessionExecution>();
   private readonly settlingWaits = new Set<string>();
   private readonly channels = new Map<string, HostChannel>();
   private readonly observers = new Set<(event: HostEvent) => void>();
@@ -365,7 +365,7 @@ export class Host {
       this.prepared.set(route.session.id, pending);
       void pending.then(
         (execution) => {
-          this.live.set(route.session.id, execution);
+          this.preparedExecutions.set(route.session.id, execution);
         },
         () => this.prepared.delete(route.session.id),
       );
@@ -457,7 +457,10 @@ export class Host {
     if (execution.route.session.purpose === "run") {
       if (!this.store.threads.holdsReservation(id)) return;
     } else if (this.store.threads.botIsReserved(botId)) return;
-    if (!options.force && this.store.containerStatusOf(id) === "failed") return;
+    if (!options.force && this.store.containerStatusOf(id) === "failed") {
+      this.store.threads.abandonAdmission(id);
+      return;
+    }
     execution.starting = (async () => {
       const incarnation = this.store.tryClaimSession({
         sessionId: id,
@@ -681,7 +684,7 @@ export class Host {
     const signal = this.controller.signal;
     let nextReconcile = this.clock() + this.reconcileMs;
     while (!signal.aborted) {
-      for (const execution of this.live.values()) this.refreshAdmission(execution);
+      for (const execution of this.preparedExecutions.values()) this.refreshAdmission(execution);
       this.schedule();
       if (this.clock() >= nextReconcile) {
         nextReconcile = this.clock() + this.reconcileMs;
@@ -1265,7 +1268,7 @@ export class Host {
     if (this.storeClosed || execution.route.session.purpose !== "run") return;
     const id = execution.route.session.id;
     if (this.store.threads.run(id).state !== "queued") return;
-    const ready = this.executionReady(execution);
+    const ready = this.executionReady(execution) && this.store.containerStatusOf(id) !== "failed";
     this.store.threads.setRunnable(id, ready);
     if (!ready) this.store.threads.clearReservation(id);
   }
@@ -1278,9 +1281,13 @@ export class Host {
       const runId = this.store.threads.reserveNext(limit, this.timestamp());
       if (!runId) return;
       const session = this.store.threads.session(runId);
-      void this.prepare(this.store.route(session)).then((execution) => {
-        this.wake(execution);
-      });
+      void this.prepare(this.store.route(session))
+        .then((execution) => {
+          this.wake(execution);
+        })
+        .catch(() => {
+          if (!this.stopped) this.emit({ type: "failure", error: "Session mailbox unavailable" });
+        });
     }
   }
 

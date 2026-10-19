@@ -277,7 +277,7 @@ it("alternates interactive and background work so neither class waits behind the
 });
 
 it("releases a slot after complete tool results and keeps it while a tool result is missing", async () => {
-  let recordResult = false;
+  const recorded = Promise.withResolvers<void>();
   const external = new MailboxDriver();
   external.respond = async (input, material, signal) => {
     if (input.content === "Wait") {
@@ -291,8 +291,13 @@ it("releases a slot after complete tool results and keeps it while a tool result
         createdAt: "2026-10-19T00:00:00.000Z",
       });
       mailbox.requestDurableWait("owner question");
-      while (!recordResult && !signal.aborted)
-        await new Promise((resolve) => setTimeout(resolve, 10));
+      await Promise.race([
+        recorded.promise,
+        new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+      ]);
       if (signal.aborted) return "Final: Wait";
       mailbox.recordExecution({
         id: "result-1",
@@ -321,7 +326,6 @@ it("releases a slot after complete tool results and keeps it while a tool result
   const next = await (
     await post(`/api/bots/${beta}/thread/messages`, { requestId: "beta", text: "Beta" })
   ).json();
-  await new Promise((resolve) => setTimeout(resolve, 50));
   expect((await get(`/api/bots/${alpha}/thread`)).tasks[0].runs[0]).toMatchObject({
     id: waiting.runId,
     state: "active",
@@ -330,7 +334,7 @@ it("releases a slot after complete tool results and keeps it while a tool result
     id: next.runId,
     state: "queued",
   });
-  recordResult = true;
+  recorded.resolve();
   await vi.waitFor(async () =>
     expect((await get(`/api/bots/${alpha}/thread`)).tasks[0].runs[0]).toMatchObject({
       id: waiting.runId,
@@ -503,7 +507,6 @@ it("keeps the global slot while stop is unconfirmed", async () => {
   const queued = await (
     await post(`/api/bots/${beta}/thread/messages`, { requestId: "beta", text: "Beta" })
   ).json();
-  await new Promise((resolve) => setTimeout(resolve, 40));
   expect((await get(`/api/bots/${beta}/thread`)).tasks[0].runs[0]).toMatchObject({
     id: queued.runId,
     state: "queued",
@@ -513,4 +516,22 @@ it("keeps the global slot while stop is unconfirmed", async () => {
     activeCount: 1,
     activeLimit: 1,
   });
+});
+
+it("releases the global slot when the driver fails to start", async () => {
+  const external = new MailboxDriver();
+  external.fail = true;
+  await start(external, { activeExecutionLimit: 1 });
+  const alpha = await createBot("Alpha");
+  await post(`/api/bots/${alpha}/thread/messages`, { requestId: "alpha", text: "Alpha" });
+  await vi.waitFor(async () =>
+    expect((await get(`/api/bots/${alpha}/thread`)).admission.activeCount).toBe(0),
+  );
+  const beta = await createBot("Beta");
+  await post(`/api/bots/${beta}/thread/messages`, { requestId: "beta", text: "Beta" });
+  await vi.waitFor(async () =>
+    expect(
+      (await get(`/api/bots/${beta}/thread`)).tasks[0].runs[0].attempts.length,
+    ).toBeGreaterThan(0),
+  );
 });
