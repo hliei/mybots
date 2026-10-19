@@ -183,8 +183,10 @@ inside the container; the real search credential stays gateway-owned and is
 injected only for the configured endpoint's hostname.
 Shared instruction/Skill file changes take effect on the next query, after the
 current query and SDK cleanup finish; queued follow-ups retain their query's
-resources. Changing the configured selection requires stopped execution and
-explicit replacement of immutable context, as with model configuration.
+resources. Saving Bot role, model or tool selection establishes a finite cutoff:
+the open Attempt and steering admitted before the save finish under that
+Attempt's version, then the next Attempt replaces immutable context with the
+saved version and reopens the same Run ledger.
 
 Pi owns Run-local automatic compaction, summaries and reopening. The Host selects
 bounded original Thread references for each new Run. Legacy `/reset` is rejected;

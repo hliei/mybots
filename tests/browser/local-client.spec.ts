@@ -167,6 +167,17 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     expect(returned.sessionId).toBe(ready.sessionId);
     await page.getByRole("button", { name: "Refresh status" }).click();
     await expect(page.getByRole("status")).toContainText("Connected");
+    await page.getByRole("button", { name: "Select Writer", exact: true }).click();
+    await page.getByLabel("Bot role").fill("Edited writer role.");
+    await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+    await expect(page.locator("#settings-versions")).toContainText(
+      "Saved and effective configuration 2",
+    );
+    await page.getByRole("button", { name: "Select Researcher", exact: true }).click();
+    await stop();
+    await start(Number(new URL(ready.url).port));
+    await page.getByRole("button", { name: "Refresh status" }).click();
+    await expect(page.getByRole("status")).toContainText("Connected");
     await page.reload();
     await expect(page.locator("#bots")).toContainText(ready.sessionId);
     await expect(page.locator("#bots")).toContainText("Container: stopped");
@@ -175,8 +186,10 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await expect(page.locator("#chat-works")).toContainText("Final: Research first");
     await expect(page.locator("#chat-works article")).toHaveCount(3);
     await page.getByRole("button", { name: "Select Writer", exact: true }).click();
-    await expect(page.locator("#selected-bot")).toContainText("Write clear reports.");
-    await expect(page.getByRole("button", { name: /save settings|edit bot/i })).toHaveCount(0);
+    await expect(page.locator("#selected-bot")).toContainText("Edited writer role.");
+    await expect(page.locator("#settings-versions")).toContainText(
+      "Saved and effective configuration 2",
+    );
     await expect(page.getByLabel("Connection credential")).toBeHidden();
     expect(errors).toEqual([]);
   } finally {

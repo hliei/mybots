@@ -3,7 +3,12 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AgentResources, WebConfiguration } from "@mybots/mailbox";
-import { BotRequestError, type BotSettings, type ManagedBot } from "../bots.ts";
+import {
+  type BotConfigurationView,
+  BotRequestError,
+  type BotSettings,
+  type ManagedBot,
+} from "../bots.ts";
 import type { ModelConfiguration } from "../drivers/types.ts";
 import type { HostConfiguration } from "../host.ts";
 import { schema } from "./migrations/001-initial.ts";
@@ -14,6 +19,7 @@ import { webSchema } from "./migrations/005-web-tools.ts";
 import { managedBotSchema } from "./migrations/006-managed-bots.ts";
 import { chatSchema } from "./migrations/007-chat-work.ts";
 import { threadExecutionSchema } from "./migrations/008-thread-execution.ts";
+import { botConfigurationSchema } from "./migrations/009-bot-configuration.ts";
 import { ThreadStore } from "./threads.ts";
 
 export interface HostInstance {
@@ -58,6 +64,7 @@ export interface SessionRoute {
   instructions?: string;
   resources?: AgentResources;
   web?: WebConfiguration;
+  configurationVersion: number;
 }
 
 /** Persisted platform-delivery bookkeeping for one outbound mailbox row. */
@@ -82,7 +89,7 @@ export class HostStore {
       const { user_version } = this.db.prepare("PRAGMA user_version").get() as {
         user_version: number;
       };
-      if (user_version > 8) throw new Error("Unsupported host schema version");
+      if (user_version > 9) throw new Error("Unsupported host schema version");
       if (
         user_version > 0 &&
         user_version < 8 &&
@@ -99,6 +106,7 @@ export class HostStore {
       if (user_version <= 5) this.db.exec(managedBotSchema);
       if (user_version <= 6) this.db.exec(chatSchema);
       if (user_version <= 7) this.db.exec(threadExecutionSchema);
+      if (user_version <= 8) this.db.exec(botConfigurationSchema);
       this.seed(configuration);
       this.threads = new ThreadStore(this.db);
       this.threads.ensureThreads(new Date().toISOString());
@@ -144,6 +152,15 @@ export class HostStore {
         this.db.prepare("INSERT INTO bot_bootstrap VALUES (1, ?)").run(agent.id);
         bootstrapId = agent.id;
       }
+      this.db
+        .prepare(`INSERT INTO configuration_versions
+        (agent_group_id, version, instructions, model_config, resources, web, created_at)
+        SELECT agent_group_id, version, instructions, model_config, resources, web, updated_at
+        FROM container_configs WHERE NOT EXISTS (
+          SELECT 1 FROM configuration_versions v
+          WHERE v.agent_group_id = container_configs.agent_group_id AND v.version = container_configs.version
+        )`)
+        .run();
       for (const destination of configuration.destinations) {
         const existing = this.db
           .prepare("SELECT channel_type, platform_id, instance FROM messaging_groups WHERE id = ?")
@@ -200,7 +217,7 @@ export class HostStore {
   route(session: SavedSession): SessionRoute {
     const row = this.db
       .prepare(
-        `SELECT a.folder, m.channel_type, m.platform_id, m.instance, c.model_config, c.instructions, c.resources, c.web FROM agent_groups a JOIN container_configs c ON c.agent_group_id = a.id JOIN messaging_groups m ON m.id = ? WHERE a.id = ?`,
+        `SELECT a.folder, m.channel_type, m.platform_id, m.instance, c.model_config, c.instructions, c.resources, c.web, c.version FROM agent_groups a JOIN container_configs c ON c.agent_group_id = a.id JOIN messaging_groups m ON m.id = ? WHERE a.id = ?`,
       )
       .get(session.messaging_group_id, session.agent_group_id);
     if (!row) throw new Error("Session routing is unavailable");
@@ -216,6 +233,7 @@ export class HostStore {
         ? (JSON.parse(row.resources as string) as AgentResources)
         : undefined,
       web: row.web ? (JSON.parse(row.web as string) as WebConfiguration) : undefined,
+      configurationVersion: row.version as number,
     };
   }
 
@@ -225,23 +243,60 @@ export class HostStore {
       .all() as unknown as { id: string; name: string }[];
   }
 
+  private configurationView(
+    instructions: string | null,
+    modelConfig: string,
+    resourcesJson: string | null,
+  ): BotConfigurationView {
+    const model = JSON.parse(modelConfig) as ModelConfiguration;
+    const resources = resourcesJson ? (JSON.parse(resourcesJson) as AgentResources) : undefined;
+    return {
+      instructions: instructions ?? "",
+      model: { provider: model.provider, id: model.id },
+      tools: [...(resources?.tools ?? ["read", "write", "edit", "bash"])],
+    };
+  }
+
   managedBots(): ManagedBot[] {
     return this.db
-      .prepare(`SELECT a.id, a.name, a.folder, c.instructions, c.model_config, c.resources
+      .prepare(`SELECT a.id, a.name, a.folder, c.instructions, c.model_config, c.resources, c.version
       FROM agent_groups a JOIN container_configs c ON c.agent_group_id = a.id ORDER BY a.created_at, a.id`)
       .all()
       .map((row) => {
-        const model = JSON.parse(row.model_config as string) as ModelConfiguration;
-        const resources = row.resources
-          ? (JSON.parse(row.resources as string) as AgentResources)
-          : undefined;
+        const saved = this.configurationView(
+          row.instructions as string | null,
+          row.model_config as string,
+          row.resources as string | null,
+        );
+        const open = this.db
+          .prepare(`SELECT a.configuration_version AS version FROM attempts a
+          JOIN sessions s ON s.id = a.run_id
+          WHERE s.agent_group_id = ? AND a.ended_at IS NULL ORDER BY a.rowid DESC LIMIT 1`)
+          .get(row.id) as { version: number } | undefined;
+        const effectiveVersion = open?.version ?? (row.version as number);
+        const effectiveRow =
+          effectiveVersion === row.version
+            ? undefined
+            : (this.db
+                .prepare(`SELECT instructions, model_config, resources FROM configuration_versions
+            WHERE agent_group_id = ? AND version = ?`)
+                .get(row.id, effectiveVersion) as
+                | { instructions: string | null; model_config: string; resources: string | null }
+                | undefined);
         return {
           id: row.id as string,
           name: row.name as string,
           workspace: `groups/${row.folder}`,
-          instructions: (row.instructions as string | null) ?? "",
-          model: { provider: model.provider, id: model.id },
-          tools: [...(resources?.tools ?? ["read", "write", "edit", "bash"])],
+          ...saved,
+          savedVersion: row.version as number,
+          effectiveVersion,
+          effective: effectiveRow
+            ? this.configurationView(
+                effectiveRow.instructions,
+                effectiveRow.model_config,
+                effectiveRow.resources,
+              )
+            : saved,
         };
       });
   }
@@ -283,6 +338,18 @@ export class HostStore {
           now,
         );
       this.db
+        .prepare(`INSERT INTO configuration_versions
+        (agent_group_id, version, instructions, model_config, resources, web, created_at)
+        VALUES (?, 1, ?, ?, ?, ?, ?)`)
+        .run(
+          id,
+          input.instructions,
+          JSON.stringify(model),
+          JSON.stringify({ tools: input.tools, skills: [] }),
+          web ? JSON.stringify(web) : null,
+          now,
+        );
+      this.db
         .prepare("INSERT INTO bot_creations VALUES (?, ?, ?)")
         .run(input.requestId, id, JSON.stringify(input));
       this.db.exec("COMMIT");
@@ -291,6 +358,113 @@ export class HostStore {
       throw error;
     }
     return this.managedBots().find((bot) => bot.id === id) as ManagedBot;
+  }
+
+  savedConfigurationVersion(botId: string): number {
+    const row = this.db
+      .prepare("SELECT version FROM container_configs WHERE agent_group_id = ?")
+      .get(botId) as { version: number } | undefined;
+    if (!row) throw new BotRequestError("Bot not found.", 404);
+    return row.version;
+  }
+
+  configurationSnapshot(botId: string, version: number) {
+    const row = this.db
+      .prepare(`SELECT instructions, model_config, resources, web FROM configuration_versions
+      WHERE agent_group_id = ? AND version = ?`)
+      .get(botId, version) as
+      | {
+          instructions: string | null;
+          model_config: string;
+          resources: string | null;
+          web: string | null;
+        }
+      | undefined;
+    if (!row) throw new Error("Configuration version is unavailable");
+    return {
+      configurationVersion: version,
+      instructions: row.instructions ?? undefined,
+      model: JSON.parse(row.model_config) as ModelConfiguration,
+      resources: row.resources ? (JSON.parse(row.resources) as AgentResources) : undefined,
+      web: row.web ? (JSON.parse(row.web) as WebConfiguration) : undefined,
+    };
+  }
+
+  updateBot(
+    botId: string,
+    input: {
+      requestId: string;
+      instructions: string;
+      model: { provider: string; id: string };
+      tools: string[];
+    },
+    model: ModelConfiguration,
+  ): { bot: ManagedBot; replayed: boolean } {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const payload = JSON.stringify(input);
+      const saved = this.db
+        .prepare("SELECT agent_group_id, payload FROM bot_updates WHERE request_id = ?")
+        .get(input.requestId) as { agent_group_id: string; payload: string } | undefined;
+      if (saved) {
+        if (saved.agent_group_id !== botId || saved.payload !== payload)
+          throw new BotRequestError(
+            "This requestId already belongs to different Bot settings.",
+            409,
+          );
+        this.db.exec("COMMIT");
+        const bot = this.managedBots().find((item) => item.id === botId);
+        if (!bot) throw new BotRequestError("Bot not found.", 404);
+        return { bot, replayed: true };
+      }
+      const current = this.db
+        .prepare("SELECT version, resources, web FROM container_configs WHERE agent_group_id = ?")
+        .get(botId) as
+        | { version: number; resources: string | null; web: string | null }
+        | undefined;
+      if (!current) throw new BotRequestError("Bot not found.", 404);
+      const resources = JSON.parse(current.resources ?? "{}") as AgentResources;
+      const nextResources = { ...resources, tools: input.tools, skills: resources.skills ?? [] };
+      const version = current.version + 1;
+      const now = new Date().toISOString();
+      this.db
+        .prepare(`UPDATE container_configs
+        SET model = ?, model_config = ?, instructions = ?, resources = ?, version = ?, updated_at = ?
+        WHERE agent_group_id = ?`)
+        .run(
+          `${model.provider}/${model.id}`,
+          JSON.stringify(model),
+          input.instructions,
+          JSON.stringify(nextResources),
+          version,
+          now,
+          botId,
+        );
+      this.db
+        .prepare(`INSERT INTO configuration_versions
+        (agent_group_id, version, instructions, model_config, resources, web, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run(
+          botId,
+          version,
+          input.instructions,
+          JSON.stringify(model),
+          JSON.stringify(nextResources),
+          current.web,
+          now,
+        );
+      this.db
+        .prepare("INSERT INTO bot_updates VALUES (?, ?, ?, ?)")
+        .run(input.requestId, botId, payload, version);
+      this.threads.armCutoff(botId);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    const bot = this.managedBots().find((item) => item.id === botId);
+    if (!bot) throw new BotRequestError("Bot not found.", 404);
+    return { bot, replayed: false };
   }
 
   sessions(): SavedSession[] {

@@ -23,6 +23,7 @@ interface RunRow {
   updated_at: string;
 }
 interface RunInput {
+  rowid: number;
   message_id: string;
   run_id: string;
   content: string;
@@ -178,7 +179,7 @@ export class ThreadStore {
   }
   inputs(id: string): RunInput[] {
     return this.db
-      .prepare("SELECT * FROM run_inputs WHERE run_id = ? ORDER BY rowid")
+      .prepare("SELECT rowid, * FROM run_inputs WHERE run_id = ? ORDER BY rowid")
       .all(id) as unknown as RunInput[];
   }
   context(id: string) {
@@ -210,14 +211,64 @@ export class ThreadStore {
     this.db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(JSON.stringify(context), id);
     return context;
   }
+  /** Fix the open Attempt's steering window at the first save. Later saves do not extend it. */
+  armCutoff(botId: string): void {
+    const open = this.db
+      .prepare(`SELECT a.id, a.run_id FROM attempts a JOIN sessions s ON s.id = a.run_id
+     WHERE s.agent_group_id = ? AND a.ended_at IS NULL AND a.steer_through_rowid IS NULL`)
+      .all(botId) as unknown as { id: string; run_id: string }[];
+    for (const attempt of open) {
+      const through = this.db
+        .prepare("SELECT COALESCE(MAX(rowid), 0) AS rowid FROM run_inputs WHERE run_id = ?")
+        .get(attempt.run_id) as { rowid: number };
+      this.db
+        .prepare("UPDATE attempts SET steer_through_rowid = ? WHERE id = ?")
+        .run(through.rowid, attempt.id);
+    }
+  }
+  openAttempt(id: string) {
+    return this.db
+      .prepare(`SELECT configuration_version AS configurationVersion, steer_through_rowid AS steerThroughRowid
+     FROM attempts WHERE run_id = ? AND ended_at IS NULL ORDER BY rowid DESC LIMIT 1`)
+      .get(id) as { configurationVersion: number; steerThroughRowid: number | null } | undefined;
+  }
+  latestAttempt(id: string) {
+    return this.db
+      .prepare(`SELECT configuration_version AS configurationVersion, steer_through_rowid AS steerThroughRowid
+     FROM attempts WHERE run_id = ? ORDER BY rowid DESC LIMIT 1`)
+      .get(id) as { configurationVersion: number; steerThroughRowid: number | null } | undefined;
+  }
   startAttempt(id: string, incarnation: number, now: string) {
+    const saved = this.db
+      .prepare(
+        "SELECT c.version FROM container_configs c JOIN sessions s ON s.agent_group_id = c.agent_group_id WHERE s.id = ?",
+      )
+      .get(id) as { version: number };
+    const previous = this.db
+      .prepare(`SELECT configuration_version AS configurationVersion, steer_through_rowid AS steerThroughRowid
+     FROM attempts WHERE run_id = ? ORDER BY rowid DESC LIMIT 1`)
+      .get(id) as { configurationVersion: number; steerThroughRowid: number | null } | undefined;
+    let version = saved.version;
+    let steerThrough: number | null = null;
+    if (
+      previous &&
+      previous.steerThroughRowid != null &&
+      previous.configurationVersion < saved.version &&
+      this.db
+        .prepare("SELECT 1 FROM run_inputs WHERE run_id = ? AND rowid <= ? AND outcome IS NULL")
+        .get(id, previous.steerThroughRowid)
+    ) {
+      version = previous.configurationVersion;
+      steerThrough = previous.steerThroughRowid;
+    }
     this.db
       .prepare("UPDATE attempts SET ended_at = ? WHERE run_id = ? AND ended_at IS NULL")
       .run(now, id);
-    const version = 1;
     this.db
-      .prepare("INSERT INTO attempts VALUES (?, ?, ?, ?, ?, NULL)")
-      .run(randomUUID(), id, incarnation, version, now);
+      .prepare(`INSERT INTO attempts
+     (id, run_id, incarnation, configuration_version, started_at, ended_at, steer_through_rowid)
+     VALUES (?, ?, ?, ?, ?, NULL, ?)`)
+      .run(randomUUID(), id, incarnation, version, now, steerThrough);
     this.db
       .prepare("UPDATE runs SET state = 'active', updated_at = ? WHERE id = ? AND state = 'queued'")
       .run(now, id);

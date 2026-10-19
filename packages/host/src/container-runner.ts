@@ -1,3 +1,4 @@
+import { lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { AgentResources, RunContext, SessionKey, WebConfiguration } from "@mybots/mailbox";
@@ -7,6 +8,33 @@ import type { ModelConfiguration, SessionMaterial } from "./drivers/types.ts";
 
 function legalName(value: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(value);
+}
+
+function runnerContext(input: {
+  model: ModelConfiguration;
+  instructions?: string;
+  resources?: AgentResources;
+  web?: WebConfiguration;
+  runContext?: RunContext;
+  configurationVersion: number;
+}): string {
+  const endpoint = new URL(input.model.baseUrl);
+  const resources = validateAgentResources(input.resources);
+  const web = resolveWebTools(resources, validateWebConfiguration(input.web));
+  return `${JSON.stringify({
+    configurationVersion: input.configurationVersion,
+    model: {
+      provider: input.model.provider,
+      id: input.model.id,
+      baseUrl: endpoint.href,
+      contextWindow: input.model.contextWindow,
+      maxTokens: input.model.maxTokens,
+    },
+    instructions: input.instructions,
+    resources,
+    web,
+    runContext: input.runContext,
+  })}\n`;
 }
 
 /** Creates only the selected session's material; host identity/routing is supplied by the caller. */
@@ -19,6 +47,9 @@ export async function provisionSession(input: {
   resources?: AgentResources;
   web?: WebConfiguration;
   runContext?: RunContext;
+  configurationVersion?: number;
+  /** Keep a stopped Run's previous file so Attempt startup can replace it explicitly. */
+  retainExistingContext?: boolean;
 }): Promise<SessionMaterial> {
   if (![input.key.agentGroupId, input.key.sessionId, input.folder].every(legalName))
     throw new Error("Invalid Agent/session path identity");
@@ -58,31 +89,43 @@ export async function provisionSession(input: {
     }
   }
   initializeMailbox(directory);
-  const resources = validateAgentResources(input.resources);
-  const web = resolveWebTools(resources, validateWebConfiguration(input.web));
   const contextFile = join(contextDirectory, `${input.key.sessionId}.json`);
-  const context = `${JSON.stringify({
-    model: {
-      provider: input.model.provider,
-      id: input.model.id,
-      baseUrl: endpoint.href,
-      contextWindow: input.model.contextWindow,
-      maxTokens: input.model.maxTokens,
-    },
-    instructions: input.instructions,
-    resources,
-    web,
-    runContext: input.runContext,
-  })}\n`;
+  const context = runnerContext({
+    ...input,
+    configurationVersion: input.configurationVersion ?? 1,
+  });
   await writeFile(contextFile, context, { mode: 0o444, flag: "wx" }).catch(async (error) => {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     if (
       (await lstat(contextFile)).isSymbolicLink() ||
-      (await readFile(contextFile, "utf8")) !== context
+      ((await readFile(contextFile, "utf8")) !== context && !input.retainExistingContext)
     )
       throw new Error(
         "Immutable runner context differs; stop the session and replace its context explicitly",
       );
   });
   return { root, key: input.key, folder: input.folder, directory, workspace, contextFile };
+}
+
+/** Replace a stopped session's immutable context while preserving its Run ledger and references. */
+export function replaceSessionContext(
+  contextFile: string,
+  input: {
+    model: ModelConfiguration;
+    instructions?: string;
+    resources?: AgentResources;
+    web?: WebConfiguration;
+    configurationVersion: number;
+  },
+): void {
+  const info = lstatSync(contextFile);
+  if (info.isSymbolicLink() || !info.isFile())
+    throw new Error(
+      "Immutable runner context differs; stop the session and replace its context explicitly",
+    );
+  const existing = JSON.parse(readFileSync(contextFile, "utf8")) as { runContext?: RunContext };
+  const next = runnerContext({ ...input, runContext: existing.runContext });
+  if (readFileSync(contextFile, "utf8") === next) return;
+  rmSync(contextFile);
+  writeFileSync(contextFile, next, { mode: 0o444, flag: "wx" });
 }

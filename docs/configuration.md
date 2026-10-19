@@ -160,10 +160,11 @@ name `mybots-isolated` are shared across checkouts when that network is already
 internal. Rebuilding the image moves the shared tag. The first generated WebSocket
 listener is `127.0.0.1:8787`. If that port is in use, startup fails and names the
 port; change the preserved websocket port in `host.json` and restart. Setup does
-not choose another port. Execution configuration is immutable per
-session: a changed model/instruction/resource selection requires stopped execution
-and explicit context replacement; a restart alone does not overwrite it. Shared
-workspace instruction/Skill files follow the next-query boundary above.
+not choose another port. Saved Bot role, model and tool selection stays in the
+Host store. An open Attempt keeps the version it started with. The next Attempt
+replaces that Run's immutable runner context after pre-save steering finishes;
+a restart alone does not overwrite a saved version or an in-flight context file.
+Shared workspace instruction/Skill files follow the next-query boundary above.
 See [host lifecycle](host-runtime.md) for claims and restart recovery.
 
 This configuration has no YAML overlays, configuration watcher, embedded execution

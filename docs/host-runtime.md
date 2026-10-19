@@ -73,7 +73,7 @@ do not overwrite the persisted identity or settings. Optional `agent.resources.s
 tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
 Selecting a web tool requires matching `agent.web` configuration. The execution
 harness is Pi; the model backend is specified separately by `model.provider` and
-`model.id`. The central store uses schema version 8 for host routing, Bot configuration,
+`model.id`. The central store uses schema version 9 for host routing, Bot configuration,
 Threads, original messages, Tasks, Runs, Attempts and stable input admissions.
 An older store containing sessions requires fresh runtime records; see the
 [replacement instructions](../README.md#persistence-and-reliability). The central store saves the model
@@ -351,8 +351,34 @@ another Bot's materials, including Bots with equal display names.
 
 The client stores an unconfirmed creation payload before sending, so reload and
 retry retain its request identity. It remembers the selected Bot and shows that
-Bot's initial settings. Creation does not start a session or container. Runtime
-configuration editing is a subsequent capability.
+Bot's saved and effective configuration. Creation does not start a session or container.
+
+`POST /api/bots/<id>/settings` changes that Bot's role, approved model and tools:
+
+```json
+{
+  "requestId": "edit-researcher-1",
+  "instructions": "Cite sources before answering.",
+  "model": { "provider": "deepseek", "id": "deepseek-chat" },
+  "tools": ["read"]
+}
+```
+
+The first save returns 201 and `{ requestId, bot, replayed: false }`. The Bot
+exposes `savedVersion`, `effectiveVersion` and the effective role, model and
+tools. An identical retry returns 200 with `replayed: true`, including after
+Host restart. A reused request ID with different settings returns 409. Unknown
+fields, including per-Task or per-Run overrides, endpoints and credentials,
+return 400. Installation startup still does not overwrite a saved version.
+
+Saving establishes a finite cutoff. The open Attempt and steering admitted
+before that save finish under the Attempt's configuration version. Input
+admitted afterward stays on the same Task and Run and is not delivered until
+the next Attempt. Further input or another save does not extend the cutoff.
+The next Attempt, including continuation of the same Run, replaces the stopped
+session's immutable context, reopens that Run's SDK ledger and records the
+latest saved version. An incompatible model or history continuation fails
+visibly and leaves the ledger and original history in place.
 
 ### Direct Thread and Task/Run outcomes
 
@@ -378,11 +404,11 @@ prior completion, failure or stopped uncertain work.
 Each Task exposes origin and Runs. Runs expose state (`queued`, `active`,
 `succeeded`, `failed`, `uncertain`), source message, captured background boundary,
 input identities, durable recording timestamps, final outcomes and Attempts.
-Each Attempt exposes fenced incarnation, effective configuration version (initially
-1), start and confirmed end. Outcomes correlate to final mailbox evidence, never
-queue acceptance or partial text. Complete original history, lexical retrieval
-and live execution previews are described below. Owner stop/uncertainty resolution
-and configuration cutover remain later capabilities.
+Each Attempt exposes fenced incarnation, the effective configuration version it
+started with, start and confirmed end. Outcomes correlate to final mailbox
+evidence, never queue acceptance or partial text. Complete original history,
+lexical retrieval and live execution previews are described below. Owner
+stop/uncertainty resolution remains a later capability.
 
 All private HTTP routes and WebSocket upgrades require the credential, either
 as a Bearer header or the paired cookie. An explicit invalid Authorization header

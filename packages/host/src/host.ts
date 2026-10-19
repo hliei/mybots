@@ -12,10 +12,10 @@ import type {
   WebConfiguration,
 } from "@mybots/mailbox";
 import { HostMailbox } from "@mybots/mailbox/node";
-import { BotRequestError, parseBotCreate, publicModel } from "./bots.ts";
+import { BotRequestError, parseBotCreate, parseBotSettings, publicModel } from "./bots.ts";
 import { ChatRequestError, chatInput } from "./chat.ts";
 import { validateHostConfiguration } from "./config/host.ts";
-import { provisionSession } from "./container-runner.ts";
+import { provisionSession, replaceSessionContext } from "./container-runner.ts";
 import { HostStore, type SavedSession, type SessionRoute } from "./db/index.ts";
 import type {
   ModelConfiguration,
@@ -109,6 +109,8 @@ interface SessionExecution {
   superseded: Set<SessionHandle>;
   cleanups: Set<Promise<void>>;
   delivering?: Promise<void>;
+  /** Set while a stopped Attempt is being replaced with saved Bot configuration. */
+  cutover?: "pending" | "applying";
 }
 
 interface LockOwner {
@@ -313,6 +315,8 @@ export class Host {
         instructions: route.instructions,
         resources: route.resources,
         web: route.web,
+        configurationVersion: route.configurationVersion,
+        retainExistingContext: route.session.purpose === "run",
         runContext:
           route.session.purpose === "run"
             ? this.store.threads.context(route.session.id)
@@ -434,6 +438,7 @@ export class Host {
         this.store.threads.startAttempt(id, incarnation, this.timestamp());
       this.store.containerStatus(id, "starting");
       try {
+        this.alignContext(execution);
         execution.mailbox.setExecutionIncarnation(incarnation);
         const handle = await this.driver.start(execution.material, this.controller.signal);
         if (this.stopped) {
@@ -857,6 +862,37 @@ export class Host {
     }
   }
 
+  updateBot(botId: string, value: unknown) {
+    if (this.stopped) throw new Error("Host is stopped");
+    const input = parseBotSettings(value);
+    const model = (this.configuration.approvedModels ?? [this.configuration.agent.model]).find(
+      (item) => item.provider === input.model.provider && item.id === input.model.id,
+    );
+    if (!model) throw new BotRequestError("Select an installation-approved model.");
+    const available = this.botOptions().tools;
+    if (input.tools.some((tool) => !available.includes(tool)))
+      throw new BotRequestError("Select only available tools.");
+    const result = this.store.updateBot(
+      botId,
+      {
+        requestId: input.requestId,
+        instructions: input.instructions,
+        model: input.model,
+        tools: input.tools,
+      },
+      model,
+    );
+    void this.noticeConfiguration(botId);
+    return { requestId: input.requestId, ...result };
+  }
+
+  private async noticeConfiguration(botId: string): Promise<void> {
+    for (const pending of this.prepared.values()) {
+      const execution = await pending;
+      if (execution.route.session.agent_group_id === botId) this.syncChat(execution);
+    }
+  }
+
   sessions(): SavedSession[] {
     return this.store.sessions();
   }
@@ -1083,8 +1119,10 @@ export class Host {
       return;
     }
     const published = new Set(inputs.map((input) => input.id));
+    const limited = this.steeringLimit(execution);
     for (const input of this.store.threads.inputs(id)) {
       if (input.outcome || published.has(input.message_id)) continue;
+      if (limited !== undefined && input.rowid > limited) continue;
       const destination = this.store.threads.destination(input.destination_id);
       mailbox.submit({
         id: input.message_id,
@@ -1094,6 +1132,93 @@ export class Host {
         thread_id: input.destination_id === "local-client" ? route.session.thread_id : null,
       });
     }
+    if (limited !== undefined) this.beginCutover(execution, limited);
+  }
+
+  /** Rowid through which the current or recovering Attempt may still consume input. */
+  private steeringLimit(execution: SessionExecution): number | undefined {
+    const id = execution.route.session.id;
+    const saved = this.store.savedConfigurationVersion(execution.route.session.agent_group_id);
+    const open = this.store.threads.openAttempt(id);
+    const bound = open ?? this.store.threads.latestAttempt(id);
+    if (!bound || bound.steerThroughRowid == null || bound.configurationVersion >= saved)
+      return undefined;
+    if (open) return bound.steerThroughRowid;
+    const unfinished = this.store.threads
+      .inputs(id)
+      .some((input) => input.rowid <= (bound.steerThroughRowid as number) && !input.outcome);
+    return unfinished ? bound.steerThroughRowid : undefined;
+  }
+
+  /** Saved settings apply only after pre-save steering has an outcome and the old Attempt has stopped. */
+  private beginCutover(execution: SessionExecution, throughRowid: number): void {
+    if (execution.cutover || execution.replacing || execution.starting || this.stopped) return;
+    const waiting = this.store.threads
+      .inputs(execution.route.session.id)
+      .some((input) => input.rowid <= throughRowid && !input.outcome);
+    const acknowledgements = new Map(
+      execution.mailbox.acknowledgements().map((ack) => [ack.message_id, ack.status]),
+    );
+    const busy = execution.mailbox.inputs().some((input) => {
+      const status = acknowledgements.get(input.id) ?? input.status;
+      return status === "pending" || status === "processing";
+    });
+    if (waiting || busy) return;
+    const pending = this.store.threads
+      .inputs(execution.route.session.id)
+      .some((input) => input.rowid > throughRowid && !input.outcome);
+    if (!pending) return;
+    execution.cutover = "pending";
+    const handle = execution.handle;
+    if (!handle) {
+      void this.finishCutover(execution);
+      return;
+    }
+    execution.superseded.add(handle);
+    execution.replacing = handle
+      .stop()
+      .catch(() => {
+        execution.cutover = undefined;
+        execution.superseded.delete(handle);
+        this.emit({
+          type: "failure",
+          sessionId: execution.route.session.id,
+          error: "Configuration cutover could not stop execution",
+        });
+      })
+      .finally(() => {
+        execution.replacing = undefined;
+      });
+  }
+
+  private async finishCutover(execution: SessionExecution): Promise<void> {
+    if (execution.cutover !== "pending" || this.stopped) return;
+    execution.cutover = "applying";
+    try {
+      const session = this.store.threads.session(execution.route.session.id);
+      execution.route = this.store.route(session);
+      this.syncChat(execution);
+      this.wake(execution, { force: true });
+    } finally {
+      execution.cutover = undefined;
+    }
+  }
+
+  /**
+   * Point a stopped Run's context at the Attempt version captured for this start.
+   * This stays synchronous so the runner is launched before wake yields.
+   */
+  private alignContext(execution: SessionExecution): void {
+    if (execution.route.session.purpose !== "run" || execution.handle) return;
+    const attempt = this.store.threads.openAttempt(execution.route.session.id);
+    if (!attempt) return;
+    replaceSessionContext(
+      execution.material.contextFile,
+      this.store.configurationSnapshot(
+        execution.route.session.agent_group_id,
+        attempt.configurationVersion,
+      ),
+    );
   }
 
   private releaseBot(execution: SessionExecution, incarnation = execution.incarnation): void {
@@ -1103,6 +1228,7 @@ export class Host {
       this.store.threads.endAttempt(session.id, this.timestamp());
     if (this.botSlots.get(session.agent_group_id) === session.id)
       this.botSlots.delete(session.agent_group_id);
+    if (execution.cutover === "pending" && !this.stopped) void this.finishCutover(execution);
   }
 
   /** Read-only client projection. Mailbox acknowledgement is not a work outcome. */
