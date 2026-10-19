@@ -57,6 +57,7 @@ export async function showSkills(
       label.textContent = `Skill ${id}`;
       const select = document.createElement("select");
       select.name = id;
+      select.setAttribute("aria-label", `Skill ${id}`);
       select.append(
         Object.assign(document.createElement("option"), { value: "", textContent: "Disabled" }),
       );

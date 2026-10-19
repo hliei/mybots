@@ -208,6 +208,11 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await expect(page.locator("#selected-bot")).toContainText("Edited writer role.");
     await expect(page.locator("#selected-bot")).toContainText(`Saved Skills: brief@${revision}`);
     await expect(page.getByLabel("Skill brief", { exact: true })).toHaveValue(revision as string);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.setViewportSize({ width: 1280, height: 900 });
     await expect(page.locator("#settings-versions")).toContainText(
       "Saved and effective configuration 2",
     );

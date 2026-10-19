@@ -171,19 +171,24 @@ exactly-once execution and delivery are not provided. See
 
 ## Agent resources and context
 
-The host persists `agent.resources` (selected Skill IDs and SDK built-in or
-configured web tool names) and optional `agent.web` provider/endpoint selection
+The host persists `agent.resources` (selected Skill IDs/content revisions and SDK
+built-in or configured web tool names) and optional `agent.web` provider/endpoint
+selection
 separately from model configuration. Provisioning copies only that
 non-secret selection into immutable runner context. The runner loads the shared
-workspace's `AGENTS.md` and selected `skills/<id>/SKILL.md` with Pi's resource
-loader when opening a query. Default personal/ancestor resource discovery,
+workspace's `AGENTS.md` and selected protected `/session/skills/<id>/SKILL.md`
+with Pi's resource loader when opening a query. Owner imports create Bot-owned
+snapshots; explicit selection/save activates revisions. Docker mounts their
+Host-owned material read-only, outside writable session/workspace source paths.
+Default personal/ancestor resource discovery,
 extensions, prompt templates, themes and file-backed SDK settings stay disabled.
 Selecting `web_search` or `fetch_content` registers the matching Pi custom tool
 inside the container; the real search credential stays gateway-owned and is
 injected only for the configured endpoint's hostname.
-The runner loads the workspace's current AGENTS.md and selected Skill files when
-it opens a query. Saving Bot role, model, or tool selection does not edit those
-files. That save establishes a finite cutoff: the open Attempt and steering
+The runner loads current workspace AGENTS.md and the Attempt's captured Skill
+revisions when it opens a query. Saving Bot role, model, tool or Skill selection
+preserves those files; proposed workspace Skill edits require owner import and
+activation. That save establishes a finite cutoff: the open Attempt and steering
 admitted before the save finish under that Attempt's version. Input admitted
 after the save stays on the same Run and runs on the next Attempt, which
 replaces immutable context with the saved version and reopens that Run ledger.

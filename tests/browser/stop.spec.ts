@@ -106,7 +106,7 @@ test("stop a Run, inspect late evidence, and keep an unconfirmed stop from block
     await expect(page.locator("#selected-bot")).toContainText("Writer");
     await page.getByLabel("Message", { exact: true }).fill("Writer continues");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
-    await expect(page.locator("#chat-works")).toContainText("Execution: active");
+    await expect(page.locator("#chat-works")).toContainText("Final: Writer continues");
     await page.getByRole("button", { name: "Refresh status" }).click();
     await expect(page.locator("#chat-works")).toContainText("Final: Writer continues");
     await page.getByRole("button", { name: "Select Personal", exact: true }).click();
