@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { BotRequestError } from "../bots.ts";
 import type { Host } from "../host.ts";
 import type { LocalAccess } from "./local-access.ts";
 
@@ -9,7 +10,7 @@ const ASSETS = new Map([
   ["/style.css", ["style.css", "text/css; charset=utf-8"]],
 ]);
 
-/** The Host serves a fixed set of built assets and authenticated public reads. */
+/** The Host serves a fixed set of built assets and authenticated Bot operations and reads. */
 export async function serveClient(
   request: IncomingMessage,
   response: ServerResponse,
@@ -43,6 +44,53 @@ export async function serveClient(
     response.end(JSON.stringify(snapshot));
     return;
   }
+  if (path === "/api/bot-options" && request.method === "GET") {
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify(host.botOptions()));
+    return;
+  }
+  if (path === "/api/bots" && request.method === "GET") {
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ bots: host.managedBots() }));
+    return;
+  }
+  if (path === "/api/bots" && request.method === "POST") {
+    try {
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+        bytes += chunk.length;
+        if (bytes > 65536) {
+          request.resume();
+          throw new BotRequestError("Bot request exceeds 64 KiB.", 413);
+        }
+        chunks.push(chunk);
+      }
+      const body = Buffer.concat(chunks).toString("utf8");
+      let input: unknown;
+      try {
+        input = JSON.parse(body);
+      } catch {
+        throw new BotRequestError("Bot creation requires valid JSON.");
+      }
+      const result = host.createBot(input);
+      response.writeHead(result.replayed ? 200 : 201, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(result));
+    } catch (error) {
+      response.writeHead(error instanceof BotRequestError ? error.status : 503, {
+        "Content-Type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error:
+            error instanceof BotRequestError
+              ? error.message
+              : "Bot creation unavailable. Retry with the same requestId.",
+        }),
+      );
+    }
+    return;
+  }
   if (asset && (request.method === "GET" || request.method === "HEAD")) {
     try {
       const bytes = await readFile(new URL(`../../../client/dist/${asset[0]}`, import.meta.url));
@@ -55,8 +103,16 @@ export async function serveClient(
     }
     return;
   }
-  if (asset || path === "/api/status" || path === "/api/pair") {
-    response.writeHead(405, { Allow: path === "/api/pair" ? "POST" : "GET, HEAD" });
+  if (
+    asset ||
+    path === "/api/status" ||
+    path === "/api/pair" ||
+    path === "/api/bots" ||
+    path === "/api/bot-options"
+  ) {
+    response.writeHead(405, {
+      Allow: path === "/api/pair" ? "POST" : path === "/api/bots" ? "GET, POST" : "GET, HEAD",
+    });
   } else {
     response.writeHead(path === socketPath ? 426 : 404);
   }

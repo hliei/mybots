@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AgentResources, WebConfiguration } from "@mybots/mailbox";
+import { BotRequestError, type BotSettings, type ManagedBot } from "../bots.ts";
 import type { ModelConfiguration } from "../drivers/types.ts";
 import type { HostConfiguration } from "../host.ts";
 import { schema } from "./migrations/001-initial.ts";
@@ -10,6 +11,7 @@ import { resourceSchema } from "./migrations/002-agent-resources.ts";
 import { deliveryAttemptSchema } from "./migrations/003-delivery-attempts.ts";
 import { recoverySchema } from "./migrations/004-session-recovery.ts";
 import { webSchema } from "./migrations/005-web-tools.ts";
+import { managedBotSchema } from "./migrations/006-managed-bots.ts";
 
 export interface HostInstance {
   instance_id: string;
@@ -74,12 +76,13 @@ export class HostStore {
       const { user_version } = this.db.prepare("PRAGMA user_version").get() as {
         user_version: number;
       };
-      if (user_version > 5) throw new Error("Unsupported host schema version");
+      if (user_version > 6) throw new Error("Unsupported host schema version");
       if (user_version === 0) this.db.exec(schema);
       if (user_version <= 1) this.db.exec(resourceSchema);
       if (user_version <= 2) this.db.exec(deliveryAttemptSchema);
       if (user_version <= 3) this.db.exec(recoverySchema);
       if (user_version <= 4) this.db.exec(webSchema);
+      if (user_version <= 5) this.db.exec(managedBotSchema);
       this.seed(configuration);
     } catch (error) {
       this.db.close();
@@ -100,24 +103,29 @@ export class HostStore {
           .prepare("INSERT INTO user_roles VALUES (?, 'owner', NULL, ?, ?) ON CONFLICT DO NOTHING")
           .run(owner, owner, now);
       }
-      this.db
-        .prepare(
-          `INSERT INTO agent_groups VALUES (?, ?, ?, 'pi', ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, folder = excluded.folder`,
-        )
-        .run(agent.id, agent.name, agent.folder, now);
-      this.db
-        .prepare(
-          `INSERT INTO container_configs (agent_group_id, provider, model, model_config, instructions, resources, web, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?) ON CONFLICT(agent_group_id) DO UPDATE SET model = excluded.model, model_config = excluded.model_config, instructions = excluded.instructions, resources = excluded.resources, web = excluded.web, updated_at = excluded.updated_at`,
-        )
-        .run(
-          agent.id,
-          `${agent.model.provider}/${agent.model.id}`,
-          JSON.stringify(agent.model),
-          agent.instructions ?? null,
-          agent.resources ? JSON.stringify(agent.resources) : null,
-          agent.web ? JSON.stringify(agent.web) : null,
-          now,
-        );
+      let bootstrapId = this.db
+        .prepare("SELECT agent_group_id FROM bot_bootstrap WHERE singleton = 1")
+        .get()?.agent_group_id as string | undefined;
+      if (!bootstrapId) {
+        this.db
+          .prepare(`INSERT INTO agent_groups VALUES (?, ?, ?, 'pi', ?) ON CONFLICT(id) DO NOTHING`)
+          .run(agent.id, agent.name, agent.folder, now);
+        this.db
+          .prepare(
+            `INSERT INTO container_configs (agent_group_id, provider, model, model_config, instructions, resources, web, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?) ON CONFLICT(agent_group_id) DO NOTHING`,
+          )
+          .run(
+            agent.id,
+            `${agent.model.provider}/${agent.model.id}`,
+            JSON.stringify(agent.model),
+            agent.instructions ?? null,
+            agent.resources ? JSON.stringify(agent.resources) : null,
+            agent.web ? JSON.stringify(agent.web) : null,
+            now,
+          );
+        this.db.prepare("INSERT INTO bot_bootstrap VALUES (1, ?)").run(agent.id);
+        bootstrapId = agent.id;
+      }
       for (const destination of configuration.destinations) {
         const existing = this.db
           .prepare("SELECT channel_type, platform_id, instance FROM messaging_groups WHERE id = ?")
@@ -144,7 +152,7 @@ export class HostStore {
           .prepare(
             "INSERT INTO messaging_group_agents (id, messaging_group_id, agent_group_id, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(messaging_group_id, agent_group_id) DO NOTHING",
           )
-          .run(randomUUID(), destination.id, agent.id, now);
+          .run(randomUUID(), destination.id, bootstrapId, now);
       }
       this.db.exec("COMMIT");
     } catch (error) {
@@ -226,6 +234,74 @@ export class HostStore {
       .all() as unknown as { id: string; name: string }[];
   }
 
+  managedBots(): ManagedBot[] {
+    return this.db
+      .prepare(`SELECT a.id, a.name, a.folder, c.instructions, c.model_config, c.resources
+      FROM agent_groups a JOIN container_configs c ON c.agent_group_id = a.id ORDER BY a.created_at, a.id`)
+      .all()
+      .map((row) => {
+        const model = JSON.parse(row.model_config as string) as ModelConfiguration;
+        const resources = row.resources
+          ? (JSON.parse(row.resources as string) as AgentResources)
+          : undefined;
+        return {
+          id: row.id as string,
+          name: row.name as string,
+          workspace: `groups/${row.folder}`,
+          instructions: (row.instructions as string | null) ?? "",
+          model: { provider: model.provider, id: model.id },
+          tools: [...(resources?.tools ?? ["read", "write", "edit", "bash"])],
+        };
+      });
+  }
+
+  botCreation(input: BotSettings & { requestId: string }): ManagedBot | undefined {
+    const row = this.db
+      .prepare("SELECT agent_group_id, payload FROM bot_creations WHERE request_id = ?")
+      .get(input.requestId);
+    if (!row) return undefined;
+    if (row.payload !== JSON.stringify(input))
+      throw new BotRequestError("This requestId already belongs to different Bot settings.", 409);
+    return this.managedBots().find((bot) => bot.id === row.agent_group_id);
+  }
+
+  createBot(
+    input: BotSettings & { requestId: string },
+    id: string,
+    folder: string,
+    model: ModelConfiguration,
+    web: WebConfiguration | undefined,
+  ): ManagedBot {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const now = new Date().toISOString();
+      this.db
+        .prepare("INSERT INTO agent_groups VALUES (?, ?, ?, 'pi', ?)")
+        .run(id, input.name, folder, now);
+      this.db
+        .prepare(`INSERT INTO container_configs
+        (agent_group_id, provider, model, model_config, instructions, resources, web, updated_at)
+        VALUES (?, 'pi', ?, ?, ?, ?, ?, ?)`)
+        .run(
+          id,
+          `${model.provider}/${model.id}`,
+          JSON.stringify(model),
+          input.instructions,
+          JSON.stringify({ tools: input.tools, skills: [] }),
+          web ? JSON.stringify(web) : null,
+          now,
+        );
+      this.db
+        .prepare("INSERT INTO bot_creations VALUES (?, ?, ?)")
+        .run(input.requestId, id, JSON.stringify(input));
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return this.managedBots().find((bot) => bot.id === id) as ManagedBot;
+  }
+
   sessions(): SavedSession[] {
     return this.db
       .prepare("SELECT * FROM sessions ORDER BY created_at, id")
@@ -267,9 +343,9 @@ export class HostStore {
     const owner = `telegram:${platformId}`;
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const agent = this.db.prepare("SELECT id FROM agent_groups").get() as
-        | { id: string }
-        | undefined;
+      const agent = this.db
+        .prepare("SELECT agent_group_id AS id FROM bot_bootstrap WHERE singleton = 1")
+        .get() as { id: string } | undefined;
       if (!agent) throw new Error("Telegram pairing requires the personal Agent");
       this.db.prepare("DELETE FROM user_roles WHERE user_id LIKE 'telegram:%'").run();
       this.db.prepare("DELETE FROM users WHERE id LIKE 'telegram:%'").run();

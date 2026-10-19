@@ -34,17 +34,18 @@ pass `--root`. The launcher never starts the host automatically.
 example uses `["cli:local"]`. Exactly one identity must be a `cli:` identity for
 the terminal channel. Add the Telegram identity (`telegram:<user-id>`) when
 configuring a Telegram private chat.
-`agent` selects the Agent's ID, name, shared folder, instructions and explicit
-model configuration. Optional `agent.resources.skills` selects directory IDs under
+`agent` bootstraps the first Bot's ID, name, shared folder, instructions and explicit
+model configuration only when the store is first initialized. Later startup values
+do not overwrite the persisted identity or settings. Optional `agent.resources.skills` selects directory IDs under
 `groups/<folder>/skills/`; `agent.resources.tools` selects Pi built-ins (`read`,
 `write`, `edit`, `bash`, `grep`, `find`, `ls`) and the configured web tools
 (`web_search`, `fetch_content`). Omitted Skills select none; omitted
 tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
 Selecting a web tool requires matching `agent.web` configuration. The execution
 harness is Pi; the model backend is specified separately by `model.provider` and
-`model.id`. The central store uses schema version 5 for host routing, resource
-selection, delivery attempts, lifecycle records and web configuration. Existing
-schema versions 2 through 4 upgrade additively. The central store saves the model
+`model.id`. The central store uses schema version 6 for host routing, resource
+selection, delivery attempts, lifecycle records, web configuration and Bot create
+admissions. Earlier schema versions upgrade additively. The central store saves the model
 selector as `provider/id` plus its endpoint and token limits. Endpoints must use
 HTTPS without URL credentials. Host configuration and gateway management material
 are outside runner mounts.
@@ -256,7 +257,7 @@ tests use a controlled clock so backoff and stall timing are deterministic.
 ## Local client access
 
 The optional `websocket` section enables one loopback HTTP/WebSocket listener in
-the persistent Host. It serves the built client, public status API and existing
+the persistent Host. It serves the built client, public Bot/status API and existing
 live-event interface on the same origin:
 
 ```json
@@ -282,8 +283,38 @@ mailboxes. Bot records expose `id` and `name`. Sessions expose `id`, `botId`,
 `destinationId`, lifecycle `status`, `containerStatus`, `lastActive`, and `inputs`
 counts (`pending`, `processing`, `acknowledged`, `failed`). A running container can
 be idle, and a mailbox acknowledgement does not establish a successful work
-outcome. Reads do not open SDK conversations or admit execution. This initial
-client is read-only; Bot/session creation and chat are separate capabilities.
+outcome. Reads do not open SDK conversations or admit execution.
+
+`GET /api/bot-options` returns installation-approved `{ provider, id }` model
+selectors and available tool names. `GET /api/bots` returns `{ bots }` with each
+Bot's `id`, `name`, `workspace` (relative to the installation root), `instructions`,
+`model` selector and `tools`. Endpoints and credentials are not public settings.
+
+`POST /api/bots` accepts this creation payload:
+
+```json
+{
+  "requestId": "create-researcher-1",
+  "name": "Researcher",
+  "instructions": "Investigate sources and retain useful notes.",
+  "model": { "provider": "deepseek", "id": "deepseek-chat" },
+  "tools": ["read", "write"]
+}
+```
+
+A new admission returns 201 and `{ requestId, bot, replayed: false }`. Retrying
+identical settings with the same request ID returns 200 and the same Bot with
+`replayed: true`, including after Host restart. Reusing an admitted ID for changed
+settings returns 409. Invalid settings return 400 with `{ error }`; requests over
+64 KiB return 413. Workspace/storage failures return 503; retry with the original
+ID. The identity, initial settings and request record commit together only after
+an exclusive real workspace directory is available. Generated folders never adopt
+another Bot's materials, including Bots with equal display names.
+
+The client stores an unconfirmed creation payload before sending, so reload and
+retry retain its request identity. It remembers the selected Bot and shows that
+Bot's initial settings. Creation does not start a session or container. Runtime
+configuration editing and selected-session chat are subsequent capabilities.
 
 All private HTTP routes and WebSocket upgrades require the credential, either
 as a Bearer header or the paired cookie. An explicit invalid Authorization header
@@ -292,12 +323,12 @@ including assets and upgrades, validates Host against loopback names and the act
 bound port. A supplied Origin must exactly match that HTTP origin; cross-site
 fetches are rejected and CORS access is not enabled. Native clients may omit
 Origin. Invalid credentials yield 401 and invalid Host/Origin yields 403 before
-reads or upgrades. There is no unprotected alternate WebSocket listener.
+reads, operations or upgrades. There is no unprotected alternate WebSocket listener.
 
 `host` must be `127.0.0.1`, `localhost` or `::1`; remote/public serving is not
 supported. The Host computer must remain available. A locator received on a phone
 does not provide access to the desktop's localhost. Omit `websocket` to disable
-the combined listener. Without WebSocket destinations it provides read-only
+the combined listener. Without WebSocket destinations it still provides Bot creation,
 status and observation. When destinations are configured, they share one channel
 instance and input resolves through the same central Agent/session records as CLI.
 
@@ -306,7 +337,7 @@ instance and input resolves through the same central Agent/session records as CL
 Connect to the configured path with the same credential and Host/Origin checks.
 A WebSocket destination shares its Bot workspace and keeps a separate persistent
 conversation. This existing input protocol remains available to authenticated
-native clients; the initial Web page only uses the HTTP status read.
+native clients; the Web page uses the HTTP management and status routes.
 
 A client sends one JSON text frame per input:
 

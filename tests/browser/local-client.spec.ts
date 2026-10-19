@@ -64,7 +64,36 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     child?.send("complete");
     await page.getByRole("button", { name: "Refresh status" }).click();
     await expect(page.locator("#bots")).toContainText("1 acknowledged");
-    await expect(page.getByRole("button", { name: /create|chat/i })).toHaveCount(0);
+    await page.getByLabel("Bot name").fill("Researcher");
+    await page.getByLabel("Role instructions").fill("Investigate sources.");
+    await page.getByLabel("Model", { exact: true }).selectOption("deepseek/deepseek-chat");
+    await page.getByLabel("write", { exact: true }).check();
+    let lostResponse = false;
+    await page.route("**/api/bots", async (route) => {
+      if (route.request().method() === "POST" && !lostResponse) {
+        lostResponse = true;
+        await route.fetch();
+        await route.abort();
+      } else await route.continue();
+    });
+    await page.getByRole("button", { name: "Create Bot", exact: true }).click();
+    await expect(page.locator("#create-message")).toContainText("unconfirmed");
+    await page.reload();
+    await page.getByRole("button", { name: "Retry creation", exact: true }).click();
+    await expect(
+      page.locator("#bots").getByRole("heading", { name: "Researcher", exact: true }),
+    ).toHaveCount(1);
+    await expect(page.locator("#selected-bot")).toContainText("Researcher");
+    await expect(page.locator("#selected-bot")).toContainText("Investigate sources.");
+    await page.getByLabel("Bot name").fill("Writer");
+    await page.getByLabel("Role instructions").fill("Write clear reports.");
+    await page.getByLabel("Model", { exact: true }).selectOption("deepseek/deepseek-reasoner");
+    await page.getByLabel("edit", { exact: true }).check();
+    await page.getByRole("button", { name: "Create Bot", exact: true }).click();
+    await expect(page.locator("#selected-bot")).toContainText("Writer");
+    await expect(page.locator("#selected-bot")).toContainText("deepseek-reasoner");
+    await page.getByRole("button", { name: "Select Researcher", exact: true }).click();
+    await expect(page.locator("#selected-bot")).toContainText("Investigate sources.");
     const cookie = (await context.cookies()).find((cookie) => cookie.name === "mybots_connection");
     expect(cookie).toMatchObject({ httpOnly: true, sameSite: "Strict" });
     await page.reload();
@@ -80,6 +109,10 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await page.reload();
     await expect(page.locator("#bots")).toContainText(ready.sessionId);
     await expect(page.locator("#bots")).toContainText("Container: stopped");
+    await expect(page.locator("#selected-bot")).toContainText("Researcher");
+    await page.getByRole("button", { name: "Select Writer", exact: true }).click();
+    await expect(page.locator("#selected-bot")).toContainText("Write clear reports.");
+    await expect(page.getByRole("button", { name: /save settings|edit bot/i })).toHaveCount(0);
     await expect(page.getByLabel("Connection credential")).toBeHidden();
     expect(errors).toEqual([]);
   } finally {

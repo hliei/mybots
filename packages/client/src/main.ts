@@ -10,6 +10,26 @@ interface Snapshot {
   }[];
 }
 
+interface Bot {
+  id: string;
+  name: string;
+  workspace: string;
+  instructions: string;
+  model: { provider: string; id: string };
+  tools: string[];
+}
+interface BotOptions {
+  models: { provider: string; id: string }[];
+  tools: string[];
+}
+interface Creation {
+  requestId: string;
+  name: string;
+  instructions: string;
+  model: { provider: string; id: string };
+  tools: string[];
+}
+
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -41,6 +61,39 @@ function isSnapshot(value: unknown): value is Snapshot {
   );
 }
 
+function isModel(value: unknown): value is Bot["model"] {
+  return record(value) && typeof value.provider === "string" && typeof value.id === "string";
+}
+function isStrings(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+function isBot(value: unknown): value is Bot {
+  return (
+    record(value) &&
+    [value.id, value.name, value.workspace, value.instructions].every(
+      (field) => typeof field === "string",
+    ) &&
+    isModel(value.model) &&
+    isStrings(value.tools)
+  );
+}
+function isOptions(value: unknown): value is BotOptions {
+  return (
+    record(value) &&
+    Array.isArray(value.models) &&
+    value.models.every(isModel) &&
+    isStrings(value.tools)
+  );
+}
+function isCreation(value: unknown): value is Creation {
+  return (
+    record(value) &&
+    [value.requestId, value.name, value.instructions].every((field) => typeof field === "string") &&
+    isModel(value.model) &&
+    isStrings(value.tools)
+  );
+}
+
 const pairing = document.querySelector<HTMLElement>("#pairing") as HTMLElement;
 const status = document.querySelector<HTMLElement>("#status") as HTMLElement;
 const connection = document.querySelector<HTMLElement>("#connection") as HTMLElement;
@@ -51,7 +104,75 @@ const pairButton = document.querySelector<HTMLButtonElement>(
 ) as HTMLButtonElement;
 const refresh = document.querySelector<HTMLButtonElement>("#refresh") as HTMLButtonElement;
 
-function render(snapshot: Snapshot): void {
+const selected = document.querySelector<HTMLElement>("#selected-bot") as HTMLElement;
+const createForm = document.querySelector<HTMLFormElement>("#create-form") as HTMLFormElement;
+const createFields = document.querySelector<HTMLFieldSetElement>(
+  "#create-fields",
+) as HTMLFieldSetElement;
+const botName = document.querySelector<HTMLInputElement>("#bot-name") as HTMLInputElement;
+const instructions = document.querySelector<HTMLTextAreaElement>(
+  "#instructions",
+) as HTMLTextAreaElement;
+const model = document.querySelector<HTMLSelectElement>("#model") as HTMLSelectElement;
+const tools = document.querySelector<HTMLFieldSetElement>("#tools") as HTMLFieldSetElement;
+const createButton = document.querySelector<HTMLButtonElement>(
+  "#create-button",
+) as HTMLButtonElement;
+const createMessage = document.querySelector<HTMLElement>("#create-message") as HTMLElement;
+const pendingKey = "mybots.pending-bot";
+let selectedId = localStorage.getItem("mybots.selected-bot");
+let pending: Creation | undefined;
+try {
+  const stored: unknown = JSON.parse(localStorage.getItem(pendingKey) ?? "null");
+  if (isCreation(stored)) pending = stored;
+} catch {
+  /* An unreadable draft has no valid request to retry. */
+}
+let currentOptions = "";
+
+function selectBot(id: string): void {
+  selectedId = id;
+  localStorage.setItem("mybots.selected-bot", id);
+}
+
+function renderOptions(options: BotOptions): void {
+  const signature = JSON.stringify(options);
+  if (signature === currentOptions) return;
+  currentOptions = signature;
+  const previousModel = model.value;
+  model.replaceChildren(
+    ...options.models.map((choice) => {
+      const option = document.createElement("option");
+      option.value = `${choice.provider}/${choice.id}`;
+      option.textContent = option.value;
+      return option;
+    }),
+  );
+  if (options.models.some((choice) => `${choice.provider}/${choice.id}` === previousModel))
+    model.value = previousModel;
+  tools.replaceChildren(Object.assign(document.createElement("legend"), { textContent: "Tools" }));
+  for (const tool of options.tools) {
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = tool;
+    label.append(checkbox, document.createTextNode(tool));
+    tools.append(label);
+  }
+  if (pending) {
+    botName.value = pending.name;
+    instructions.value = pending.instructions;
+    model.value = `${pending.model.provider}/${pending.model.id}`;
+    for (const checkbox of tools.querySelectorAll("input"))
+      checkbox.checked = pending.tools.includes(checkbox.value);
+    createFields.disabled = true;
+    createButton.textContent = "Retry creation";
+    createMessage.textContent =
+      "A creation response is unconfirmed. Retry the saved request to recover its Bot.";
+  }
+}
+
+function render(snapshot: Snapshot, managed: Bot[]): void {
   bots.replaceChildren();
   for (const bot of snapshot.bots) {
     const article = document.createElement("article");
@@ -79,7 +200,35 @@ function render(snapshot: Snapshot): void {
       }
       article.append(list);
     }
+    const choose = document.createElement("button");
+    choose.type = "button";
+    choose.textContent = `Select ${bot.name}`;
+    choose.setAttribute("aria-pressed", String(selectedId === bot.id));
+    choose.addEventListener("click", () => {
+      selectBot(bot.id);
+      render(snapshot, managed);
+    });
+    article.append(choose);
     bots.append(article);
+  }
+  const active = managed.find((bot) => bot.id === selectedId);
+  selected.hidden = !active;
+  selected.replaceChildren();
+  if (active) {
+    const heading = document.createElement("h2");
+    heading.textContent = active.name;
+    selected.append(heading);
+    for (const text of [
+      `Bot ID: ${active.id}`,
+      `Workspace: ${active.workspace}`,
+      `Role: ${active.instructions}`,
+      `Model: ${active.model.provider}/${active.model.id}`,
+      `Tools: ${active.tools.join(", ") || "None"}`,
+    ]) {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = text;
+      selected.append(paragraph);
+    }
   }
   if (snapshot.bots.length === 0) bots.textContent = "No Bots configured.";
 }
@@ -104,10 +253,25 @@ async function load(): Promise<void> {
         "Host returned invalid status. Displayed status may be stale. Refresh to retry.";
       return;
     }
-    render(snapshot);
+    const [botResponse, optionResponse] = await Promise.all([
+      fetch("/api/bots"),
+      fetch("/api/bot-options"),
+    ]);
+    if (!botResponse.ok || !optionResponse.ok) throw new Error();
+    const managed: unknown = await botResponse.json();
+    const options: unknown = await optionResponse.json();
+    if (
+      !record(managed) ||
+      !Array.isArray(managed.bots) ||
+      !managed.bots.every(isBot) ||
+      !isOptions(options)
+    )
+      throw new Error();
+    renderOptions(options);
+    render(snapshot, managed.bots);
     pairing.hidden = true;
     status.hidden = false;
-    connection.textContent = "Connected to your local Host · Read-only status";
+    connection.textContent = "Connected to your local Host";
     (document.querySelector<HTMLElement>("#updated") as HTMLElement).textContent =
       `Last checked ${new Date().toLocaleTimeString()}`;
   } catch {
@@ -145,6 +309,63 @@ async function load(): Promise<void> {
     }
   },
 );
+createForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  createButton.disabled = true;
+  try {
+    if (!pending) {
+      const [provider, ...id] = model.value.split("/");
+      const draft: Creation = {
+        requestId: crypto.randomUUID(),
+        name: botName.value,
+        instructions: instructions.value,
+        model: { provider: provider as string, id: id.join("/") },
+        tools: [...tools.querySelectorAll<HTMLInputElement>("input:checked")].map(
+          (input) => input.value,
+        ),
+      };
+      // Persist before sending so a lost response or reload retries the same admission.
+      localStorage.setItem(pendingKey, JSON.stringify(draft));
+      pending = draft;
+    }
+    createFields.disabled = true;
+    createButton.textContent = "Retry creation";
+    const response = await fetch("/api/bots", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(pending),
+    });
+    const result: unknown = await response.json();
+    if (!response.ok) {
+      if (response.status >= 400 && response.status < 500) {
+        localStorage.removeItem(pendingKey);
+        pending = undefined;
+        createFields.disabled = false;
+        createButton.textContent = "Create Bot";
+      }
+      createMessage.textContent =
+        record(result) && typeof result.error === "string"
+          ? result.error
+          : "Creation failed. Retry the same request.";
+      return;
+    }
+    if (!record(result) || !isBot(result.bot)) throw new Error();
+    selectBot(result.bot.id);
+    localStorage.removeItem(pendingKey);
+    pending = undefined;
+    createFields.disabled = false;
+    createButton.textContent = "Create Bot";
+    createForm.reset();
+    createMessage.textContent = `Created ${result.bot.name}.`;
+    await load();
+  } catch {
+    createMessage.textContent = pending
+      ? "Creation response unconfirmed. Retry creation to recover the same Bot, including after reload."
+      : "Could not save the creation request in this browser. Check local storage and retry.";
+  } finally {
+    createButton.disabled = false;
+  }
+});
 refresh.addEventListener("click", () => void load());
 window.addEventListener("online", () => void load());
 window.setInterval(() => {

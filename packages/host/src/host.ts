@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout } from "node:timers/promises";
 import type { AgentResources, OutboundMessage, WebConfiguration } from "@mybots/mailbox";
 import { HostMailbox } from "@mybots/mailbox/node";
+import { BotRequestError, parseBotCreate, publicModel } from "./bots.ts";
 import { validateHostConfiguration } from "./config/host.ts";
 import { provisionSession } from "./container-runner.ts";
 import { HostStore, type SavedSession, type SessionRoute } from "./db/index.ts";
@@ -45,6 +46,8 @@ export interface HostConfiguration {
     resources?: AgentResources;
     web?: WebConfiguration;
   };
+  /** Installation-approved models; defaults to the bootstrap model. */
+  approvedModels?: ModelConfiguration[];
   destinations: { id: string; channelType: string; platformId: string; instance: string }[];
 }
 
@@ -154,6 +157,7 @@ function acquireHostLock(lock: string, owner: LockOwner): void {
 }
 
 export class Host {
+  private readonly configuration: HostConfiguration;
   private readonly store: HostStore;
   private readonly root: string;
   private readonly driver: SessionDriver;
@@ -177,7 +181,9 @@ export class Host {
     instanceId: string,
     clock: () => number,
     reconcileMs: number,
+    configuration: HostConfiguration,
   ) {
+    this.configuration = configuration;
     this.root = root;
     this.store = store;
     this.driver = driver;
@@ -228,6 +234,7 @@ export class Host {
       instanceId,
       options.now ?? Date.now,
       options.reconcileMs ?? 60000,
+      configuration,
     );
     try {
       store.stopOpenHostInstances(host.timestamp());
@@ -727,6 +734,58 @@ export class Host {
       } catch {
         /* Observation cannot prevent persisted work. */
       }
+    }
+  }
+
+  botOptions() {
+    const tools = ["read", "write", "edit", "bash", "grep", "find", "ls"];
+    if (this.configuration.agent.web?.search) tools.push("web_search");
+    if (this.configuration.agent.web?.fetch) tools.push("fetch_content");
+    return {
+      models: (this.configuration.approvedModels ?? [this.configuration.agent.model]).map(
+        publicModel,
+      ),
+      tools,
+    };
+  }
+
+  managedBots() {
+    return this.store.managedBots();
+  }
+
+  createBot(value: unknown) {
+    if (this.stopped) throw new Error("Host is stopped");
+    const input = parseBotCreate(value);
+    const admitted = this.store.botCreation(input);
+    if (admitted) return { requestId: input.requestId, bot: admitted, replayed: true };
+    const model = (this.configuration.approvedModels ?? [this.configuration.agent.model]).find(
+      (model) => model.provider === input.model.provider && model.id === input.model.id,
+    );
+    if (!model) throw new BotRequestError("Select an installation-approved model.");
+    const available = this.botOptions().tools;
+    if (input.tools.some((tool) => !available.includes(tool)))
+      throw new BotRequestError("Select only available tools.");
+    const id = `ag-${randomUUID()}`;
+    const folder = id;
+    const groups = join(this.root, "groups");
+    const workspace = join(groups, folder);
+    try {
+      mkdirSync(groups, { recursive: true });
+      if (lstatSync(groups).isSymbolicLink() || !lstatSync(groups).isDirectory())
+        throw new Error("Bot workspaces must use real directories");
+      mkdirSync(workspace);
+    } catch {
+      throw new BotRequestError(
+        "Cannot create the Bot workspace. Check the Host groups directory.",
+        503,
+      );
+    }
+    try {
+      const bot = this.store.createBot(input, id, folder, model, this.configuration.agent.web);
+      return { requestId: input.requestId, bot, replayed: false };
+    } catch (error) {
+      rmSync(workspace, { recursive: true, force: true });
+      throw error;
     }
   }
 
