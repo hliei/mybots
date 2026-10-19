@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { RunnerMailbox } from "@mybots/mailbox/node";
 import { afterEach, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -57,7 +58,7 @@ it("pages original Chinese history with stable cursors, complete text offsets an
     const sent = await (
       await post(`${path}/tasks`, {
         requestId: `history-${index}`,
-        text: `项目 火星 更正 ${index} ${"原文😀".repeat(2200)}`,
+        text: `项目 火星 Ａlpha CAFÉ 更正 ${index} ${"原文😀\u0000".repeat(2200)}`,
       })
     ).json();
     anchor ||= sent.messageId;
@@ -67,10 +68,18 @@ it("pages original Chinese history with stable cursors, complete text offsets an
   }
   const page = await get(`${path}/history?query=${encodeURIComponent("项目 火星")}`);
   expect(page.messages).toHaveLength(5);
+  expect(page.messages.every((row: { text: string }) => Array.from(row.text).length <= 800)).toBe(
+    true,
+  );
+  const normalized = await get(`${path}/history?query=${encodeURIComponent("alpha café")}`);
+  expect(normalized.messages).toHaveLength(5);
   expect(page.coverage.status).toBe("partial");
   expect(page.nextBeforeSeq).toEqual(expect.any(Number));
   expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(10000);
-  expect(page.messages[0]).toMatchObject({ truncated: true, nextTextOffset: expect.any(Number) });
+  expect(page.messages.find((row: { role: string }) => row.role === "user")).toMatchObject({
+    truncated: true,
+    nextTextOffset: expect.any(Number),
+  });
   const older = await get(
     `${path}/history?query=${encodeURIComponent("项目 火星")}&beforeSeq=${page.nextBeforeSeq}`,
   );
@@ -78,6 +87,11 @@ it("pages original Chinese history with stable cursors, complete text offsets an
   expect(older.coverage.status).toBe("exhausted");
   const read = await get(`${path}/history?messageId=${anchor}&textOffset=2000`);
   expect(read.messages[0]).toMatchObject({ id: anchor, textOffset: 2000 });
+  expect(read.messages[0].text).toBe(
+    Array.from(`项目 火星 Ａlpha CAFÉ 更正 0 ${"原文😀\u0000".repeat(2200)}`)
+      .slice(2000, read.messages[0].nextTextOffset)
+      .join(""),
+  );
   expect(read.runs[0]).toMatchObject({ state: "succeeded" });
   expect((await fetch(`${base}${path}/history?messageId=foreign`, { headers })).status).toBe(404);
   expect((await fetch(`${base}${path}/history?beforeSeq=-1`, { headers })).status).toBe(400);
@@ -141,6 +155,7 @@ it("streams real Pi activity before completion and retrieves originals through f
     await vi.waitFor(async () =>
       expect((await get(path)).tasks.at(-1).runs[0].state).toBe("succeeded"),
     );
+    expect((await get(`${path}/history?query=search_history`)).messages).toEqual([]);
     socket.close();
     await channel.close();
     await host.stop();
@@ -173,6 +188,23 @@ it("derives history scope from the running mailbox, rejects widening and stale e
   driver.respond = async (input, material, signal) => {
     if (input.content.startsWith("Current")) {
       runner = new RunnerMailbox(material.directory);
+      // Seed malformed runner-owned rows before a valid request reaches the Host.
+      const outbound = new DatabaseSync(join(material.directory, "outbound.db"));
+      for (const [key, value] of [
+        ["request:null", "null"],
+        ["request:invalid", "{"],
+        ["evidence:null", "null"],
+        [
+          "evidence:object-kind",
+          '{"id":"bad","kind":{"toString":null},"text":"bad","createdAt":"now"}',
+        ],
+        ["evidence:array-kind", '{"id":"bad","kind":["assistant"],"text":"bad","createdAt":"now"}'],
+        ["live:invalid", '{"text":7}'],
+      ])
+        outbound
+          .prepare("INSERT INTO session_state VALUES (?, ?, ?)")
+          .run(key, value, new Date().toISOString());
+      outbound.close();
       entered.resolve();
       await Promise.race([
         hold.promise,
@@ -227,6 +259,7 @@ it("derives history scope from the running mailbox, rejects widening and stale e
     };
   };
   try {
+    expect((await get(`/api/bots/personal/runs/${current.runId}/history`)).records).toEqual([]);
     const found = await request("search", "search_history", { query: "火星项目" });
     expect(found.result.messages.map((row) => row.id)).toContain(old.messageId);
     expect(found.result.messages.map((row) => row.id)).not.toContain(current.messageId);
@@ -299,3 +332,45 @@ it("retains complete original evidence across real SDK compaction and reads with
     await service.close();
   }
 }, 20000);
+
+it("pages every admitted input of an active Run without treating queued steering as SDK recording", async () => {
+  const entered = Promise.withResolvers<void>();
+  const driver = new MailboxDriver();
+  driver.respond = async (_input, _material, signal) => {
+    entered.resolve();
+    await new Promise<void>((resolve) =>
+      signal.addEventListener("abort", () => resolve(), { once: true }),
+    );
+    return "Stopped";
+  };
+  await start(driver);
+  const first = await (
+    await post("/api/bots/personal/thread/messages", {
+      requestId: "page-source",
+      text: "Source input",
+    })
+  ).json();
+  await entered.promise;
+  const ids = [first.messageId];
+  for (let i = 0; i < 6; i++) {
+    const added = await (
+      await post(`/api/bots/personal/tasks/${first.taskId}/inputs`, {
+        requestId: `page-add-${i}`,
+        text: `Addition ${i}`,
+      })
+    ).json();
+    ids.push(added.messageId);
+  }
+  const path = `/api/bots/personal/runs/${first.runId}/history?kind=inputs`;
+  const page = await get(path);
+  expect(page.records).toHaveLength(5);
+  const next = await get(`${path}&after=${page.nextAfter}`);
+  expect(next.records).toHaveLength(2);
+  expect(next.nextAfter).toBeNull();
+  expect([...page.records, ...next.records].map((row) => row.id)).toEqual(ids);
+  expect(
+    (await get("/api/bots/personal/thread")).tasks[0].runs[0].inputs.every(
+      (row: { recordedAt: string | null }) => row.recordedAt === null,
+    ),
+  ).toBe(true);
+});

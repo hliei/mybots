@@ -15,6 +15,51 @@ import type { WithDatabase } from "./connection.ts";
 import { clearMailboxLocks } from "./lock.ts";
 import { HOST_OPERATIONS_SCHEMA, INBOUND_SCHEMA, OUTBOUND_SCHEMA } from "./schema.ts";
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isHistoryRequest(value: unknown): value is HistoryRequest {
+  return (
+    isObject(value) &&
+    typeof value.id === "string" &&
+    value.id.length > 0 &&
+    Number.isSafeInteger(value.incarnation) &&
+    Number(value.incarnation) >= 0 &&
+    (value.operation === "search_history" || value.operation === "read_history") &&
+    "input" in value
+  );
+}
+
+function isExecutionRecord(value: unknown): value is ExecutionRecord {
+  return (
+    isObject(value) &&
+    typeof value.id === "string" &&
+    typeof value.kind === "string" &&
+    ["input", "assistant", "tool-call", "tool-result", "attempt"].includes(value.kind) &&
+    typeof value.text === "string" &&
+    typeof value.createdAt === "string" &&
+    [value.toolName, value.toolCallId, value.inputId].every(
+      (field) => field === undefined || typeof field === "string",
+    ) &&
+    (value.incarnation === undefined ||
+      (Number.isSafeInteger(value.incarnation) && Number(value.incarnation) >= 0))
+  );
+}
+
+function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot {
+  return (
+    isObject(value) &&
+    typeof value.id === "string" &&
+    typeof value.text === "string" &&
+    (value.tool === null || typeof value.tool === "string") &&
+    Number.isSafeInteger(value.textOffset) &&
+    Number(value.textOffset) >= 0 &&
+    Number.isSafeInteger(value.incarnation) &&
+    Number(value.incarnation) >= 0
+  );
+}
+
 export function createMailbox(withDatabase: WithDatabase) {
   /**
    * Session-local liveness marker. The container touches it on mailbox work so
@@ -105,24 +150,31 @@ export function createMailbox(withDatabase: WithDatabase) {
         ),
       );
     }
-    private state<T>(prefix: string): T[] {
+    private state(prefix: string): unknown[] {
       return withDatabase(this.directory, "outbound", true, (db) =>
         (
           db.all(
             "SELECT value FROM session_state WHERE key LIKE ? ORDER BY rowid",
             `${prefix}:%`,
           ) as { value: string }[]
-        ).map((row) => JSON.parse(row.value) as T),
+        ).flatMap((row) => {
+          try {
+            const value: unknown = JSON.parse(row.value);
+            return [value];
+          } catch {
+            return [];
+          }
+        }),
       );
     }
     historyRequests(): HistoryRequest[] {
-      return this.state<HistoryRequest>("request");
+      return this.state("request").filter(isHistoryRequest);
     }
     executionRecords(): ExecutionRecord[] {
-      return this.state<ExecutionRecord>("evidence");
+      return this.state("evidence").filter(isExecutionRecord);
     }
     executionSnapshot(): ExecutionSnapshot | undefined {
-      return this.state<ExecutionSnapshot>("live").at(-1);
+      return this.state("live").filter(isExecutionSnapshot).at(-1);
     }
 
     submit(

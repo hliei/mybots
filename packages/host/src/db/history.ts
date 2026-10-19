@@ -6,7 +6,7 @@ interface Original {
   seq: number;
   runId: string;
   role: string;
-  content: string;
+  content: Uint8Array;
   createdAt: string;
 }
 export interface HistoryScope {
@@ -21,7 +21,7 @@ function integer(value: unknown, fallback: number): number {
   return value;
 }
 function excerpt(row: Original, limit: number, offset: number) {
-  const chars = Array.from(row.content);
+  const chars = Array.from(Buffer.from(row.content).toString("utf8"));
   const end = Math.min(chars.length, offset + limit);
   const { content: _, ...source } = row;
   return {
@@ -51,7 +51,7 @@ export function history(db: DatabaseSync, scope: HistoryScope, value: unknown) {
   const searching = typeof query === "string";
   const terms = searching ? query.normalize("NFKC").toLowerCase().trim().split(/\s+/u) : [];
   const select =
-    "SELECT id, seq, run_id AS runId, role, content, created_at AS createdAt FROM thread_messages";
+    "SELECT id, seq, run_id AS runId, role, CAST(content AS BLOB) AS content, created_at AS createdAt FROM thread_messages";
   const visibility = "thread_id = ? AND seq >= ?";
   const args: SQLInputValue[] = [scope.threadId, scope.backgroundBoundary];
   let rows: Original[];
@@ -87,7 +87,7 @@ export function history(db: DatabaseSync, scope: HistoryScope, value: unknown) {
       .prepare(`${select} WHERE ${visibility} AND seq < ? ORDER BY seq DESC`)
       .iterate(...args, Math.min(before, searching ? (scope.searchBeforeSeq ?? before) : before))) {
       const row = value as unknown as Original;
-      const text = row.content.normalize("NFKC").toLowerCase();
+      const text = Buffer.from(row.content).toString("utf8").normalize("NFKC").toLowerCase();
       if (!terms.every((term) => text.includes(term))) continue;
       rows.push(row);
       if (rows.length === 6) break;
