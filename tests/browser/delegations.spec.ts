@@ -72,7 +72,7 @@ for (const action of ["allow", "approve", "deny", "expire"] as const) {
         .selectOption(action === "allow" ? "allow" : "ask-each-time");
       await page.getByRole("button", { name: "Save delegation permission" }).click();
       await expect(page.locator("#collaboration-notice")).toContainText(
-        action === "allow" ? "allow" : "ask-each-time",
+        `Delegation from this Bot to ${writerId} is ${action === "allow" ? "allow" : "ask-each-time"}.`,
       );
       const mailbox = new RunnerMailbox(
         join(root, "data", "sessions", "personal", ready.sessionId),
