@@ -347,7 +347,14 @@ export class ThreadStore {
       let state: RunRow["state"];
       let outcome = run.outcome;
       let held = 0;
-      if (!missing.length && inputs.length) {
+      const uncertainChild = this.childRunIds(id).some(
+        (childId) => this.run(childId).state === "uncertain",
+      );
+      if (uncertainChild) {
+        state = "uncertain";
+        held = 1;
+        outcome = JSON.stringify({ kind: "uncertain", reply: "Owned child outcome is uncertain." });
+      } else if (!missing.length && inputs.length) {
         const results = inputs.map((row) => JSON.parse(row.outcome as string) as { kind: string });
         const failure = results.find((row) => row.kind === "failed");
         state = failure ? "failed" : "succeeded";
@@ -391,6 +398,8 @@ export class ThreadStore {
         throw new ChatRequestError("Stop is unconfirmed.", 409);
       if (run.state === "succeeded")
         throw new ChatRequestError("A completed Run is not retried.", 409);
+      if (this.openDelegations(run.id))
+        throw new ChatRequestError("Resolve owned child work before retrying the parent.", 409);
       const open = this.db
         .prepare(
           `SELECT id FROM runs WHERE task_id = ? AND id != ?

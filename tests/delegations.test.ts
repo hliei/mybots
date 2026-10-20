@@ -205,6 +205,13 @@ it("delegates one allowed child and continues the same parent Run", async () => 
   await vi.waitFor(async () =>
     expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("waiting"),
   );
+  expect(
+    (
+      await post(`/api/bots/personal/runs/${sent.runId}/retry`, {
+        requestId: "retry-waiting-parent",
+      })
+    ).status,
+  ).toBe(409);
   const waiting = (await get("/api/bots/personal/thread")).tasks[0].runs[0];
   expect(waiting.outcome).toBeNull();
   expect(waiting.delegations.find((row: { id: string }) => row.id === "child-one")).toMatchObject({
@@ -457,17 +464,49 @@ it("treats child failure as parent input and keeps an uncertain child from compl
         (task: { id: string }) => task.id === uncertain.taskId,
       ).runs[0],
     ).toMatchObject({
-      state: "stopping",
+      state: "uncertain",
       held: true,
-      outcome: null,
-      stopError: "Owned child stop is unconfirmed.",
+      outcome: { kind: "uncertain", reply: "Owned child outcome is uncertain." },
+      stopError: null,
     }),
+  );
+  await host.reconcile();
+  expect(
+    (await get("/api/bots/personal/thread")).tasks.find(
+      (task: { id: string }) => task.id === uncertain.taskId,
+    ).runs[0].state,
+  ).toBe("uncertain");
+  const unrelated = await (
+    await post("/api/bots/personal/thread/tasks", {
+      requestId: "after-uncertain-stop",
+      text: "Unrelated source work",
+    })
+  ).json();
+  await vi.waitFor(async () =>
+    expect(
+      (await get("/api/bots/personal/thread")).tasks.find(
+        (task: { id: string }) => task.id === unrelated.taskId,
+      ).runs[0].state,
+    ).toBe("succeeded"),
   );
 });
 
 it("cancels owned child work, keeps unrelated target work, and fences a late result", async () => {
   const releaseWriter = Promise.withResolvers<void>();
   const driver = new MailboxDriver();
+  let childStopBlocked = true;
+  const startExecution = driver.start.bind(driver);
+  driver.start = async (material, signal) => {
+    const handle = await startExecution(material, signal);
+    return {
+      ...handle,
+      stop: async () => {
+        if (material.key.agentGroupId !== "personal" && childStopBlocked)
+          throw new Error("Controlled child stop unavailable");
+        await handle.stop();
+      },
+    };
+  };
   driver.respond = async (input, _material, signal) => {
     if (input.content === "Unrelated notes") {
       await releaseWriter.promise;
@@ -481,72 +520,89 @@ it("cancels owned child work, keeps unrelated target work, and fences a late res
     }
     return `Final: ${input.content}`;
   };
-  await start(driver);
-  const targetId = await writer();
-  await post(`/api/bots/personal/collaboration/${targetId}`, {
-    requestId: "allow-cancel",
-    mode: "allow",
-  });
-  const sent = await (
-    await post("/api/bots/personal/thread/messages", {
-      requestId: "cancel-source",
-      text: "Plan a cancellation",
-    })
-  ).json();
-  await vi.waitFor(() =>
-    expect(driver.launches.map((row) => row.material.key.sessionId)).toContain(sent.runId),
-  );
-  const mailbox = new RunnerMailbox(
-    driver.launches.find((row) => row.material.key.sessionId === sent.runId)?.material
-      .directory as string,
-  );
-  const delegated = await ask(mailbox, "cancel-child", "delegate", {
-    requestId: "cancel-child",
-    targetBotId: targetId,
-    text: "Stop this child",
-  });
-  mailbox.requestDurableWait("delegation");
-  await vi.waitFor(async () =>
-    expect((await get(`/api/bots/${targetId}/thread`)).tasks[0].runs[0].state).toBe("active"),
-  );
-  const unrelated = await (
-    await post(`/api/bots/${targetId}/thread/messages`, {
-      requestId: "unrelated",
-      text: "Unrelated notes",
-    })
-  ).json();
-  expect(unrelated.taskId).not.toBe(delegated.result?.childTaskId);
-  expect((await get(`/api/bots/${targetId}/thread`)).tasks[1].runs[0].state).toBe("queued");
-  const stopped = await post(`/api/bots/personal/runs/${sent.runId}/stop`, {
-    requestId: "stop-parent",
-  });
-  expect(stopped.status).toBe(202);
-  await vi.waitFor(async () =>
-    expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("closed"),
-  );
-  const writerTasks = await get(`/api/bots/${targetId}/thread`);
-  expect(writerTasks.tasks[0].runs[0]).toMatchObject({
-    id: delegated.result?.childRunId,
-    state: "closed",
-  });
-  expect(writerTasks.tasks[1]).toMatchObject({ id: unrelated.taskId });
-  expect(["queued", "active"]).toContain(writerTasks.tasks[1].runs[0].state);
-  const directory = driver.launches.find(
-    (row) => row.material.key.sessionId === delegated.result?.childRunId,
-  )?.material.directory as string;
-  const input = new HostMailbox(directory).inputs().at(-1);
-  if (input) new RunnerMailbox(directory).reply(input, "Late child result", "message");
-  await host.reconcile();
-  expect((await get("/api/bots/personal/thread")).tasks[0].runs[0]).toMatchObject({
-    id: sent.runId,
-    state: "closed",
-  });
-  expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].attempts).toHaveLength(1);
-  releaseWriter.resolve();
-  await vi.waitFor(async () =>
-    expect((await get(`/api/bots/${targetId}/thread`)).tasks[1].runs[0].state).toBe("succeeded"),
-  );
-  expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("closed");
+  try {
+    await start(driver);
+    const targetId = await writer();
+    await post(`/api/bots/personal/collaboration/${targetId}`, {
+      requestId: "allow-cancel",
+      mode: "allow",
+    });
+    const sent = await (
+      await post("/api/bots/personal/thread/messages", {
+        requestId: "cancel-source",
+        text: "Plan a cancellation",
+      })
+    ).json();
+    await vi.waitFor(() =>
+      expect(driver.launches.map((row) => row.material.key.sessionId)).toContain(sent.runId),
+    );
+    const mailbox = new RunnerMailbox(
+      driver.launches.find((row) => row.material.key.sessionId === sent.runId)?.material
+        .directory as string,
+    );
+    const delegated = await ask(mailbox, "cancel-child", "delegate", {
+      requestId: "cancel-child",
+      targetBotId: targetId,
+      text: "Stop this child",
+    });
+    mailbox.requestDurableWait("delegation");
+    await vi.waitFor(async () =>
+      expect((await get(`/api/bots/${targetId}/thread`)).tasks[0].runs[0].state).toBe("active"),
+    );
+    const unrelated = await (
+      await post(`/api/bots/${targetId}/thread/messages`, {
+        requestId: "unrelated",
+        text: "Unrelated notes",
+      })
+    ).json();
+    expect(unrelated.taskId).not.toBe(delegated.result?.childTaskId);
+    expect((await get(`/api/bots/${targetId}/thread`)).tasks[1].runs[0].state).toBe("queued");
+    const stopped = await post(`/api/bots/personal/runs/${sent.runId}/stop`, {
+      requestId: "stop-parent",
+    });
+    expect(stopped.status).toBe(202);
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].stopError).toBe(
+        "Owned child stop is unconfirmed.",
+      ),
+    );
+    for (let pass = 0; pass < 2; pass++) {
+      await host.reconcile();
+      expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("stopping");
+      expect((await get(`/api/bots/${targetId}/thread`)).tasks[0].runs[0].state).toBe("stopping");
+    }
+    childStopBlocked = false;
+    await host.reconcile();
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("closed"),
+    );
+    const writerTasks = await get(`/api/bots/${targetId}/thread`);
+    expect(writerTasks.tasks[0].runs[0]).toMatchObject({
+      id: delegated.result?.childRunId,
+      state: "closed",
+    });
+    expect(writerTasks.tasks[1]).toMatchObject({ id: unrelated.taskId });
+    expect(["queued", "active"]).toContain(writerTasks.tasks[1].runs[0].state);
+    const directory = driver.launches.find(
+      (row) => row.material.key.sessionId === delegated.result?.childRunId,
+    )?.material.directory as string;
+    const input = new HostMailbox(directory).inputs().at(-1);
+    if (input) new RunnerMailbox(directory).reply(input, "Late child result", "message");
+    await host.reconcile();
+    expect((await get("/api/bots/personal/thread")).tasks[0].runs[0]).toMatchObject({
+      id: sent.runId,
+      state: "closed",
+    });
+    expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].attempts).toHaveLength(1);
+    releaseWriter.resolve();
+    await vi.waitFor(async () =>
+      expect((await get(`/api/bots/${targetId}/thread`)).tasks[1].runs[0].state).toBe("succeeded"),
+    );
+    expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("closed");
+  } finally {
+    childStopBlocked = false;
+    releaseWriter.resolve();
+  }
 });
 
 it("resumes the original parent Run after restart", async () => {

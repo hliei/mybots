@@ -674,7 +674,7 @@ export class Host {
         if (state === "uncertain" || state === "closed" || state === "waiting") return;
         if (state === "stopping") {
           if (!execution.handle && !execution.starting && !execution.replacing)
-            this.finishConfirmedStop(execution);
+            await this.executeStop(execution);
           return;
         }
       }
@@ -1863,11 +1863,11 @@ export class Host {
     this.releaseBot(execution);
   }
 
-  /** A parent stop stays unconfirmed while an owned child is still running or uncertain. */
+  /** A parent stop stays unconfirmed while an owned child may still execute. */
   private ownedChildrenUnconfirmed(parentRunId: string): boolean {
     const blocked = this.store.threads.childRunIds(parentRunId).some((childRunId) => {
       const state = this.store.threads.run(childRunId).state;
-      return state !== "succeeded" && state !== "failed" && state !== "closed";
+      return !["succeeded", "failed", "closed", "uncertain"].includes(state);
     });
     if (blocked)
       this.store.threads.markStopUnconfirmed(
