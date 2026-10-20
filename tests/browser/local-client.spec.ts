@@ -219,8 +219,33 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     expect(returned.sessionId).toBe(ready.sessionId);
     await page.getByRole("button", { name: "Refresh status" }).click();
     await expect(page.getByRole("status")).toContainText("Connected");
+    const writerId = await page.evaluate(async () => {
+      const response = await fetch("/api/bots");
+      const body = (await response.json()) as { bots: { id: string; name: string }[] };
+      return body.bots.find((bot) => bot.name === "Writer")?.id;
+    });
+    const memoryPath = `**/api/bots/${writerId}/memory`;
+    const memoryRead = Promise.withResolvers<void>();
+    const releaseMemory = Promise.withResolvers<void>();
+    await page.route(
+      memoryPath,
+      async (route) => {
+        const response = await route.fetch();
+        memoryRead.resolve();
+        await releaseMemory.promise;
+        await route.fulfill({ response });
+      },
+      { times: 1 },
+    );
     await page.getByRole("button", { name: "Select Writer", exact: true }).click();
     await page.getByLabel("Memory index", { exact: true }).fill("Writer prefers short paragraphs.");
+    await memoryRead.promise;
+    const loadedMemory = page.waitForResponse(memoryPath);
+    releaseMemory.resolve();
+    await loadedMemory;
+    await expect(page.getByLabel("Memory index", { exact: true })).toHaveValue(
+      "Writer prefers short paragraphs.",
+    );
     await page.getByRole("button", { name: "Save memory index", exact: true }).click();
     await expect(page.locator("#memory-message")).toContainText("Saved");
     await page.getByLabel("Topic", { exact: true }).fill("voice");

@@ -650,6 +650,7 @@ read, or `null` when creating a missing file. A mismatch returns 409 with the
 observed file so the client can reread it. The UI shows that observed text and
 does not overwrite the draft until the owner loads it. These checks do not lock
 the workspace; an Agent write can still land between the read and the save.
+Delayed reads and status refreshes also preserve unsaved editor drafts.
 
 The browser section **Long-term memory** edits and deletes the same files. Its
 wording states that deletion is not history erasure or guaranteed forgetting.

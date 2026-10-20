@@ -124,7 +124,7 @@ function apply(view: MemoryView, force: boolean): void {
       : "Choose a topic or enter a new id.";
 }
 
-async function load(botId: string, force = false): Promise<void> {
+async function load(botId: string): Promise<void> {
   const request = ++requestVersion;
   const response = await fetch(`/api/bots/${encodeURIComponent(botId)}/memory`, {
     cache: "no-store",
@@ -132,7 +132,7 @@ async function load(botId: string, force = false): Promise<void> {
   if (!response.ok || currentBot !== botId || request !== requestVersion) return;
   const body: unknown = await response.json();
   if (!isMemoryView(body)) return;
-  apply(body, force);
+  apply(body, false);
 }
 
 export async function showMemory(botId: string | undefined): Promise<void> {
@@ -141,8 +141,12 @@ export async function showMemory(botId: string | undefined): Promise<void> {
     observed = undefined;
     conflict.hidden = true;
     message.textContent = "";
+    indexText.value = "";
+    definitionText.value = "";
     topicId.value = "";
     topicText.value = "";
+    versions.index = null;
+    versions.definition = null;
     versions.topic = null;
     loaded = { index: "", definition: "", topic: "" };
   }
@@ -150,7 +154,7 @@ export async function showMemory(botId: string | undefined): Promise<void> {
   section.hidden = !botId;
   if (!botId) return;
   try {
-    await load(botId, switched);
+    await load(botId);
   } catch {
     message.textContent = "Memory could not be loaded. Refresh to retry.";
   }
