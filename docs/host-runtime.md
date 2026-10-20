@@ -540,11 +540,11 @@ windows or establish exactly-once tool effects.
 
 ## Single-hop delegation
 
-The owner sets each source-to-target direction to deny or allow. The default is
+The owner sets each source-to-target direction to deny, ask-each-time, or allow. The default is
 deny, including when no row exists. A Bot cannot grant itself, and a runner
-operation cannot change the policy. Ask-each-time approval is a later control.
+operation cannot change the policy. Ask-each-time requires an exact local action approval.
 `POST /api/bots/:sourceBotId/collaboration/:targetBotId` accepts
-`{ requestId, mode }` where mode is `deny` or `allow`. The Web page saves that
+`{ requestId, mode }` where mode is `deny`, `ask-each-time`, or `allow`. The Web page saves that
 direction for the selected Bot. The opposite direction stays independent.
 
 `delegate` accepts a stable `requestId`, the target Bot ID, and selected text of
@@ -569,6 +569,48 @@ owner addition has to target that Task and does not settle the parent dependency
 Stopping the parent confirms stop of unfinished owned children, retains completed
 effects and unrelated work of the target Bot, and keeps a late child result from
 starting the parent again. These records do not establish exactly-once effects.
+
+## Exact delegation action approvals
+
+Under ask-each-time policy, `delegate` persists its selected text, target Bot,
+source Task/Run/Attempt, and optional explicit ISO 8601 `deadline`. It creates no
+child until the owner approves. The Run card shows the operation, concrete inputs,
+request identity, source links, deadline and decision. Approve action and Deny
+action are separate local controls; Thread text, targeted additions and runner
+operations cannot authorize them. `read_operation` with the original request ID
+retrieves the durable delegation and its approval after an unconfirmed response.
+
+`POST /api/bots/:botId/runs/:runId/approvals/:approvalId/decision` accepts
+`{ requestId, decision, operation, targetBotId, text, deadline }`. Decision is
+`approve` or `deny`; operation is `delegate`; the target, text and deadline must
+match the stored card exactly, including `null` for an indefinite wait. A reused
+operation identity cannot change its inputs. Use a new request and owner decision
+for changed inputs. The local client's credential and Host/Origin checks apply.
+Repeated decision receipts are idempotent; other late or conflicting decisions
+fail without another child. The browser saves an unconfirmed decision so reload
+can retry its original identity.
+
+Approval and execution are distinct durable states. After the complete tool batch
+has ended the source Attempt, the Host rechecks the waiting Run, unchanged inputs,
+current approval and current directed permission. Creating the child Task/Run and
+marking the approval executed share one SQLite transaction. A crash before this
+commit leaves no admitted child; a crash after it retains that child identity.
+This covers Host admission, not exactly-once child tool effects. Unknown child
+outcomes remain visible and hold the source for owner handling rather than
+repeating the operation. All settled child results continue the same source Run.
+
+Waiting has no default deadline and survives browser and Host restart without
+consuming active capacity or budget. An explicit deadline expires a pending or
+approved but unexecuted request without creating a child, leaving its Run needing
+attention. Stopping the Run cancels its unresolved approvals and fences late
+decisions. Changing the direction to deny permanently invalidates pending and
+approved but unexecuted requests; restoring permission requires a new request and
+decision. Cancelling children that were already admitted when permission changes
+remains a separate lifecycle behavior. Owner denial returns correlated source
+evidence and suppresses identical automatic requests within that source Run.
+
+This approval governs the controlled Host delegation action. It does not intercept
+arbitrary effects of otherwise permitted shell, file or network tools.
 
 ## Local WebSocket interface
 
