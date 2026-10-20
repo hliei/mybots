@@ -66,7 +66,9 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
                 : undefined;
             const supplied = typeof fields?.requestId === "string" ? fields.requestId : undefined;
             const id =
-              operation === "publish_progress" || operation === "publish_result"
+              operation === "ask_question" ||
+              operation === "publish_progress" ||
+              operation === "publish_result"
                 ? supplied
                 : randomUUID();
             if (!id) throw new Error("A stable requestId is required.");
@@ -115,6 +117,7 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
     const pollingController = new AbortController();
     const pollingSignal = AbortSignal.any([signal, pollingController.signal]);
     let closed = false;
+    let waiting = false;
     let pollFailure: unknown;
     const closeAdmission = () => {
       closed = true;
@@ -160,6 +163,12 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
       for await (const event of queryEvents(query)) {
         if (signal.aborted) break;
         switch (event.type) {
+          case "wait":
+            closeAdmission();
+            waiting = true;
+            mailbox.requestDurableWait(event.reason);
+            answering.length = 0;
+            break;
           case "evidence":
             mailbox.recordExecution({ ...event.record, incarnation });
             break;
@@ -218,6 +227,12 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
             break;
           }
         }
+      }
+      if (waiting) {
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener("abort", () => resolve(), { once: true });
+        });
       }
       if (pollFailure) throw pollFailure;
       if (answering.length > 0 && !signal.aborted) {

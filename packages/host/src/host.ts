@@ -663,10 +663,11 @@ export class Host {
     try {
       execution.mailbox.syncAcknowledgements();
       this.syncChat(execution);
+      this.reconcileDurableWait(execution);
       if (this.enforceBudget(execution)) return;
       if (execution.route.session.purpose === "run") {
         const state = this.store.threads.run(id).state;
-        if (state === "uncertain" || state === "closed") return;
+        if (state === "uncertain" || state === "closed" || state === "waiting") return;
         if (state === "stopping") {
           if (!execution.handle && !execution.starting && !execution.replacing)
             this.finishConfirmedStop(execution);
@@ -1242,10 +1243,68 @@ export class Host {
       throw new ChatRequestError("Privilege grants are owner-only.", 403);
     if (ADMIN_FIELDS.some((key) => key in input))
       throw new ChatRequestError("Bot administration is owner-only.", 403);
+    if (request.operation === "ask_question") return this.askQuestion(execution, request, input);
     if (request.operation === "read_operation") return this.readPublication(execution, input);
     if (request.operation === "publish_progress" || request.operation === "publish_result")
       return this.publishExecution(execution, request, input);
     throw new ChatRequestError("Invalid history operation.");
+  }
+
+  private askQuestion(
+    execution: SessionExecution,
+    request: HistoryRequest,
+    input: Record<string, unknown>,
+  ) {
+    if (Object.keys(input).some((key) => !["requestId", "text", "deadline"].includes(key)))
+      throw new ChatRequestError("Unknown question field.");
+    const run = this.store.threads.run(execution.route.session.id);
+    const attempt = this.store.threads.executingAttempt(run.id);
+    if (run.state !== "active" || !attempt || attempt.incarnation !== request.incarnation)
+      throw new ChatRequestError("Execution scope is no longer active.", 403);
+    if (
+      typeof input.requestId !== "string" ||
+      input.requestId !== request.id ||
+      !REQUEST_ID.test(input.requestId)
+    )
+      throw new ChatRequestError("A stable requestId is required.");
+    if (
+      typeof input.text !== "string" ||
+      !input.text.trim() ||
+      Array.from(input.text).length > 2000
+    )
+      throw new ChatRequestError("Question text must be 1 to 2000 characters.");
+    if (
+      input.deadline !== undefined &&
+      (typeof input.deadline !== "string" || !Number.isFinite(Date.parse(input.deadline)))
+    )
+      throw new ChatRequestError("Question deadline must be an explicit timestamp.");
+    return this.store.threads.recordQuestion({
+      id: input.requestId,
+      botId: execution.route.session.agent_group_id,
+      taskId: run.task_id,
+      runId: run.id,
+      attemptId: attempt.id,
+      text: input.text,
+      deadline: typeof input.deadline === "string" ? new Date(input.deadline).toISOString() : null,
+      now: this.timestamp(),
+    });
+  }
+
+  async answerQuestion(botId: string, runId: string, questionId: string, value: unknown) {
+    const input = chatInput(value, ["text"]);
+    await this.threadDetail(botId);
+    const result = this.store.threads.answerQuestion(
+      botId,
+      runId,
+      questionId,
+      input.requestId as string,
+      input.text as string,
+      this.timestamp(),
+    );
+    const execution = await this.prepare(this.store.route(this.store.threads.session(runId)));
+    this.reconcileDurableWait(execution);
+    this.schedule();
+    return result;
   }
 
   private readPublication(execution: SessionExecution, input: Record<string, unknown>) {
@@ -1264,6 +1323,8 @@ export class Host {
       run.id,
       input.requestId,
     );
+    const question = this.store.threads.questions(run.id).find((q) => q.id === input.requestId);
+    if (question) return { state: "recorded" as const, question };
     return publication ? { state: "recorded" as const, publication } : { state: "absent" as const };
   }
 
@@ -1682,6 +1743,7 @@ export class Host {
     const { mailbox, route } = execution;
     if (route.session.purpose !== "run") return;
     const id = route.session.id;
+    this.store.threads.expireQuestions(this.timestamp());
     const inputs = mailbox.inputs();
     this.store.threads.reconcile(
       id,
@@ -1696,7 +1758,7 @@ export class Host {
       this.timestamp(),
     );
     const state = this.store.threads.run(id).state;
-    if (state === "stopping") return;
+    if (state === "stopping" || state === "waiting") return;
     if (["uncertain", "succeeded", "failed", "closed"].includes(state)) {
       if (state === "uncertain") for (const input of inputs) mailbox.holdInput(input.id);
       if (execution.handle && !execution.replacing) {
@@ -1835,7 +1897,16 @@ export class Host {
         snapshot.resources.skillRevisions,
         execution.material.skillsDirectory,
       );
-    replaceSessionContext(execution.material.contextFile, snapshot);
+    replaceSessionContext(execution.material.contextFile, {
+      ...snapshot,
+      runContext: {
+        ...this.store.threads.context(execution.route.session.id),
+        answers: this.store.threads
+          .questions(execution.route.session.id)
+          .filter((q) => q.state === "answered")
+          .map((q) => ({ id: q.id, question: q.text, answer: q.answer as string })),
+      },
+    });
   }
 
   private releaseBot(execution: SessionExecution, incarnation = execution.incarnation): void {
@@ -1857,20 +1928,40 @@ export class Host {
     if (this.stopped || execution.route.session.purpose !== "run") return;
     const id = execution.route.session.id;
     if (execution.starting || execution.replacing || execution.cutover) return;
+    this.store.threads.expireQuestions(this.timestamp());
     const state = this.store.threads.run(id).state;
-    if (state === "waiting" && execution.mailbox.durableResume()) {
+    const questions = this.store.threads.questions(id);
+    const questionsSettled = questions.length > 0 && questions.every((q) => q.state === "answered");
+    if (
+      state === "waiting" &&
+      (questions.length ? questionsSettled : execution.mailbox.durableResume())
+    ) {
       this.store.threads.resumeWait(id, this.timestamp());
       execution.mailbox.clearDurableSignal("durable-resume");
       this.schedule();
       return;
     }
-    if (state !== "active") return;
-    const reason = execution.mailbox.durableWait();
+    if (state !== "active" && state !== "queued") return;
+    const records = execution.mailbox.executionRecords();
+    const recordedQuestion =
+      !execution.handle &&
+      questions.some(
+        (question) =>
+          (question.state === "pending" || question.state === "expired") &&
+          records.some(
+            (record) =>
+              record.kind === "tool-result" &&
+              record.toolName === "ask_question" &&
+              record.text.includes(`"id":"${question.id}"`),
+          ),
+      );
+    const reason =
+      execution.mailbox.durableWait() ?? (recordedQuestion ? "owner-question" : undefined);
     if (
       !reason ||
       !toolResultsComplete(
-        execution.mailbox.executionRecords(),
-        execution.mailbox.activity()?.current_tool ?? null,
+        records,
+        execution.handle ? (execution.mailbox.activity()?.current_tool ?? null) : null,
       )
     )
       return;
@@ -1886,7 +1977,8 @@ export class Host {
           return;
         }
       }
-      if (this.stopped || this.store.threads.run(id).state !== "active") return;
+      if (this.stopped || !["active", "queued"].includes(this.store.threads.run(id).state)) return;
+      execution.mailbox.clearProcessingClaims();
       this.store.threads.beginWait(id, reason, this.timestamp());
       execution.mailbox.clearDurableSignal("durable-wait");
       this.schedule();

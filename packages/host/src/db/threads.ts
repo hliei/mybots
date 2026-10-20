@@ -151,7 +151,7 @@ export class ThreadStore {
      WHERE t.id = ? AND t.thread_id = ? ORDER BY r.rowid DESC LIMIT 1`)
           .get(input.taskId, thread.id) as unknown as RunRow | undefined;
         if (!run) throw new ChatRequestError("Task not found for this Bot.", 404);
-        if (!["queued", "active"].includes(run.state))
+        if (!["queued", "active", "waiting"].includes(run.state))
           throw new ChatRequestError("Task does not accept additions.", 409);
       } else if (!input.newTask) {
         run = this.db
@@ -239,7 +239,7 @@ export class ThreadStore {
     return this.admit(requestId, { operation: "stop", botId, taskId }, () => {
       const run = this.db
         .prepare(`SELECT r.* FROM runs r JOIN tasks t ON t.id = r.task_id
- WHERE t.id = ? AND t.thread_id = ? AND r.state IN ('queued', 'active', 'stopping', 'uncertain')
+ WHERE t.id = ? AND t.thread_id = ? AND r.state IN ('queued', 'active', 'stopping', 'uncertain', 'waiting')
  ORDER BY r.rowid DESC LIMIT 1`)
         .get(taskId, this.thread(botId).id) as unknown as RunRow | undefined;
       if (!run) throw new ChatRequestError("Task has no running work to stop.", 409);
@@ -251,6 +251,11 @@ export class ThreadStore {
       throw new ChatRequestError("Run is already uncertain. Retry or close it.", 409);
     if (["succeeded", "failed", "closed"].includes(run.state))
       throw new ChatRequestError("Run is already terminal.", 409);
+    this.db
+      .prepare(
+        "UPDATE owner_questions SET state = 'cancelled', resolved_at = ? WHERE run_id = ? AND state IN ('pending', 'expired')",
+      )
+      .run(now, run.id);
     if (run.state !== "stopping")
       this.db
         .prepare(
@@ -687,7 +692,10 @@ export class ThreadStore {
       const missing = inputs.filter((row) => !row.outcome);
       let state: RunRow["state"] = run.state;
       let outcome = run.outcome;
-      if (!missing.length) {
+      if (
+        !missing.length &&
+        !this.questions(id).some((q) => q.state === "pending" || q.state === "expired")
+      ) {
         const results = inputs.map((row) => JSON.parse(row.outcome as string));
         const failure = results.find((row) => row.kind === "failed");
         state = failure ? "failed" : "succeeded";
@@ -895,7 +903,7 @@ export class ThreadStore {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const run = this.run(runId);
-      if (run.state !== "active") {
+      if (run.state !== "active" && run.state !== "queued") {
         this.db.exec("COMMIT");
         return;
       }
@@ -903,6 +911,7 @@ export class ThreadStore {
         .prepare("UPDATE runs SET state = 'waiting', wait_reason = ?, updated_at = ? WHERE id = ?")
         .run(reason.slice(0, 200), now, runId);
       this.endAttempt(runId, now);
+      this.db.prepare("UPDATE attempts SET steer_through_rowid = NULL WHERE run_id = ?").run(runId);
       this.db.prepare("DELETE FROM execution_reservations WHERE run_id = ?").run(runId);
       this.db.prepare("UPDATE admission_queue SET runnable = 0 WHERE run_id = ?").run(runId);
       this.db.exec("COMMIT");
@@ -1198,6 +1207,98 @@ export class ThreadStore {
     }[];
   }
 
+  questions(runId: string) {
+    return this.db
+      .prepare(`SELECT id, bot_id AS botId, task_id AS taskId, run_id AS runId,
+      attempt_id AS attemptId, text, state, deadline, answer, created_at AS createdAt, resolved_at AS resolvedAt
+      FROM owner_questions WHERE run_id = ? ORDER BY rowid`)
+      .all(runId) as unknown as {
+      id: string;
+      botId: string;
+      taskId: string;
+      runId: string;
+      attemptId: string;
+      text: string;
+      state: "pending" | "answered" | "expired" | "cancelled";
+      deadline: string | null;
+      answer: string | null;
+      createdAt: string;
+      resolvedAt: string | null;
+    }[];
+  }
+
+  recordQuestion(input: {
+    id: string;
+    botId: string;
+    taskId: string;
+    runId: string;
+    attemptId: string;
+    text: string;
+    deadline: string | null;
+    now: string;
+  }) {
+    const existing = this.db
+      .prepare("SELECT run_id FROM owner_questions WHERE id = ?")
+      .get(input.id);
+    if (existing && existing.run_id !== input.runId)
+      throw new ChatRequestError("Request identity is outside this execution.", 403);
+    if (!existing) {
+      if (this.publicationRow(input.id))
+        throw new ChatRequestError("Request identity belongs to another operation.", 409);
+      this.db
+        .prepare(`INSERT INTO owner_questions
+        (id, bot_id, task_id, run_id, attempt_id, text, state, deadline, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`)
+        .run(
+          input.id,
+          input.botId,
+          input.taskId,
+          input.runId,
+          input.attemptId,
+          input.text,
+          input.deadline,
+          input.now,
+        );
+    }
+    return this.questions(input.runId).find((q) => q.id === input.id);
+  }
+
+  expireQuestions(now: string): void {
+    this.db
+      .prepare(
+        "UPDATE owner_questions SET state = 'expired', resolved_at = ? WHERE state = 'pending' AND deadline <= ?",
+      )
+      .run(now, now);
+  }
+
+  answerQuestion(
+    botId: string,
+    runId: string,
+    questionId: string,
+    requestId: string,
+    text: string,
+    now: string,
+  ) {
+    this.expireQuestions(now);
+    return this.admit(
+      requestId,
+      { operation: "answer-question", botId, runId, questionId, text },
+      () => {
+        const run = this.ownedRun(botId, runId);
+        const question = this.questions(runId).find((q) => q.id === questionId);
+        if (!question) throw new ChatRequestError("Question not found.", 404);
+        if (!["active", "waiting"].includes(run.state) || question.state !== "pending")
+          throw new ChatRequestError("Question no longer accepts an answer.", 409);
+        this.db
+          .prepare(
+            "UPDATE owner_questions SET state = 'answered', answer = ?, resolved_at = ? WHERE id = ?",
+          )
+          .run(text, now, questionId);
+        return { botId, taskId: run.task_id, runId, questionId };
+      },
+    );
+  }
+
   attempts(runId: string) {
     return this.db
       .prepare(
@@ -1268,6 +1369,7 @@ export class ThreadStore {
           attempts: this.attempts(run.id).slice(0, 5),
           admissionClass: admission.placement.get(run.id)?.admissionClass ?? null,
           queuePosition: admission.placement.get(run.id)?.queuePosition ?? null,
+          questions: this.questions(run.id),
           waitReason: run.wait_reason,
         })),
       }));

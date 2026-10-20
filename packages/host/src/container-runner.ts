@@ -131,6 +131,7 @@ export function replaceSessionContext(
     resources?: AgentResources;
     web?: WebConfiguration;
     configurationVersion: number;
+    runContext?: RunContext;
   },
 ): void {
   const info = lstatSync(contextFile);
@@ -139,7 +140,7 @@ export function replaceSessionContext(
       "Immutable runner context differs; stop the session and replace its context explicitly",
     );
   const existing = JSON.parse(readFileSync(contextFile, "utf8")) as { runContext?: RunContext };
-  const next = runnerContext({ ...input, runContext: existing.runContext });
+  const next = runnerContext({ ...input, runContext: input.runContext ?? existing.runContext });
   if (readFileSync(contextFile, "utf8") === next) return;
   rmSync(contextFile);
   writeFileSync(contextFile, next, { mode: 0o444, flag: "wx" });

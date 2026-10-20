@@ -48,7 +48,13 @@ createServer({ key: readFileSync("/tls/key.pem"), cert: readFileSync("/tls/cert.
   const search = JSON.stringify(latest?.content).includes("Search the web");
   const inspectHistory = JSON.stringify(latest?.content).includes("Inspect original history");
   const inspectMaterials = JSON.stringify(latest?.content).includes("Inspect Bot materials");
-  const reply = inspectHistory
+  const questionAnswer = JSON.stringify(latest?.content).includes("Owner answer to question container-city");
+  const question = JSON.stringify(latest?.content).includes("Ask owner for a city");
+  const reply = questionAnswer
+    ? { text: "Continued the original Run for Hangzhou." }
+    : question
+    ? { tool: "ask_question", arguments: { requestId: "container-city", text: "Which city?" }, text: "Waiting for the owner" }
+    : inspectHistory
     ? tools.length ? {text: "History original received."} : {tool: "search_history", arguments: {query: "火星项目"}, text: "Reading original history"}
     : inspectMaterials
     ? tools.length > 0

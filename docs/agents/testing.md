@@ -394,3 +394,18 @@ installation limits, and a real Pi SDK write/publish tool round without owner
 upload. `tests/browser/delivered-artifacts.spec.ts` downloads through the built
 client before and after a fresh Host starts, retaining the original bytes. These
 offline tests do not establish actual-container or live-provider evidence.
+
+## Persistent owner questions
+
+`tests/owner-questions.test.ts` uses authenticated HTTP, real SQLite and mailboxes,
+a controlled clock and explicit tool/stop checkpoints. It covers scoped question
+creation and lookup, correlated replay, waiting Task additions, deadline expiry,
+Host restart, same-Run continuation, capacity retention until complete tool
+results and confirmed stop, and excluded waiting time. Its real Pi SDK case
+records multiple questions and another tool in one batch, resumes with current
+Memory/configuration, and reads an answered request without waiting again.
+`tests/browser/owner-questions.spec.ts` proves separate answer cards survive reload
+and a fresh Host. The opt-in container/gateway fixture checks the production
+runner's complete question result, actual container removal, budget exclusion and
+same-Run continuation through an owner answer. These checks use controlled
+upstreams and do not establish actual-service acceptance.
