@@ -1,7 +1,7 @@
 # Tracked asynchronous Bot delegation
 
 Status: accepted
-Implementation: planned
+Implementation: partial. Single-hop deny/allow delegation, parent wait, and same-Run continuation are implemented. Ask-each-time approval, nested depth, chain limits, and cancelling in-flight work when a direction changes to deny remain later work.
 
 Bot collaboration is durable parent-owned delegation. Each request creates a
 target-Bot child Task and Run with selected inputs, source/target/parent and

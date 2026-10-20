@@ -348,9 +348,9 @@ export class RoutineStore {
         .get(requestId) ||
       this.db
         .prepare(
-          "SELECT id FROM agent_publications WHERE id = ? UNION SELECT id FROM owner_questions WHERE id = ?",
+          "SELECT id FROM agent_publications WHERE id = ? UNION SELECT id FROM owner_questions WHERE id = ? UNION SELECT id FROM delegations WHERE id = ?",
         )
-        .get(requestId, requestId)
+        .get(requestId, requestId, requestId)
     )
       throw new ChatRequestError("This requestId belongs to another operation.", 409);
     this.db

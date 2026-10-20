@@ -538,6 +538,38 @@ cancels unresolved questions and fences late answers; a repeated answer receipt
 never revives stopped work. These records do not remove the documented crash
 windows or establish exactly-once tool effects.
 
+## Single-hop delegation
+
+The owner sets each source-to-target direction to deny or allow. The default is
+deny, including when no row exists. A Bot cannot grant itself, and a runner
+operation cannot change the policy. Ask-each-time approval is a later control.
+`POST /api/bots/:sourceBotId/collaboration/:targetBotId` accepts
+`{ requestId, mode }` where mode is `deny` or `allow`. The Web page saves that
+direction for the selected Bot. The opposite direction stays independent.
+
+`delegate` accepts a stable `requestId`, the target Bot ID, and selected text of
+up to 32,000 characters. The Host copies that text into a new Task and Run owned
+by the target Bot. The child does not receive the source workspace, source chat,
+or a source mount. The delegation records the source Bot, target Bot, parent
+Task, parent Run, originating Run, and child Task/Run. A denied request is stored
+on the parent Run and returned again for the same selected text; it does not
+create a child. Delegating from a child Run is rejected until nested delegation
+exists. Returning a child result does not require the reverse direction.
+
+After the current tool batch has complete results, the runner ends the Attempt.
+The Host records the dependency wait, stops that executor, and releases active
+capacity and Run budget. The same parent Run becomes runnable when every owned
+child is succeeded, failed, or cancelled. The next Attempt uses the effective Bot
+configuration and current Memory, reopens the parent ledger, and receives the
+correlated child outcome. A child failure or denial does not by itself succeed or
+fail the parent. An uncertain child keeps the parent waiting. A pending question
+also keeps it waiting. Ordinary Thread chat is not added to a child Task; an
+owner addition has to target that Task and does not settle the parent dependency.
+
+Stopping the parent confirms stop of unfinished owned children, retains completed
+effects and unrelated work of the target Bot, and keeps a late child result from
+starting the parent again. These records do not establish exactly-once effects.
+
 ## Local WebSocket interface
 
 Connect to the configured path with the same credential and Host/Origin checks.
@@ -733,7 +765,8 @@ and symbolic-link paths and applies `files.maxBytes` (25 MiB by default) to each
 file. It copies the chosen bytes outside the workspace and commits their metadata
 with the selected result. These results remain separate from the Run outcome.
 
-Thread details include each result's Bot, Task, Run, delegation (currently null),
+Thread details include each result's Bot, Task, Run, and the delegation that owns
+the producing Run when the result came from delegated work,
 and artifact IDs, relative names and byte sizes. The browser shows the summary
 and download links. Authenticated
 `GET /api/bots/:botId/runs/:runId/artifacts/:artifactId` returns the saved bytes as

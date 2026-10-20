@@ -80,6 +80,13 @@ export interface RunContext {
   backgroundBoundary: number;
   references: { id: string; role: string; content: string }[];
   answers?: { id: string; question: string; answer: string }[];
+  delegations?: {
+    id: string;
+    targetBotId: string;
+    state: string;
+    text: string;
+    result: string | null;
+  }[];
 }
 
 /** Stable product evidence, excluding hidden reasoning and provider-only payloads. */
@@ -113,6 +120,7 @@ export type HistoryOperation = (
     | "create_routine"
     | "manage_routine"
     | "ask_question"
+    | "delegate"
     | "publish_progress"
     | "publish_result"
     | "read_operation",
