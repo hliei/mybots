@@ -67,6 +67,9 @@ Run every new or modified test file and iterate until it passes. Use focused
 runs during development, then follow the delivery checks in
 [Development](development.md#validation-and-completion).
 
+Ordinary tests use at most two workers to limit contention among Host processes,
+SDK fixtures, and SQLite operations during local and CI verification.
+
 Run live-service checks only when explicitly requested. Keep credentials out of
 fixtures and output, and report live checks separately from ordinary validation.
 An offline suite passing does not establish that a real provider or platform
