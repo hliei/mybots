@@ -120,7 +120,8 @@ five-field expression. Cron inherits the Bot timezone, defaulting to Asia/Shangh
 remain inspectable after disconnect or Host restart. Each due occurrence has an
 independent Run context; choose its Task in Input target to add instructions.
 Bots can resolve a natural-language schedule through their scoped `create_routine`
-tool. See [Routines](docs/host-runtime.md#routines).
+tool and can pause, resume, run, edit or logically delete their own Routines with
+`manage_routine`. See [Routines](docs/host-runtime.md#routines).
 
 The Thread includes local original-history search and paginated reading. Inspect
 Run evidence to page through complete inputs, Attempts and recorded model/tool

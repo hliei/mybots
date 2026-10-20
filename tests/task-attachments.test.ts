@@ -79,7 +79,7 @@ it("upgrades a budget-enabled store with Task attachments and retains spent Run 
   const prior = new DatabaseSync(join(root, "data", "host.db"));
   try {
     prior.exec(`
-      DROP TABLE timezone_updates; DROP TABLE bot_timezones; DROP TABLE routine_occurrences; DROP TABLE routines; DROP TABLE owner_questions; DROP TABLE delivered_artifacts;
+      DROP TABLE timezone_updates; DROP TABLE bot_timezones; DROP TABLE routine_commands; DROP TABLE routine_occurrences; DROP TABLE routines; DROP TABLE owner_questions; DROP TABLE delivered_artifacts;
       DROP TABLE agent_publications;
       DROP TABLE task_attachments;
       UPDATE runs SET active_ms = 1234000, active_since = NULL;

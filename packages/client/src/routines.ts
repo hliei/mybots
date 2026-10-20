@@ -16,6 +16,8 @@ function isRoutine(value: unknown): value is Routine {
     (value.nextOccurrence === null || typeof value.nextOccurrence === "string") &&
     (value.taskId === null || typeof value.taskId === "string") &&
     (value.cron === null || typeof value.cron === "string") &&
+    typeof value.paused === "boolean" &&
+    (value.deletedAt === null || typeof value.deletedAt === "string") &&
     Array.isArray(value.occurrences) &&
     value.occurrences.every(
       (o) => record(o) && typeof o.taskId === "string" && typeof o.dueAt === "string",
@@ -35,6 +37,8 @@ interface Routine {
   nextOccurrence: string | null;
   taskId: string | null;
   cron: string | null;
+  paused: boolean;
+  deletedAt: string | null;
   occurrences: { taskId: string; dueAt: string }[];
   source: { kind: string; taskId?: string; runId?: string };
 }
@@ -53,6 +57,7 @@ const timezone = document.getElementById("routine-timezone") as HTMLInputElement
 const notice = document.getElementById("routine-notice") as HTMLElement;
 const list = document.getElementById("routine-list") as HTMLElement;
 const retry = document.getElementById("routine-retry") as HTMLButtonElement;
+const commandRetry = document.getElementById("routine-command-retry") as HTMLButtonElement;
 const schedule = document.getElementById("routine-schedule") as HTMLSelectElement;
 const cron = document.getElementById("routine-cron") as HTMLInputElement;
 const create = document.getElementById("routine-create") as HTMLButtonElement;
@@ -84,6 +89,48 @@ function timezoneControls() {
     timezoneNotice.textContent = `Timezone unconfirmed for Bot ${pendingTimezone.botId}: ${pendingTimezone.timezone}. Retry the saved request.`;
 }
 const pendingKey = "mybots.pending-routine";
+const commandKey = "mybots.pending-routine-command";
+interface Command {
+  botId: string;
+  routineId: string;
+  requestId: string;
+  action: "update" | "pause" | "resume" | "run" | "delete";
+  text?: string;
+  cron?: string;
+  runAt?: string;
+  timezone?: string;
+}
+let command: Command | undefined;
+let commanding = false;
+try {
+  const saved: unknown = JSON.parse(localStorage.getItem(commandKey) ?? "null");
+  if (
+    record(saved) &&
+    typeof saved.botId === "string" &&
+    typeof saved.routineId === "string" &&
+    typeof saved.requestId === "string" &&
+    (saved.action === "update" ||
+      saved.action === "pause" ||
+      saved.action === "resume" ||
+      saved.action === "run" ||
+      saved.action === "delete") &&
+    ["text", "cron", "runAt", "timezone"].every(
+      (key) => !(key in saved) || typeof saved[key] === "string",
+    )
+  )
+    command = {
+      botId: saved.botId,
+      routineId: saved.routineId,
+      requestId: saved.requestId,
+      action: saved.action,
+      ...(typeof saved.text === "string" ? { text: saved.text } : {}),
+      ...(typeof saved.cron === "string" ? { cron: saved.cron } : {}),
+      ...(typeof saved.runAt === "string" ? { runAt: saved.runAt } : {}),
+      ...(typeof saved.timezone === "string" ? { timezone: saved.timezone } : {}),
+    };
+} catch {
+  /* Ignore unreadable browser state. */
+}
 let botId: string | undefined;
 let pending: Creation | undefined;
 let sending = false;
@@ -109,6 +156,8 @@ function controls() {
   create.textContent = once ? "Create one-shot Routine" : "Create cron Routine";
   retry.hidden = !pending;
   retry.disabled = sending;
+  commandRetry.hidden = !command;
+  commandRetry.disabled = commanding;
 }
 export async function showRoutines(selectedBot: string, onChange: () => void): Promise<boolean> {
   const changed = botId !== selectedBot;
@@ -125,6 +174,8 @@ export async function showRoutines(selectedBot: string, onChange: () => void): P
   }
   if (pending)
     notice.textContent = `Creation unconfirmed for Bot ${pending.botId}. Retry the saved request.`;
+  else if (command)
+    notice.textContent = `Routine command unconfirmed for ${command.routineId}. Retry the saved request.`;
   const response = await fetch(`/api/bots/${encodeURIComponent(selectedBot)}/routines`, {
     cache: "no-store",
   });
@@ -139,7 +190,7 @@ export async function showRoutines(selectedBot: string, onChange: () => void): P
     throw new Error("Invalid Routine response.");
   if (botId !== selectedBot) return false;
   if (!botTimezoneForm.matches(":focus-within")) botTimezone.value = data.timezone;
-  if (changed) timezone.value = data.timezone;
+  if (changed && document.activeElement !== timezone) timezone.value = data.timezone;
   list.replaceChildren(
     ...data.routines.map((routine) => {
       const article = document.createElement("article");
@@ -155,7 +206,51 @@ export async function showRoutines(selectedBot: string, onChange: () => void): P
         line(
           `Next occurrence: ${routine.nextOccurrence ?? (routine.cron ? "held until current occurrence ends" : "none — one-shot admitted")}`,
         ),
+        line(
+          routine.deletedAt
+            ? `Deleted at ${routine.deletedAt}. Definition and results are retained.`
+            : routine.paused
+              ? "Paused. Automatic starts are blocked."
+              : "Automatic starts are on.",
+        ),
       );
+      if (!routine.deletedAt) {
+        const editor = document.createElement("textarea");
+        editor.value = routine.text;
+        editor.maxLength = 32000;
+        editor.rows = 2;
+        editor.setAttribute("aria-label", `Edit instructions for ${routine.id}`);
+        const schedule = document.createElement("input");
+        schedule.value = routine.cron ?? routine.runAt;
+        schedule.dataset.kind = routine.cron ? "cron" : "once";
+        schedule.setAttribute(
+          "aria-label",
+          routine.cron ? `Edit cron for ${routine.id}` : `Edit instant for ${routine.id}`,
+        );
+        const zone = document.createElement("input");
+        zone.value = routine.timezone;
+        zone.hidden = !!routine.cron;
+        zone.setAttribute("aria-label", `Edit timezone for ${routine.id}`);
+        const save = document.createElement("button");
+        save.type = "button";
+        save.dataset.action = "update";
+        save.textContent = "Save Routine edit";
+        const pause = document.createElement("button");
+        pause.type = "button";
+        pause.dataset.action = routine.paused ? "resume" : "pause";
+        pause.textContent = routine.paused ? "Resume routine" : "Pause routine";
+        const run = document.createElement("button");
+        run.type = "button";
+        run.dataset.action = "run";
+        run.textContent = "Run now";
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.dataset.action = "delete";
+        remove.textContent = "Delete routine";
+        for (const control of [editor, schedule, zone, save, pause, run, remove])
+          control.disabled = commanding || !!command;
+        article.append(editor, schedule, zone, save, pause, run, remove);
+      }
       if (routine.source.kind === "run") {
         const source = document.createElement("a");
         source.href = `#task-${routine.source.taskId}`;
@@ -227,6 +322,88 @@ form.addEventListener("submit", (event) => {
   void submit();
 });
 retry.addEventListener("click", () => void submit());
+commandRetry.addEventListener("click", () => void sendCommand());
+list.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest("button");
+  const article = button?.closest("article");
+  const routineId = article?.dataset.routineId;
+  const action = button?.dataset.action;
+  if (!botId || !button || !article || !routineId || !action || commanding || command || pending)
+    return;
+  const text = article.querySelector("textarea")?.value ?? "";
+  const schedule = article.querySelector("input");
+  const timezone = article.querySelectorAll("input")[1]?.value ?? "";
+  command = {
+    botId,
+    routineId,
+    requestId: crypto.randomUUID(),
+    action: action as Command["action"],
+    ...(action === "update"
+      ? schedule?.dataset.kind === "cron"
+        ? { text, cron: schedule.value }
+        : { text, runAt: schedule?.value, timezone }
+      : {}),
+  };
+  localStorage.setItem(commandKey, JSON.stringify(command));
+  void sendCommand();
+});
+async function sendCommand() {
+  if (!command || commanding) return;
+  commanding = true;
+  const current = command;
+  controls();
+  try {
+    const target =
+      current.action === "update"
+        ? `/api/bots/${encodeURIComponent(current.botId)}/routines/${encodeURIComponent(current.routineId)}`
+        : `/api/bots/${encodeURIComponent(current.botId)}/routines/${encodeURIComponent(current.routineId)}/${current.action}`;
+    const body: Record<string, string> = { requestId: current.requestId };
+    if (current.action === "update") {
+      body.text = current.text ?? "";
+      if (current.cron) body.cron = current.cron;
+      else {
+        body.runAt = current.runAt ?? "";
+        body.timezone = current.timezone ?? "";
+      }
+    }
+    const response = await fetch(target, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const result: unknown = await response.json();
+    if (!response.ok) {
+      if (response.status < 500) {
+        command = undefined;
+        localStorage.removeItem(commandKey);
+      }
+      notice.textContent =
+        record(result) && typeof result.error === "string"
+          ? result.error
+          : "Routine command unconfirmed. Retry the saved request.";
+      return;
+    }
+    command = undefined;
+    localStorage.removeItem(commandKey);
+    notice.textContent =
+      current.action === "delete"
+        ? `Deleted Routine ${current.routineId}. Definition and results are retained.`
+        : current.action === "pause"
+          ? `Paused Routine ${current.routineId}. Current work can finish.`
+          : current.action === "resume"
+            ? `Resumed Routine ${current.routineId}.`
+            : current.action === "run"
+              ? `Ran Routine ${current.routineId} once. Recurrence is unchanged.`
+              : `Saved Routine ${current.routineId} for later occurrences.`;
+    refresh();
+  } catch {
+    notice.textContent =
+      "Routine command unconfirmed. Retry the saved request, including after reload.";
+  } finally {
+    commanding = false;
+    controls();
+  }
+}
 
 schedule.addEventListener("change", () => {
   const presets: Record<string, string> = {

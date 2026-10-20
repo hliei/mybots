@@ -178,6 +178,45 @@ export async function serveClient(
     }
     return;
   }
+  const routineEdit =
+    /^\/api\/bots\/([^/]+)\/routines\/([^/]+)(?:\/(pause|resume|run|delete))?$/.exec(path);
+  if (routineEdit && request.method === "POST") {
+    try {
+      let input: unknown;
+      try {
+        input = JSON.parse((await readLimited(request, 262144)).toString("utf8"));
+      } catch (error) {
+        if (error instanceof ChatRequestError) throw error;
+        throw new ChatRequestError("Routine edit requires valid JSON.");
+      }
+      const botId = decodeURIComponent(routineEdit[1] as string);
+      const routineId = decodeURIComponent(routineEdit[2] as string);
+      const action = routineEdit[3];
+      const result =
+        action === "pause" || action === "resume"
+          ? host.setRoutinePaused(botId, routineId, input, action === "pause")
+          : action === "run"
+            ? host.runRoutine(botId, routineId, input)
+            : action === "delete"
+              ? await host.deleteRoutine(botId, routineId, input)
+              : host.updateRoutine(botId, routineId, input);
+      response.writeHead(action === "run" ? 202 : 200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(result));
+    } catch (error) {
+      response.writeHead(error instanceof ChatRequestError ? error.status : 503, {
+        "Content-Type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error:
+            error instanceof ChatRequestError
+              ? error.message
+              : "Routine unavailable. Retry with the same requestId.",
+        }),
+      );
+    }
+    return;
+  }
   const routineRoute = /^\/api\/bots\/([^/]+)\/(routines|timezone)$/.exec(path);
   if (routineRoute) {
     try {

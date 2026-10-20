@@ -3,7 +3,7 @@ import type { HistoryOperation } from "@mybots/mailbox";
 import { Type } from "typebox";
 
 export const PROGRESS_INSTRUCTIONS =
-  "create_routine schedules independent own-Bot work. Use runAt/timezone for one-shot or five-field cron inheriting Bot timezone; clarify unresolved intent. Report the resolved schedule. Include selected inputs explicitly; chat is not inherited. ask_question persists a required owner question and ends the Attempt after all tool results are recorded. Answers arrive as correlated evidence in a later Attempt of this Run. Ordinary Task input does not answer a question. publish_progress records owner-visible progress for this Attempt. publish_result records a selected result summary and optional immutable snapshots of workspace-relative files (up to 16, each within the installation file limit, 25 MiB by default). Neither completes the Run, changes its outcome, grants privileges, nor administers a Bot. Do not send Bot, Task, Run, or Attempt identity. After a timeout, call read_operation with the same requestId; do not publish that request again.";
+  "create_routine schedules independent own-Bot work. Use runAt/timezone for one-shot or five-field cron inheriting Bot timezone; clarify unresolved intent. Report the resolved schedule. Include selected inputs explicitly; chat is not inherited. manage_routine pauses, resumes, runs, edits or deletes this Bot's Routine. ask_question persists a required owner question and ends the Attempt after all tool results are recorded. Answers arrive as correlated evidence in a later Attempt of this Run. Ordinary Task input does not answer a question. publish_progress records owner-visible progress for this Attempt. publish_result records a selected result summary and optional immutable snapshots of workspace-relative files (up to 16, each within the installation file limit, 25 MiB by default). Neither completes the Run, changes its outcome, grants privileges, nor administers a Bot. Do not send Bot, Task, Run, or Attempt identity. After a timeout, call read_operation with the same requestId; do not publish that request again.";
 
 export function createProgressTools(operation: HistoryOperation) {
   const text = (value: unknown) => ({
@@ -35,6 +35,26 @@ export function createProgressTools(operation: HistoryOperation) {
       ),
       async execute(_id, input, signal) {
         return text(await operation("create_routine", input, signal));
+      },
+    }),
+    defineTool({
+      name: "manage_routine",
+      label: "Manage Routine",
+      description: "Pause, resume, run, edit or delete this Bot's Routine.",
+      parameters: Type.Object(
+        {
+          requestId: Type.String({ minLength: 1, maxLength: 128 }),
+          routineId: Type.String({ minLength: 1, maxLength: 128 }),
+          action: Type.String({ maxLength: 16 }),
+          text: Type.Optional(Type.String({ maxLength: 32000 })),
+          runAt: Type.Optional(Type.String({ maxLength: 40 })),
+          timezone: Type.Optional(Type.String({ maxLength: 64 })),
+          cron: Type.Optional(Type.String({ maxLength: 80 })),
+        },
+        { additionalProperties: false },
+      ),
+      async execute(_id, input, signal) {
+        return text(await operation("manage_routine", input, signal));
       },
     }),
     defineTool({

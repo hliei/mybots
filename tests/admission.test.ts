@@ -648,7 +648,7 @@ it("upgrades a reset-enabled store without losing selected originals or Run boun
   const prior = new DatabaseSync(join(root, "data", "host.db"));
   prior.exec(`
     PRAGMA foreign_keys = OFF;
-    DROP TABLE timezone_updates; DROP TABLE bot_timezones; DROP TABLE routine_occurrences; DROP TABLE routines; DROP TABLE owner_questions; DROP TABLE delivered_artifacts;
+    DROP TABLE timezone_updates; DROP TABLE bot_timezones; DROP TABLE routine_commands; DROP TABLE routine_occurrences; DROP TABLE routines; DROP TABLE owner_questions; DROP TABLE delivered_artifacts;
     DROP TABLE agent_publications;
     DROP TABLE execution_reservations;
     DROP TABLE admission_service;
@@ -675,7 +675,7 @@ it("upgrades a reset-enabled store without losing selected originals or Run boun
   });
   const upgraded = new DatabaseSync(join(root, "data", "host.db"));
   try {
-    expect(upgraded.prepare("PRAGMA user_version").get()?.user_version).toBe(19);
+    expect(upgraded.prepare("PRAGMA user_version").get()?.user_version).toBe(20);
     expect(upgraded.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(
       upgraded.prepare("SELECT selected_message_ids FROM runs WHERE id = ?").get(selected.runId),

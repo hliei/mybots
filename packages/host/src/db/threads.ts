@@ -181,6 +181,11 @@ export class ThreadStore {
           .prepare("INSERT INTO tasks VALUES (?, ?, ?, ?)")
           .run(taskId, thread.id, input.routine ? "routine" : "chat", now);
         if (input.routine) {
+          const saved = this.db
+            .prepare("SELECT deleted_at FROM routines WHERE id = ?")
+            .get(input.routine.id) as { deleted_at: string | null } | undefined;
+          if (!saved) throw new ChatRequestError("Routine not found.", 404);
+          if (saved.deleted_at) throw new ChatRequestError("Routine is deleted.", 409);
           if (routineBusy(this.db, input.routine.id))
             throw new ChatRequestError("Routine already has an unfinished occurrence.", 409);
           const updated = this.db
@@ -233,6 +238,54 @@ export class ThreadStore {
         runId: run.id,
         messageId,
       };
+    });
+  }
+
+  /** Admit one occurrence without consuming or enabling the saved schedule. */
+  runNow(botId: string, routine: Routine, requestId: string, now: string) {
+    const definition = { ...routine, nextOccurrence: now };
+    return this.admit(requestId, { operation: "run-routine", botId, routineId: routine.id }, () => {
+      const saved = this.db
+        .prepare("SELECT deleted_at FROM routines WHERE id = ? AND bot_id = ?")
+        .get(routine.id, botId) as { deleted_at: string | null } | undefined;
+      if (!saved) throw new ChatRequestError("Routine not found.", 404);
+      if (saved.deleted_at) throw new ChatRequestError("Routine is deleted.", 409);
+      if (routineBusy(this.db, routine.id))
+        throw new ChatRequestError("Routine already has an unfinished occurrence.", 409);
+      const thread = this.thread(botId);
+      const taskId = randomUUID();
+      const runId = randomUUID();
+      const messageId = randomUUID();
+      this.db.prepare("INSERT INTO tasks VALUES (?, ?, 'routine', ?)").run(taskId, thread.id, now);
+      this.db
+        .prepare("INSERT INTO routine_occurrences VALUES (?, ?, ?, ?)")
+        .run(taskId, routine.id, JSON.stringify(definition), now);
+      this.db
+        .prepare(`INSERT INTO messaging_groups (id, channel_type, platform_id, instance, created_at)
+ VALUES ('local-client', 'client', 'owner', 'local-client', ?) ON CONFLICT(id) DO NOTHING`)
+        .run(now);
+      this.db
+        .prepare(`INSERT INTO sessions (id, agent_group_id, messaging_group_id, thread_id, purpose, created_at)
+ VALUES (?, ?, 'local-client', ?, 'run', ?)`)
+        .run(runId, botId, thread.id, now);
+      this.db
+        .prepare(`INSERT INTO runs (
+ id, task_id, state, background_boundary, source_message_id, context, outcome, created_at, updated_at
+) VALUES (?, ?, 'queued', ?, ?, NULL, NULL, ?, ?)`)
+        .run(runId, taskId, thread.background_boundary, messageId, now, now);
+      this.enqueue(runId, botId, now);
+      this.db
+        .prepare("UPDATE runs SET selected_message_ids = ? WHERE id = ?")
+        .run(JSON.stringify(routine.selectedMessageIds), runId);
+      this.db
+        .prepare("INSERT INTO run_inputs VALUES (?, ?, ?, ?, NULL, 'local-client', NULL)")
+        .run(messageId, runId, routine.text, now);
+      this.db
+        .prepare(
+          `INSERT INTO thread_messages (id, thread_id, run_id, role, content, created_at) VALUES (?, ?, ?, 'user', ?, ?)`,
+        )
+        .run(messageId, thread.id, runId, routine.text, now);
+      return { botId, threadId: thread.id, taskId, runId, messageId };
     });
   }
   destination(id: string) {
