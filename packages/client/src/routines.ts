@@ -59,6 +59,30 @@ const create = document.getElementById("routine-create") as HTMLButtonElement;
 const botTimezoneForm = document.getElementById("bot-timezone-form") as HTMLFormElement;
 const botTimezone = document.getElementById("bot-timezone") as HTMLInputElement;
 const timezoneNotice = document.getElementById("bot-timezone-notice") as HTMLElement;
+const timezoneRetry = document.getElementById("bot-timezone-retry") as HTMLButtonElement;
+const timezoneSave = botTimezoneForm.querySelector("button") as HTMLButtonElement;
+const timezoneKey = "mybots.pending-timezone";
+let pendingTimezone: { botId: string; requestId: string; timezone: string } | undefined;
+let savingTimezone = false;
+try {
+  const saved: unknown = JSON.parse(localStorage.getItem(timezoneKey) ?? "null");
+  if (
+    record(saved) &&
+    typeof saved.botId === "string" &&
+    typeof saved.requestId === "string" &&
+    typeof saved.timezone === "string"
+  )
+    pendingTimezone = { botId: saved.botId, requestId: saved.requestId, timezone: saved.timezone };
+} catch {
+  /* Ignore unreadable browser state. */
+}
+function timezoneControls() {
+  timezoneSave.disabled = botTimezone.disabled = savingTimezone || !!pendingTimezone;
+  timezoneRetry.hidden = !pendingTimezone;
+  timezoneRetry.disabled = savingTimezone;
+  if (pendingTimezone)
+    timezoneNotice.textContent = `Timezone unconfirmed for Bot ${pendingTimezone.botId}: ${pendingTimezone.timezone}. Retry the saved request.`;
+}
 const pendingKey = "mybots.pending-routine";
 let botId: string | undefined;
 let pending: Creation | undefined;
@@ -91,6 +115,7 @@ export async function showRoutines(selectedBot: string, onChange: () => void): P
   botId = selectedBot;
   refresh = onChange;
   controls();
+  timezoneControls();
   if (changed) {
     list.replaceChildren();
     instructions.value = "";
@@ -212,33 +237,27 @@ schedule.addEventListener("change", () => {
   cron.value = presets[schedule.value] ?? cron.value;
   controls();
 });
-botTimezoneForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (!botId) return;
-  const button = botTimezoneForm.querySelector("button") as HTMLButtonElement;
-  button.disabled = true;
+async function saveTimezone() {
+  if (!botId || savingTimezone) return;
+  savingTimezone = true;
   try {
-    const key = "mybots.pending-timezone";
-    const saved: unknown = JSON.parse(localStorage.getItem(key) ?? "null");
-    const input =
-      record(saved) &&
-      typeof saved.botId === "string" &&
-      typeof saved.requestId === "string" &&
-      typeof saved.timezone === "string"
-        ? saved
-        : { botId, requestId: crypto.randomUUID(), timezone: botTimezone.value };
-    localStorage.setItem(key, JSON.stringify(input));
-    const response = await fetch(
-      `/api/bots/${encodeURIComponent(input.botId as string)}/timezone`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requestId: input.requestId, timezone: input.timezone }),
-      },
-    );
+    if (!pendingTimezone) {
+      pendingTimezone = { botId, requestId: crypto.randomUUID(), timezone: botTimezone.value };
+      localStorage.setItem(timezoneKey, JSON.stringify(pendingTimezone));
+    }
+    const input = pendingTimezone;
+    timezoneControls();
+    const response = await fetch(`/api/bots/${encodeURIComponent(input.botId)}/timezone`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId: input.requestId, timezone: input.timezone }),
+    });
     const result: unknown = await response.json();
     if (!response.ok) {
-      if (response.status < 500) localStorage.removeItem(key);
+      if (response.status < 500) {
+        localStorage.removeItem(timezoneKey);
+        pendingTimezone = undefined;
+      }
       timezoneNotice.textContent =
         record(result) && typeof result.error === "string"
           ? result.error
@@ -251,13 +270,20 @@ botTimezoneForm.addEventListener("submit", async (event) => {
       typeof result.timezone !== "string"
     )
       throw new Error();
-    localStorage.removeItem(key);
+    localStorage.removeItem(timezoneKey);
+    pendingTimezone = undefined;
     timezoneNotice.textContent = `Bot ${input.botId} timezone: ${result.timezone}. Future cron scheduling updated.`;
     refresh();
   } catch {
     timezoneNotice.textContent =
       "Timezone unconfirmed. Retry the saved request, including after reload.";
   } finally {
-    button.disabled = false;
+    savingTimezone = false;
+    timezoneControls();
   }
+}
+botTimezoneForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!pendingTimezone) void saveTimezone();
 });
+timezoneRetry.addEventListener("click", () => void saveTimezone());

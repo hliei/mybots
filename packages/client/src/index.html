@@ -112,6 +112,7 @@
               <button type="submit">Save Bot timezone</button>
             </form>
             <p id="bot-timezone-notice" aria-live="polite"></p>
+            <button id="bot-timezone-retry" type="button" hidden>Retry Bot timezone</button>
             <p>Cron uses this Bot timezone (default Asia/Shanghai). Changes apply immediately to future scheduling. Admitted work and one-shot instants stay fixed. Missed slots create no backlog; one unfinished occurrence blocks the next.</p>
             <p>Work runs while the Host is available, even after you disconnect. Each occurrence gets its own Task and independent Run context. Include any selected prior inputs in the instructions.</p>
             <form id="routine-form">

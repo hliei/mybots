@@ -145,9 +145,45 @@ test("cron choices inherit Bot timezone and show separate occurrences without a 
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
     await page.getByRole("button", { name: "Select Personal", exact: true }).click();
+    const writerResponse = await page.request.post(`${ready.url}/api/bots`, {
+      data: {
+        requestId: "writer",
+        name: "Writer",
+        instructions: "Write reports",
+        model: { provider: "deepseek", id: "deepseek-chat" },
+        tools: [],
+      },
+    });
+    expect(writerResponse.status()).toBe(201);
+    const writer = (await writerResponse.json()).bot;
+    await page.route(
+      "**/api/bots/personal/timezone",
+      async (route) => {
+        await route.fetch();
+        await route.abort();
+      },
+      { times: 1 },
+    );
     await page.getByLabel("Bot timezone", { exact: true }).fill("UTC");
     await page.getByRole("button", { name: "Save Bot timezone", exact: true }).click();
-    await expect(page.locator("#bot-timezone-notice")).toContainText("UTC");
+    await expect(page.locator("#bot-timezone-notice")).toContainText("unconfirmed");
+    await page.reload();
+    await expect(page.locator("#bot-timezone-notice")).toContainText("personal");
+    await page.getByRole("button", { name: "Select Writer", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Save Bot timezone", exact: true }),
+    ).toBeDisabled();
+    await expect(page.locator("#bot-timezone-notice")).toContainText("personal");
+    await page.getByRole("button", { name: "Retry Bot timezone", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Save Bot timezone", exact: true }),
+    ).toBeEnabled();
+    expect(
+      (await (await page.request.get(`${ready.url}/api/bots/${writer.id}/routines`)).json())
+        .timezone,
+    ).toBe("Asia/Shanghai");
+    await page.getByRole("button", { name: "Select Personal", exact: true }).click();
+    await expect(page.getByLabel("Bot timezone", { exact: true })).toHaveValue("UTC");
     await page.getByLabel("Routine instructions", { exact: true }).fill("Hourly archive");
     await page.getByLabel("Routine schedule", { exact: true }).selectOption("hourly");
     await page.getByRole("button", { name: "Create cron Routine", exact: true }).click();
@@ -176,13 +212,13 @@ test("cron choices inherit Bot timezone and show separate occurrences without a 
     await expect(work.nth(1)).toContainText("Outcome: succeeded");
     await expect(routines.getByRole("link", { name: /Inspect occurrence Task/ })).toHaveCount(2);
     await expect(routines).toContainText("2026-10-22T06:00:00.000Z");
-    await page.screenshot({ path: "/tmp/mybots-cron-desktop.png", fullPage: true });
+    await page.screenshot({ path: join(root, "cron-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
     await page.locator("#routines").scrollIntoViewIfNeeded();
-    await page.screenshot({ path: "/tmp/mybots-cron-mobile.png" });
+    await page.screenshot({ path: join(root, "cron-mobile.png") });
     expect(errors).toEqual([]);
   } finally {
     if (child) await stop();
