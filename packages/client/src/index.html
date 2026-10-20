@@ -41,6 +41,37 @@
           </form>
           <p id="settings-message" aria-live="polite"></p>
         </section>
+        <section id="memory" hidden>
+          <h2>Long-term memory</h2>
+          <p>Index and definition load on later Runs, up to 16,000 characters each. Topics stay in files until a Bot reads them. Deleting a file stops that loading. It does not erase conversation history or guarantee forgetting, and a later save can record a fact again. Mutable external facts still need a current check at their source. A save compares the version you read; an intervening edit is shown for rereading. Agent and owner writes can still race, with no automatic merge.</p>
+          <form id="memory-index">
+            <label for="memory-index-text">Memory index</label>
+            <textarea id="memory-index-text" rows="6"></textarea>
+            <p id="memory-index-meta"></p>
+            <button type="submit">Save memory index</button>
+            <button id="memory-index-delete" type="button">Delete memory index</button>
+          </form>
+          <form id="memory-definition">
+            <label for="memory-definition-text">Memory definition</label>
+            <textarea id="memory-definition-text" rows="6"></textarea>
+            <p id="memory-definition-meta"></p>
+            <button type="submit">Save memory definition</button>
+            <button id="memory-definition-delete" type="button">Delete memory definition</button>
+          </form>
+          <form id="memory-topic">
+            <label for="memory-topic-id">Topic</label>
+            <input id="memory-topic-id" maxlength="64" autocomplete="off" spellcheck="false">
+            <label for="memory-topic-text">Topic text</label>
+            <textarea id="memory-topic-text" rows="6"></textarea>
+            <p id="memory-topic-meta"></p>
+            <div id="memory-topics"></div>
+            <button type="submit">Save memory topic</button>
+            <button id="memory-topic-delete" type="button">Delete memory topic</button>
+          </form>
+          <pre id="memory-conflict" hidden></pre>
+          <button id="memory-use-observed" type="button">Load observed memory</button>
+          <p id="memory-message" aria-live="polite"></p>
+        </section>
         <section id="local-skills" hidden>
           <h2>Local Skills</h2>
           <p>Import a local directory on this Host, including proposed files from a Bot workspace. Imported revisions remain inactive until selected and saved. Limits: 256 files, 4 MiB; links are rejected.</p>
