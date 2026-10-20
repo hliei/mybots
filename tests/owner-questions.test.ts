@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { RunnerMailbox } from "@mybots/mailbox/node";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PiProvider } from "../packages/agent-runner/src/providers/pi.ts";
 import { WebSocketChannel } from "../packages/host/src/channels/websocket.ts";
 import { loadHostSettings } from "../packages/host/src/config/host.ts";
@@ -19,6 +19,9 @@ let channel: WebSocketChannel;
 let base: string;
 let headers: Record<string, string>;
 let now = Date.parse("2026-10-20T00:00:00Z");
+beforeEach(() => {
+  now = Date.parse("2026-10-20T00:00:00Z");
+});
 afterEach(async () => {
   await channel?.close();
   await host?.stop();
@@ -513,3 +516,84 @@ it("expires only an explicit deadline across restart, refuses late answers and f
   );
   expect(external.launches).toHaveLength(1);
 });
+
+it("recovers a question confirmed by read_operation after a lost response and wait checkpoint", async () => {
+  const service = await startPiService(async (request) => {
+    const results = request.messages.filter((row) => row.role === "tool");
+    if (!results.length)
+      return {
+        tool: "ask_question",
+        arguments: { requestId: "timeout-city", text: "Which city?" },
+      };
+    if (results.length === 1)
+      return { tool: "read_operation", arguments: { requestId: "timeout-city" } };
+    return { text: "Trip confirmed" };
+  });
+  const pi = new PiProvider({ modelRuntime: service.runtime, model: service.model });
+  // Lose the operation response at the external execution boundary after the real Host persisted it.
+  const driver = piRunDriver({
+    query(input) {
+      return pi.query({
+        ...input,
+        history: async (operation, value, signal) => {
+          const result = await input.history?.(operation, value, signal);
+          if (operation === "ask_question")
+            throw new Error(
+              "Host operation timeout-city is not confirmed. Call read_operation with the same requestId and do not publish again.",
+            );
+          return result;
+        },
+      });
+    },
+  });
+  try {
+    const configuration = await start(driver);
+    const sent = await (
+      await post("/api/bots/personal/thread/messages", {
+        requestId: "timeout-source",
+        text: "Plan a trip",
+      })
+    ).json();
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("waiting"),
+    );
+    expect(service.requests).toHaveLength(2);
+    await channel.close();
+    await host.stop();
+    const db = new DatabaseSync(join(root, "data", "host.db"));
+    try {
+      db.prepare("UPDATE runs SET state = 'queued', wait_reason = NULL WHERE id = ?").run(
+        sent.runId,
+      );
+    } finally {
+      db.close();
+    }
+    host = await Host.start({
+      root,
+      configuration,
+      driver,
+      now: () => now,
+      reconcileMs: 365 * 86400000,
+    });
+    channel = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
+    base = `http://127.0.0.1:${channel.address.port}`;
+    expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("waiting");
+    expect(service.requests).toHaveLength(2);
+    expect(
+      (
+        await post(`/api/bots/personal/runs/${sent.runId}/questions/timeout-city/answer`, {
+          requestId: "timeout-answer",
+          text: "Hangzhou",
+        })
+      ).status,
+    ).toBe(202);
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("succeeded"),
+    );
+    expect(service.requests).toHaveLength(3);
+  } finally {
+    await channel?.close();
+    await host?.stop();
+    await service.close();
+  }
+}, 20000);

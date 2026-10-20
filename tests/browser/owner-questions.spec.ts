@@ -71,8 +71,26 @@ test("answers a persistent question through its own card after reload and Host r
     await start(Number(new URL(ready.url).port));
     await page.reload();
     await page.getByRole("button", { name: "Select Personal" }).click();
+    let dropped = false;
+    await page.route("**/questions/browser-city/answer", async (route) => {
+      if (dropped) {
+        await route.continue();
+        return;
+      }
+      dropped = true;
+      const response = await route.fetch();
+      expect(response.status()).toBe(202);
+      await route.abort("failed");
+    });
     await page.getByLabel("Answer to Which city?").fill("Hangzhou");
     await page.getByRole("button", { name: "Answer question", exact: true }).click();
+    await expect(page.locator("#chat-message")).toContainText("response unconfirmed");
+    await page.reload();
+    await page.getByRole("button", { name: "Select Personal" }).click();
+    await page.getByRole("button", { name: "Retry chat request", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Retry chat request", exact: true }),
+    ).toBeHidden();
     await expect(page.locator("#chat-works")).toContainText("Owner answer: Hangzhou");
     child?.send("complete");
     await expect(page.locator("#chat-works")).toContainText("Execution: succeeded");

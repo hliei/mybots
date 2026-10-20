@@ -1951,7 +1951,7 @@ export class Host {
           records.some(
             (record) =>
               record.kind === "tool-result" &&
-              record.toolName === "ask_question" &&
+              ["ask_question", "read_operation"].includes(record.toolName ?? "") &&
               record.text.includes(`"id":"${question.id}"`),
           ),
       );
