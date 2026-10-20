@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PiProvider } from "../packages/agent-runner/src/providers/pi.ts";
 import { WebSocketChannel } from "../packages/host/src/channels/websocket.ts";
 import { loadHostSettings } from "../packages/host/src/config/host.ts";
-import type { SessionDriver } from "../packages/host/src/drivers/types.ts";
+import type { SessionDriver, SessionHandle } from "../packages/host/src/drivers/types.ts";
 import { Host } from "../packages/host/src/host.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 import { startPiService } from "./pi-fixture.ts";
@@ -1417,4 +1417,105 @@ it("blocks a new retry of previously failed child work while its direction is de
     ).status,
   ).toBe(409);
   expect((await get(`/api/bots/${target}/thread`)).tasks[0].runs).toHaveLength(1);
+});
+
+it("revokes live descendants and decisions through an already uncertain child without resolving its outcome", async () => {
+  const driver = new MailboxDriver();
+  const handles = new Map<string, SessionHandle>();
+  const originalStart = driver.start.bind(driver);
+  driver.start = async (material, signal) => {
+    const handle = await originalStart(material, signal);
+    handles.set(material.key.sessionId, handle);
+    return handle;
+  };
+  driver.respond = async (input, _material, signal) => {
+    if (input.content === "Unrelated") return "Unrelated completed";
+    await untilAbort(signal);
+    return "unused";
+  };
+  await start(driver);
+  const specialist = await bot("Specialist");
+  const reviewer = await bot("Reviewer");
+  await allow("personal", specialist);
+  await allow(specialist, reviewer);
+  const source = await (
+    await post("/api/bots/personal/thread/tasks", {
+      requestId: "uncertain-source",
+      text: "Root",
+    })
+  ).json();
+  const sourceMailbox = await mailbox(driver, source.runId);
+  const middle = (
+    await ask(sourceMailbox, "uncertain-middle", "delegate", {
+      requestId: "uncertain-middle",
+      targetBotId: specialist,
+      text: "Middle",
+    })
+  ).result;
+  await wait(sourceMailbox, "personal", source.runId);
+  const middleId = middle?.childRunId as string;
+  const middleMailbox = await mailbox(driver, middleId);
+  const leaf = (
+    await ask(middleMailbox, "still-live-leaf", "delegate", {
+      requestId: "still-live-leaf",
+      targetBotId: reviewer,
+      text: "Leaf",
+    })
+  ).result;
+  await mailbox(driver, leaf?.childRunId as string);
+  await ask(middleMailbox, "uncertain-question", "ask_question", {
+    requestId: "uncertain-question",
+    text: "What should I do next?",
+  });
+  await post(`/api/bots/${specialist}/collaboration/${reviewer}`, {
+    requestId: "ask-after-child",
+    mode: "ask-each-time",
+  });
+  await ask(middleMailbox, "uncertain-approval", "delegate", {
+    requestId: "uncertain-approval",
+    targetBotId: reviewer,
+    text: "Another review",
+  });
+  // External executor exits after a final acknowledgement but before a durable wait/result.
+  const input = (await host.inspect(middleId)).inputs[0];
+  if (!input) throw new Error("Missing middle input");
+  middleMailbox.acknowledge(input.id, "completed");
+  await handles.get(middleId)?.stop();
+  await vi.waitFor(async () => {
+    await host.reconcile();
+    expect((await run(specialist, middleId)).state).toBe("uncertain");
+  });
+  const before = (await run(specialist, middleId)).outcome;
+  const queued = await (
+    await post(`/api/bots/${reviewer}/thread/tasks`, {
+      requestId: "behind-live-descendant",
+      text: "Unrelated",
+    })
+  ).json();
+  expect(
+    (
+      await post(`/api/bots/personal/collaboration/${specialist}`, {
+        requestId: "revoke-uncertain-middle",
+        mode: "deny",
+      })
+    ).status,
+  ).toBe(201);
+  await vi.waitFor(async () =>
+    expect((await run(reviewer, leaf?.childRunId as string)).state).toBe("closed"),
+  );
+  await vi.waitFor(async () => expect((await run(reviewer, queued.runId)).state).toBe("succeeded"));
+  const after = await run(specialist, middleId);
+  expect(after.state).toBe("uncertain");
+  expect(after.outcome).toEqual(before);
+  expect(after.questions).toContainEqual(
+    expect.objectContaining({ id: "uncertain-question", state: "cancelled" }),
+  );
+  expect(after.delegations).toContainEqual(
+    expect.objectContaining({
+      id: "uncertain-approval",
+      state: "cancelled",
+      approval: expect.objectContaining({ state: "cancelled" }),
+    }),
+  );
+  expect(await run("personal", source.runId)).toMatchObject({ state: "waiting", held: true });
 });

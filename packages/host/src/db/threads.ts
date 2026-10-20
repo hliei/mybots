@@ -383,12 +383,7 @@ export class ThreadStore {
       throw new ChatRequestError("Run is already uncertain. Retry or close it.", 409);
     if (["succeeded", "failed", "closed"].includes(run.state))
       throw new ChatRequestError("Run is already terminal.", 409);
-    this.db
-      .prepare(
-        "UPDATE owner_questions SET state = 'cancelled', resolved_at = ? WHERE run_id = ? AND state IN ('pending', 'expired')",
-      )
-      .run(now, run.id);
-    this.settleApprovals(run.id, "cancelled", "Source Run was cancelled.", now);
+    this.cancelRunDecisions(run.id, now);
     if (run.state !== "stopping")
       this.db
         .prepare(
@@ -403,6 +398,15 @@ export class ThreadStore {
       state: "stopping" as const,
     };
   }
+  private cancelRunDecisions(runId: string, now: string): void {
+    this.db
+      .prepare(
+        "UPDATE owner_questions SET state = 'cancelled', resolved_at = ? WHERE run_id = ? AND state IN ('pending', 'expired')",
+      )
+      .run(now, runId);
+    this.settleApprovals(runId, "cancelled", "Source Run was cancelled.", now);
+  }
+
   markStopUnconfirmed(id: string, error: string, now: string): void {
     this.db
       .prepare("UPDATE runs SET stop_error = ?, updated_at = ? WHERE id = ? AND state = 'stopping'")
@@ -1701,8 +1705,7 @@ export class ThreadStore {
             this.db
               .prepare("UPDATE delegations SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?")
               .run(now, row.id);
-            this.markOwnedStopping(child.id, now);
-            if (child.state !== "uncertain") stoppingRunIds.push(child.id);
+            stoppingRunIds.push(...this.markOwnedStopping(child.id, now));
           }
         }
         return { sourceBotId, targetBotId, mode, stoppingRunIds };
@@ -1711,11 +1714,15 @@ export class ThreadStore {
   }
 
   /** Persist the whole cancellation scope before any executor can observe the policy change. */
-  private markOwnedStopping(runId: string, now: string): void {
+  private markOwnedStopping(runId: string, now: string): string[] {
     const run = this.run(runId);
-    if (["succeeded", "failed", "closed", "uncertain"].includes(run.state)) return;
-    this.markStopping(run, now);
-    for (const childRunId of this.childRunIds(runId)) this.markOwnedStopping(childRunId, now);
+    if (["succeeded", "failed", "closed"].includes(run.state)) return [];
+    if (run.state === "uncertain") this.cancelRunDecisions(runId, now);
+    else this.markStopping(run, now);
+    return [
+      ...(run.state === "uncertain" ? [] : [runId]),
+      ...this.childRunIds(runId).flatMap((childId) => this.markOwnedStopping(childId, now)),
+    ];
   }
 
   delegation(id: string) {
