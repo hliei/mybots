@@ -411,18 +411,29 @@ same-Run continuation through an owner answer. These checks use controlled
 upstreams and do not establish actual-service acceptance.
 
 
-## Single-hop delegation
+## Bounded nested delegation
 
 `tests/delegations.test.ts` uses authenticated HTTP, real SQLite and mailboxes,
 and a controlled clock. It covers default deny, rejected self-grants and
 ask-each-time mode, one allowed child Task/Run, selected text without the source
-workspace, reverse denial, rejected nesting, parent wait and budget release,
+workspace, reverse denial, rejected ancestor requests, parent wait and budget release,
 targeted child steering, ordinary chat isolation, child failure, uncertain child
 hold, confirmed cancellation with a late result, and restart of the same parent
 Run. A real Pi case delegates through the production tool, steers the child at a
 model boundary, and resumes the parent ledger with the child result, saved
 instructions and current Memory. `tests/browser/delegations.spec.ts` saves an
 allow grant and shows the parent and child links after reload and a fresh Host.
+`tests/nested-delegations.test.ts` extends that boundary to two levels, directed
+checks at each edge, ancestor/depth rejection, eight total admitted children
+including descendants across restart/steering/Attempts, independent child
+budgets and linked retries preserving earlier outcomes. It verifies failed and
+uncertain leaves, necessary questions, ancestor holds, stop confirmation through
+both levels, immediate descendant-admission fencing and late evidence without
+revival. Its real Pi SDK case records both delegation tool results, reopens both
+parent ledgers without repeating the tools, and executes only in the reviewer's
+workspace. The built-client journey follows both levels across restart and
+stops all owned work from the root, and closes an uncertain reviewer through
+the client before its waiting ancestors resume.
 The opt-in container suite does not add a delegation case; text handoff does not
 depend on a source mount. Actual-service acceptance remains separate.
 

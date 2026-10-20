@@ -369,7 +369,7 @@ it("delegates one allowed child and continues the same parent Run", async () => 
         text: "Ask the source for more",
       })
     ).error,
-  ).toBe("Nested delegation is not available.");
+  ).toBe("A Bot cannot delegate to an ancestor Bot.");
   releaseChild.resolve();
   await vi.waitFor(async () =>
     expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("succeeded"),

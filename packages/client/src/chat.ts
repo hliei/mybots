@@ -456,7 +456,11 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
             );
           if (run.held)
             article.append(
-              paragraph("Outcome uncertainty holds this work and any later Routine occurrence."),
+              paragraph(
+                run.state === "waiting"
+                  ? "Owned child outcome is uncertain. Inspect the child Task to retry or close its Run."
+                  : "Outcome uncertainty holds this work and any later Routine occurrence.",
+              ),
             );
           for (const late of run.lateEvidence ?? [])
             article.append(paragraph(`Late result: ${late.text}`));
