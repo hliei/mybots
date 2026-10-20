@@ -11,6 +11,7 @@ import { provisionSession } from "../../packages/host/src/container-runner.ts";
 import { DockerDriver } from "../../packages/host/src/drivers/docker-driver.ts";
 import type { SessionHandle } from "../../packages/host/src/drivers/types.ts";
 import { OneCliGateway } from "../../packages/host/src/gateway-providers/onecli.ts";
+import { Host } from "../../packages/host/src/host.ts";
 
 const execute = promisify(execFile);
 
@@ -404,8 +405,102 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
     );
     await handle.stop();
     handle = undefined;
+    const boundedRoot = join(root, "bounded-host");
+    const boundedDriver = new DockerDriver({
+      gateway: new OneCliGateway({
+        url: gatewayUrl,
+        proxyHost: "proxy",
+        containerName: await docker([...compose, "ps", "-q", "gateway"]),
+        trustDirectory: join(boundedRoot, "data", "gateway-trust"),
+      }),
+      image: "mybots-agent:mailbox",
+      network: `${project}_session`,
+    });
+    let now = Date.now();
+    let startError: unknown;
+    const boundedHost = await Host.start({
+      root: boundedRoot,
+      driver: {
+        start: async (material, signal) => {
+          try {
+            return await boundedDriver.start(material, signal);
+          } catch (error) {
+            startError = error;
+            throw error;
+          }
+        },
+      },
+      now: () => now,
+      configuration: {
+        owners: ["cli:local"],
+        agent: {
+          id: "bounded",
+          name: "Bounded",
+          folder: "bounded",
+          model: {
+            provider: "controlled",
+            id: "controlled-model",
+            baseUrl: "https://model.test:8443/v1",
+            contextWindow: 32768,
+            maxTokens: 4096,
+          },
+        },
+        destinations: [
+          { id: "terminal", channelType: "cli", platformId: "local", instance: "local" },
+        ],
+      },
+    });
+    try {
+      const held = await boundedHost.accept({
+        destinationId: "terminal",
+        userId: "cli:local",
+        text: "Hold execution budget",
+      });
+      while (!signal.aborted) {
+        if ((await boundedHost.inspect(held.sessionId)).session.container_status === "failed") {
+          throw new Error(
+            `Budget fixture could not start: ${startError instanceof Error ? startError.message : "Host context setup failed"}`,
+          );
+        }
+        const upstream = await (await fetch(upstreamUrl, { signal })).json();
+        if (JSON.stringify(upstream.requests).includes("Hold execution budget")) break;
+        await setTimeout(100, undefined, { signal });
+      }
+      const running = await boundedDriver.list(signal);
+      expect(running.some((row) => row.key.sessionId === held.sessionId)).toBe(true);
+      now += 60 * 60 * 1000;
+      await boundedHost.reconcile();
+      while (!signal.aborted) {
+        const detail = await boundedHost.threadDetail("bounded");
+        if (detail.tasks[0]?.runs[0]?.state === "closed") break;
+        await setTimeout(100, undefined, { signal });
+      }
+      expect(
+        (await boundedHost.threadDetail("bounded")).tasks[0]?.runs[0]?.budget.exhaustedAt,
+      ).not.toBeNull();
+      expect(
+        (await boundedDriver.list(signal)).some((row) => row.key.sessionId === held.sessionId),
+      ).toBe(false);
+      await boundedHost.accept({
+        destinationId: "terminal",
+        userId: "cli:local",
+        text: "Save a shared note and check the mount isolation",
+      });
+      while (!signal.aborted) {
+        const detail = await boundedHost.threadDetail("bounded");
+        if (detail.tasks[1]?.runs[0]?.state === "succeeded" && detail.admission.activeCount === 0)
+          break;
+        await setTimeout(100, undefined, { signal });
+      }
+      expect(await readFile(join(boundedRoot, "groups", "bounded", "note.txt"), "utf8")).toContain(
+        "Shared Agent note",
+      );
+      expect(await boundedDriver.list(signal)).toEqual([]);
+    } finally {
+      await boundedHost.stop();
+    }
     process.stdout.write(
-      "Infrastructure passed: mounted freshness, tool isolation, gateway injection, streaming reply, explicit Pi reopening, runtime observation/adoption and observed container termination.\n",
+      "Infrastructure passed: mounted freshness, tool isolation, gateway injection, streaming reply, explicit Pi reopening, runtime observation/adoption observed container termination, Host budget exhaustion and immediate idle reclamation.\n",
     );
   } finally {
     try {

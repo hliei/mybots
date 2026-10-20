@@ -37,6 +37,11 @@ createServer({ key: readFileSync("/tls/key.pem"), cert: readFileSync("/tls/cert.
   requests.push(body);
   if (!validAuth) { response.writeHead(401); response.end(); return; }
   const latest = body.messages.findLast((message) => message.role === "user");
+  if (JSON.stringify(latest?.content).includes("Hold execution budget")) {
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.write(": controlled request held until container termination\n\n");
+    return;
+  }
   const latestIndex = body.messages.findLastIndex((message) => message.role === "user");
   const tools = body.messages.slice(latestIndex + 1).filter((message) => message.role === "tool");
   const reopened = JSON.stringify(latest?.content).includes("Continue");
