@@ -195,6 +195,16 @@ admitted before the save finish under that Attempt's version. Input admitted
 after the save stays on the same Run and runs on the next Attempt, which
 replaces immutable context with the saved version and reopens that Run ledger.
 
+The runner reads `memory/index.md` and `memory/definition.md` from the Bot workspace
+when a turn starts. Each file contributes at most 16,000 characters, with an
+explicit truncation note and the workspace path for the rest. Topic files under
+`memory/topics/` are named in that prompt and read with ordinary file tools;
+their bodies are not copied into the prompt. A later turn supplies the current
+files or states that they changed or were deleted. That supply is projected onto
+the model request and does not rewrite the Run ledger or an invocation that has
+already started. Owner edits use the authenticated memory API. There is no
+workspace lock or semantic merge.
+
 Pi owns Run-local automatic compaction, summaries and reopening. The Host selects
 bounded original Thread references for each new Run. `/reset` and the Thread
 reset operation capture a new chat background boundary for later conversational

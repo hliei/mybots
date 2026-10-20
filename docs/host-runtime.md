@@ -628,6 +628,33 @@ context and compaction remain SDK-owned. Conversation messages are not copied
 into shared files. Persist working materials
 explicitly when they should be accessible from another session.
 
+## Long-term memory
+
+Each Bot's workspace holds readable Markdown at `memory/index.md`,
+`memory/definition.md`, and `memory/topics/<id>.md`. The Bot maintains those
+files with its ordinary read, write, and edit tools. No separate approval is
+required. Another Bot's workspace is not mounted, so its memory is not supplied.
+
+Execution loads at most 16,000 characters from the index and 16,000 from the
+definition, states the omitted count, and names topic files without copying
+their text. The next turn reads the files again. If they differ from the memory
+last supplied to that Run, the prompt says the current text supersedes older
+recollections. Deleting a file stops that load. The Run ledger and earlier
+transcript stay. This does not guarantee forgetting, and a later save can record
+a fact again.
+
+`GET /api/bots/:botId/memory` returns the files. `PUT` and `DELETE` on
+`/memory/index`, `/memory/definition`, and `/memory/topics/:id` send
+`{ "content": "...", "version": "<sha256>" }`. `version` is the hash from the
+read, or `null` when creating a missing file. A mismatch returns 409 with the
+observed file so the client can reread it. The UI shows that observed text and
+does not overwrite the draft until the owner loads it. These checks do not lock
+the workspace; an Agent write can still land between the read and the save.
+Delayed reads and status refreshes also preserve unsaved editor drafts.
+
+The browser section **Long-term memory** edits and deletes the same files. Its
+wording states that deletion is not history erasure or guaranteed forgetting.
+
 ## Run execution budgets and idle resources
 
 Each Run has a sixty-minute cumulative active-execution budget. The Host starts

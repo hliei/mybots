@@ -10,6 +10,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { resolveWebTools, validateAgentResources } from "@mybots/mailbox";
+import { currentMemoryPrompt } from "../memory.ts";
 import { createHistoryTools, HISTORY_INSTRUCTIONS } from "../tools/history.ts";
 import { createWebTools } from "../tools/web.ts";
 import type { AgentProvider, AgentQuery, ProviderEvent, QueryInput } from "./types.ts";
@@ -103,6 +104,13 @@ export class PiProvider implements AgentProvider {
           agentDir,
           settingsManager,
           noExtensions: true,
+          extensionFactories: [
+            (pi) => {
+              pi.on("before_agent_start", async (event) => ({
+                systemPrompt: `${event.systemPrompt}\n\n${await currentMemoryPrompt(cwd, sessionDir)}`,
+              }));
+            },
+          ],
           noSkills: true,
           additionalSkillPaths: skillPaths,
           agentsFilesOverride: () => ({ agentsFiles }),

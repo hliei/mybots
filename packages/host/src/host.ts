@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout } from "node:timers/promises";
 import type {
@@ -25,6 +25,7 @@ import type {
   SessionObservation,
 } from "./drivers/types.ts";
 import { observesSessions } from "./drivers/types.ts";
+import { BotMemory, parseMemoryDelete, parseMemorySave } from "./memory.ts";
 import {
   decideStallAction,
   type RecoveryOutcome,
@@ -929,6 +930,53 @@ export class Host {
     if (!this.managedBots().some((bot) => bot.id === botId))
       throw new BotRequestError("Bot not found.", 404);
     return new LocalSkills(this.root).list(botId);
+  }
+
+  private async memoryWorkspace(botId: string): Promise<string> {
+    const bot = this.managedBots().find((item) => item.id === botId);
+    if (!bot) throw new BotRequestError("Bot not found.", 404);
+    if (!/^groups\/[^/]+$/.test(bot.workspace))
+      throw new BotRequestError("Bot workspace is unavailable.", 503);
+    const groups = join(this.root, "groups");
+    await mkdir(groups, { recursive: true });
+    if ((await lstat(groups)).isSymbolicLink())
+      throw new BotRequestError("Bot workspaces must use real directories.", 503);
+    const workspace = join(this.root, bot.workspace);
+    await mkdir(workspace, { recursive: true });
+    const realGroups = await realpath(groups);
+    const realWorkspace = await realpath(workspace);
+    if (realWorkspace !== workspace || !realWorkspace.startsWith(`${realGroups}${sep}`))
+      throw new BotRequestError("Bot workspace is unavailable.", 503);
+    return realWorkspace;
+  }
+
+  async readMemory(botId: string) {
+    return new BotMemory(await this.memoryWorkspace(botId)).read();
+  }
+
+  async saveMemory(
+    botId: string,
+    kind: "index" | "definition" | "topic",
+    value: unknown,
+    topicId?: string,
+  ) {
+    const input = parseMemorySave(value);
+    return new BotMemory(await this.memoryWorkspace(botId)).save(
+      kind,
+      input.content,
+      input.version,
+      topicId,
+    );
+  }
+
+  async deleteMemory(
+    botId: string,
+    kind: "index" | "definition" | "topic",
+    value: unknown,
+    topicId?: string,
+  ) {
+    const input = parseMemoryDelete(value);
+    return new BotMemory(await this.memoryWorkspace(botId)).delete(kind, input.version, topicId);
   }
 
   importSkill(botId: string, value: unknown) {
