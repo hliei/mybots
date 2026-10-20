@@ -353,31 +353,64 @@ it("resolves natural-language creation through real Pi and steers the active ind
 }, 20000);
 
 it("retains failure and cancellation without replaying an occurrence", async () => {
-  const driver = new MailboxDriver();
-  driver.respond = async () => ({ error: "Archive unavailable" });
-  await start(driver);
-  await post("routines", { ...definition, runAt: "2026-10-20T00:00:00Z" });
-  await vi.waitFor(async () => expect((await get("thread")).tasks[0].runs[0].state).toBe("failed"));
-  expect((await get("routines")).routines).toHaveLength(1);
-  driver.respond = async (_input, _material, signal) => {
-    await new Promise<void>((resolve) =>
-      signal.addEventListener("abort", () => resolve(), { once: true }),
-    );
+  const external = new MailboxDriver();
+  const entered = Promise.withResolvers<void>();
+  const registerListener = Promise.withResolvers<void>();
+  let cancelledRunId: string | undefined;
+  external.respond = async (input, _material, signal) => {
+    if (input.content !== "Cancel archive work") return { error: "Archive unavailable" };
+    entered.resolve();
+    await registerListener.promise;
+    await new Promise<void>((resolve) => {
+      if (signal.aborted) resolve();
+      else signal.addEventListener("abort", () => resolve(), { once: true });
+    });
     return "Late reply";
   };
-  await post("routines", { ...definition, requestId: "cancelled", runAt: "2026-10-20T00:00:00Z" });
-  await vi.waitFor(() => expect(driver.launches).toHaveLength(2));
-  const cancelled = (await get("thread")).tasks[1].runs[0];
-  await post(`runs/${cancelled.id}/stop`, { requestId: "cancel-occurrence" });
-  await vi.waitFor(async () => expect((await get("thread")).tasks[1].runs[0].state).toBe("closed"));
-  await channel.close();
-  await host.stop();
-  const restarted = new MailboxDriver();
-  await listen(restarted);
-  await host.reconcile();
-  expect((await get("thread")).tasks).toHaveLength(2);
-  expect((await get("routines")).routines).toHaveLength(2);
-  expect(restarted.launches).toHaveLength(0);
+  const driver: SessionDriver = {
+    start: async (material, signal) => {
+      const handle = await external.start(material, signal);
+      return {
+        ...handle,
+        stop: async () => {
+          const stopped = handle.stop();
+          // Deliver cancellation before the controlled executor registers its listener.
+          if (material.key.sessionId === cancelledRunId) registerListener.resolve();
+          await stopped;
+        },
+      };
+    },
+  };
+  try {
+    await start(driver);
+    await post("routines", { ...definition, runAt: "2026-10-20T00:00:00Z" });
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[0].runs[0].state).toBe("failed"),
+    );
+    expect((await get("routines")).routines).toHaveLength(1);
+    await post("routines", {
+      ...definition,
+      requestId: "cancelled",
+      text: "Cancel archive work",
+      runAt: "2026-10-20T00:00:00Z",
+    });
+    await entered.promise;
+    cancelledRunId = (await get("thread")).tasks[1].runs[0].id;
+    await post(`runs/${cancelledRunId}/stop`, { requestId: "cancel-occurrence" });
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[1].runs[0].state).toBe("closed"),
+    );
+    await channel.close();
+    await host.stop();
+    const restarted = new MailboxDriver();
+    await listen(restarted);
+    await host.reconcile();
+    expect((await get("thread")).tasks).toHaveLength(2);
+    expect((await get("routines")).routines).toHaveLength(2);
+    expect(restarted.launches).toHaveLength(0);
+  } finally {
+    registerListener.resolve();
+  }
 });
 
 it("holds an acknowledged uncertain occurrence across restart and permits unrelated chat after confirmed stop", async () => {
