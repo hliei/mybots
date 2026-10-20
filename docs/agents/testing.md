@@ -472,3 +472,13 @@ The built-client journey saves a Bot timezone, selects a common cron choice,
 restarts across missed slots twice and inspects distinct occurrence links.
 The opt-in container case creates cron through production Pi and observes an
 independent successful occurrence, future re-arming and actual container removal.
+
+Immediate revocation coverage in `tests/nested-delegations.test.ts` combines a
+pending exact approval with two active delegation levels. It verifies descendant
+and decision cancellation, allow-to-ask behavior, preserved delivered bytes and
+independent direction/work, failed stop capacity, persisted cancellation through
+Host restart, uncertainty, late evidence, replay and forbidden revoked-child
+retries. A real Pi SDK case receives the correlated revocation in the same source
+Run without repeating its delegation tool. The nested browser journey changes
+the directed permission, observes stale approval and stopping cards, then reads
+cancelled or uncertain work and late evidence after a fresh Host starts.

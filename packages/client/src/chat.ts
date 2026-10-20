@@ -53,6 +53,7 @@ interface Delegation {
   originatingRunId: string;
   childTaskId: string | null;
   childRunId: string | null;
+  revokedAt: string | null;
   approval: Approval | null;
   text: string;
   state: string;
@@ -234,6 +235,7 @@ function isDetail(value: unknown): value is Detail {
                 ].every((item) => typeof item === "string") &&
                 (row.childTaskId === null || typeof row.childTaskId === "string") &&
                 (row.childRunId === null || typeof row.childRunId === "string") &&
+                (row.revokedAt === null || typeof row.revokedAt === "string") &&
                 (row.approval === null || validApproval(row.approval)) &&
                 (row.result === null || typeof row.result === "string"),
             ) &&
@@ -581,6 +583,12 @@ function delegationCard(run: Run, delegation: Delegation): HTMLElement {
   if (delegation.childTaskId && delegation.childRunId)
     section.append(
       paragraph(`Child Task ${delegation.childTaskId} · Child Run ${delegation.childRunId}`),
+    );
+  if (delegation.revokedAt)
+    section.append(
+      paragraph(
+        `Collaboration revoked at ${delegation.revokedAt}. Cancellation requires confirmed termination; unresolved outcomes remain uncertain.`,
+      ),
     );
   if (delegation.result) section.append(paragraph(`Delegation result: ${delegation.result}`));
   if (delegation.approval) section.append(approvalCard(delegation, delegation.approval, run));

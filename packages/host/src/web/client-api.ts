@@ -208,7 +208,7 @@ export async function serveClient(
         if (error instanceof ChatRequestError) throw error;
         throw new ChatRequestError("Collaboration requires valid JSON.");
       }
-      const result = host.updateCollaboration(
+      const result = await host.updateCollaboration(
         decodeURIComponent(collaborationRoute[1] as string),
         decodeURIComponent(collaborationRoute[2] as string),
         input,

@@ -1,7 +1,7 @@
 # Tracked asynchronous Bot delegation
 
 Status: accepted
-Implementation: partial. Deny/ask-each-time/allow delegation, exact local approvals, two-edge nesting, originating-Run chain limits, parent waits, same-Run continuation, and descendant cancellation are implemented. Cancelling in-flight work when a direction changes to deny remains later work.
+Implementation: partial. Deny/ask-each-time/allow delegation, exact local approvals, two-edge nesting, originating-Run chain limits, parent waits, same-Run continuation, and descendant cancellation are implemented. Immediate directed revocation cancels admitted unfinished child work and owned descendants with confirmed-stop and uncertainty handling.
 
 Bot collaboration is durable parent-owned delegation. Each request creates a
 target-Bot child Task and Run with selected inputs, source/target/parent and

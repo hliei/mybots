@@ -624,8 +624,17 @@ approved but unexecuted request without creating a child, leaving its Run needin
 attention. Stopping the Run cancels its unresolved approvals and fences late
 decisions. Changing the direction to deny permanently invalidates pending and
 approved but unexecuted requests; restoring permission requires a new request and
-decision. Cancelling children that were already admitted when permission changes
-remains a separate lifecycle behavior. Owner denial returns correlated source
+decision. The same transaction records revocation on unfinished admitted delegations
+and marks their owned child Runs and descendants stopping. The Host requests
+executor termination immediately, without waiting for runner configuration cutover.
+The client retains the revoked direction and shows stopping until termination is
+confirmed. Failed termination retains the target Bot's serial capacity; a repeated
+permission request or Host restart continues the persisted stop. A confirmed stop
+releases unrelated Tasks even when affected outcomes remain uncertain. Correlated
+source results identify revocation and retain uncertainty for owner handling.
+Restoring permission cannot retry revoked child work; a new delegation is required.
+Already completed effects, delivered artifacts and other directions remain intact.
+Late child evidence remains inspectable and cannot revive cancelled Runs. Owner denial returns correlated source
 evidence and suppresses identical automatic requests within that source Run.
 
 This approval governs the controlled Host delegation action. It does not intercept
