@@ -1022,6 +1022,8 @@ export class Host {
     const record = this.store.threads.attachment(botId, taskId, attachmentId);
     const directory = await ensureTaskAttachmentDirectory(this.root, botId, taskId);
     const bytes = await readTaskAttachment(directory, record.filename);
+    if (bytes.length > this.maxFileBytes())
+      throw new ChatRequestError(fileLimitMessage(this.maxFileBytes()), 413);
     return { filename: record.filename, bytes };
   }
 
@@ -1035,6 +1037,8 @@ export class Host {
     const parts = workspaceRelativePath(path);
     const directory = await ensureTaskAttachmentDirectory(this.root, botId, taskId);
     const bytes = await readTaskAttachment(directory, record.filename);
+    if (bytes.length > this.maxFileBytes())
+      throw new ChatRequestError(fileLimitMessage(this.maxFileBytes()), 413);
     const folder = this.store.managedBots().find((bot) => bot.id === botId)?.workspace;
     if (!folder) throw new ChatRequestError("Bot not found.", 404);
     await saveInsideWorkspace(join(this.root, folder), parts, bytes);

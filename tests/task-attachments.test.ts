@@ -291,3 +291,46 @@ it("uses an installation file limit below the 25 MiB default", async () => {
   expect(rejected.status).toBe(413);
   expect((await rejected.json()).error).toContain("8");
 });
+
+it("stops transferring an attachment after the installation limit falls below its size", async () => {
+  const configuration = await start({ maxBytes: 8 });
+  const botId = await createBot("Researcher");
+  const taskId = await newTask(botId, "shrink-limit");
+  const uploaded = await fetch(`${base}/api/bots/${botId}/tasks/${taskId}/attachments`, {
+    method: "POST",
+    headers: { ...headers, "X-Filename": "ok.bin" },
+    body: Buffer.alloc(8, 3),
+  });
+  expect(uploaded.status).toBe(201);
+  const created = await uploaded.json();
+  await channel.close();
+  await host.stop();
+  host = await Host.start({
+    root,
+    configuration: { ...configuration, files: { maxBytes: 4 } },
+    driver: new MailboxDriver(),
+  });
+  channel = await WebSocketChannel.listen({
+    root,
+    host,
+    configuration: { ...configuration, files: { maxBytes: 4 } },
+    port: 0,
+  });
+  base = `http://127.0.0.1:${channel.address.port}`;
+  headers = {
+    Authorization: `Bearer ${(await readFile(join(root, "data", "client-credential"), "utf8")).trim()}`,
+  };
+  const downloaded = await fetch(
+    `${base}/api/bots/${botId}/tasks/${taskId}/attachments/${created.id}`,
+    { headers },
+  );
+  expect(downloaded.status).toBe(413);
+  expect(await downloaded.json()).toEqual({
+    error: "File exceeds the installation file limit of 4 bytes.",
+  });
+  const saved = await postJson(
+    `/api/bots/${botId}/tasks/${taskId}/attachments/${created.id}/workspace`,
+    { path: "shared/ok.bin" },
+  );
+  expect(saved.status).toBe(413);
+});
