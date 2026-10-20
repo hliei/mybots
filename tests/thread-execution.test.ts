@@ -815,13 +815,15 @@ it("releases capacity after confirmed stop, holds the uncertain Run, and retries
         .status,
     ).toBe(409);
     releaseRetry.resolve();
-    await vi.waitFor(async () =>
-      expect((await get(path)).tasks[0].runs[1]).toMatchObject({
-        id: retried.runId,
-        priorRunId: admitted.runId,
-        state: "succeeded",
-        outcome: { kind: "succeeded", reply: "Final: Gap" },
-      }),
+    await vi.waitFor(
+      async () =>
+        expect((await get(path)).tasks[0].runs[1]).toMatchObject({
+          id: retried.runId,
+          priorRunId: admitted.runId,
+          state: "succeeded",
+          outcome: { kind: "succeeded", reply: "Final: Gap" },
+        }),
+      { timeout: 5000 },
     );
     expect((await get(path)).tasks[0].runs[0]).toMatchObject({
       id: admitted.runId,
