@@ -1369,3 +1369,52 @@ it("returns revocation through the real SDK on the same source Run without repla
     await service.close();
   }
 }, 15000);
+
+it("blocks a new retry of previously failed child work while its direction is denied", async () => {
+  const driver = new MailboxDriver();
+  driver.respond = async (input, _material, signal) => {
+    if (input.content === "Failed child") return { error: "Child failed before revocation" };
+    await untilAbort(signal);
+    return "unused";
+  };
+  await start(driver);
+  const target = await bot("Specialist");
+  await allow("personal", target);
+  const source = await (
+    await post("/api/bots/personal/thread/tasks", {
+      requestId: "retry-policy-source",
+      text: "Hold source",
+    })
+  ).json();
+  const sourceMailbox = await mailbox(driver, source.runId);
+  const child = (
+    await ask(sourceMailbox, "failed-before-revoke", "delegate", {
+      requestId: "failed-before-revoke",
+      targetBotId: target,
+      text: "Failed child",
+    })
+  ).result;
+  await vi.waitFor(async () =>
+    expect((await run(target, child?.childRunId as string)).state).toBe("failed"),
+  );
+  expect(
+    (
+      await post(`/api/bots/personal/collaboration/${target}`, {
+        requestId: "deny-retry-direction",
+        mode: "deny",
+      })
+    ).status,
+  ).toBe(201);
+  expect((await run(target, child?.childRunId as string)).outcome).toMatchObject({
+    kind: "failed",
+    reply: "Child failed before revocation",
+  });
+  expect(
+    (
+      await post(`/api/bots/${target}/runs/${child?.childRunId}/retry`, {
+        requestId: "retry-after-revocation",
+      })
+    ).status,
+  ).toBe(409);
+  expect((await get(`/api/bots/${target}/thread`)).tasks[0].runs).toHaveLength(1);
+});

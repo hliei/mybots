@@ -238,9 +238,7 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
           "Collaboration revoked",
         );
         await page.getByRole("button", { name: "Select Writer" }).click();
-        await expect(page.locator("#chat-works")).toContainText(
-          "Owned child stop is unconfirmed.",
-        );
+        await expect(page.locator("#chat-works")).toContainText("Owned child stop is unconfirmed.");
         await page.getByRole("button", { name: "Select Reviewer" }).click();
         await expect(page.locator("#chat-works")).toContainText("Execution stop unconfirmed");
         await expect(page.locator("#chat-works")).toContainText("Execution: queued");

@@ -488,6 +488,11 @@ export class ThreadStore {
             "Collaboration was revoked. Submit a new delegation request.",
             409,
           );
+        if (this.collaborationMode(ownership.sourceBotId, ownership.targetBotId) === "deny")
+          throw new ChatRequestError(
+            "Current collaboration permission denies this child retry.",
+            409,
+          );
         const parent = this.run(ownership.parentRunId);
         if (!["active", "queued", "waiting"].includes(parent.state))
           throw new ChatRequestError("The owning parent no longer accepts child retries.", 409);
