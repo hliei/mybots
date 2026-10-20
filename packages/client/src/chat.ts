@@ -26,6 +26,13 @@ interface SelectedResult extends Publication {
   delegationId: string | null;
   artifacts: { id: string; name: string; bytes: number }[];
 }
+interface Question {
+  id: string;
+  text: string;
+  state: "pending" | "answered" | "expired" | "cancelled";
+  answer: string | null;
+  deadline: string | null;
+}
 interface Run {
   id: string;
   state: string;
@@ -38,6 +45,7 @@ interface Run {
   backgroundBoundary: number;
   references: { id: string; role: string; text: string }[];
   outcome: Outcome | null;
+  questions: Question[];
   progress: Publication[];
   selectedResults: SelectedResult[];
   lateEvidence?: { text: string }[];
@@ -69,8 +77,9 @@ interface Detail {
 interface Pending {
   botId: string;
   requestId: string;
-  operation: "message" | "new-task" | "task" | "stop" | "retry" | "close" | "reset";
+  operation: "message" | "new-task" | "task" | "stop" | "retry" | "close" | "reset" | "answer";
   text: string;
+  questionId?: string;
   taskId?: string;
   runId?: string;
   selectedMessageIds?: string[];
@@ -141,6 +150,16 @@ function isDetail(value: unknown): value is Detail {
                 ),
             ) &&
             outcome(run.outcome) &&
+            Array.isArray(run.questions) &&
+            run.questions.every(
+              (q: unknown) =>
+                record(q) &&
+                typeof q.id === "string" &&
+                typeof q.text === "string" &&
+                ["pending", "answered", "expired", "cancelled"].includes(q.state as string) &&
+                (q.answer === null || typeof q.answer === "string") &&
+                (q.deadline === null || typeof q.deadline === "string"),
+            ) &&
             Array.isArray(run.progress) &&
             run.progress.every(publication) &&
             Array.isArray(run.selectedResults) &&
@@ -184,12 +203,14 @@ function isPending(value: unknown): value is Pending {
   return (
     record(value) &&
     [value.botId, value.requestId, value.text].every((item) => typeof item === "string") &&
-    ["message", "new-task", "task", "stop", "retry", "close", "reset"].includes(
+    ["message", "new-task", "task", "stop", "retry", "close", "reset", "answer"].includes(
       value.operation as string,
     ) &&
     (value.selectedMessageIds === undefined ||
       (Array.isArray(value.selectedMessageIds) &&
         value.selectedMessageIds.every((id: unknown) => typeof id === "string"))) &&
+    (value.operation !== "answer" ||
+      (typeof value.questionId === "string" && typeof value.runId === "string")) &&
     (value.operation !== "task" || typeof value.taskId === "string") &&
     (!["stop", "retry", "close"].includes(value.operation as string) ||
       typeof value.runId === "string")
@@ -219,6 +240,7 @@ let version = 0;
 let refreshTimer = 0;
 let sending = false;
 let pending: Pending | undefined;
+const answerDrafts = new Map<string, string>();
 try {
   const saved: unknown = JSON.parse(localStorage.getItem(pendingKey) ?? "null");
   if (isPending(saved)) pending = saved;
@@ -272,7 +294,7 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
       }),
     );
     for (const task of detail.tasks)
-      if (task.runs.some((run) => ["queued", "active"].includes(run.state)))
+      if (task.runs.some((run) => ["queued", "active", "waiting"].includes(run.state)))
         target.append(
           Object.assign(document.createElement("option"), {
             value: task.id,
@@ -293,6 +315,15 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
       detail.tasks.map((task) => task.id),
     );
     if (current !== version) return;
+    if (
+      document.activeElement instanceof HTMLTextAreaElement &&
+      works.contains(document.activeElement)
+    ) {
+      refreshTimer = window.setTimeout(() => {
+        if (current === version && botId) void showChat(botId);
+      }, 200);
+      return;
+    }
     works.replaceChildren(
       ...detail.tasks.map((task) => {
         const article = document.createElement("article");
@@ -342,6 +373,8 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
             }),
             paragraph(`Outcome: ${run.outcome?.kind ?? "unresolved"}`),
           );
+          for (const question of run.questions)
+            article.append(questionCard(task.id, run, question));
           if (run.outcome)
             article.append(
               paragraph(
@@ -433,6 +466,51 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
         "Thread state unavailable. Displayed results may be stale. Refresh to retry.";
   }
 }
+function questionCard(taskId: string, run: Run, question: Question): HTMLElement {
+  const section = document.createElement("section");
+  section.dataset.questionId = question.id;
+  section.append(
+    paragraph(`Question: ${question.text}`),
+    paragraph(`Request: ${question.id} · ${question.state}`),
+  );
+  if (question.deadline) section.append(paragraph(`Deadline: ${question.deadline}`));
+  if (question.state === "answered") section.append(paragraph(`Owner answer: ${question.answer}`));
+  if (question.state === "expired")
+    section.append(
+      paragraph("Question expired. This Run needs owner attention. Stop it before retrying."),
+    );
+  if (question.state === "pending" && ["active", "waiting"].includes(run.state)) {
+    const form = document.createElement("form");
+    const input = document.createElement("textarea");
+    input.setAttribute("aria-label", `Answer to ${question.text}`);
+    input.required = true;
+    input.maxLength = 32000;
+    input.value = answerDrafts.get(question.id) ?? "";
+    input.addEventListener("input", () => answerDrafts.set(question.id, input.value));
+    const button = document.createElement("button");
+    button.type = "submit";
+    button.textContent = "Answer question";
+    input.disabled = button.disabled = sending || !!pending;
+    form.append(input, button);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!botId || sending || pending) return;
+      pending = {
+        botId,
+        requestId: crypto.randomUUID(),
+        operation: "answer",
+        questionId: question.id,
+        taskId,
+        runId: run.id,
+        text: input.value,
+      };
+      localStorage.setItem(pendingKey, JSON.stringify(pending));
+      void submit();
+    });
+    section.append(form);
+  }
+  return section;
+}
 function runButton(
   label: string,
   operation: "stop" | "retry" | "close",
@@ -475,13 +553,15 @@ async function submit(newTask = false): Promise<void> {
       admitted.operation === "retry" ||
       admitted.operation === "close";
     const path =
-      admitted.operation === "reset"
-        ? `${prefix}/thread/reset`
-        : runOperation
-          ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/${admitted.operation}`
-          : admitted.operation === "task"
-            ? `${prefix}/tasks/${encodeURIComponent(admitted.taskId as string)}/inputs`
-            : `${prefix}/thread/${admitted.operation === "new-task" ? "tasks" : "messages"}`;
+      admitted.operation === "answer"
+        ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/questions/${encodeURIComponent(admitted.questionId as string)}/answer`
+        : admitted.operation === "reset"
+          ? `${prefix}/thread/reset`
+          : runOperation
+            ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/${admitted.operation}`
+            : admitted.operation === "task"
+              ? `${prefix}/tasks/${encodeURIComponent(admitted.taskId as string)}/inputs`
+              : `${prefix}/thread/${admitted.operation === "new-task" ? "tasks" : "messages"}`;
     const response = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -516,20 +596,30 @@ async function submit(newTask = false): Promise<void> {
         ? typeof result.backgroundBoundary !== "number"
         : typeof result.taskId !== "string" ||
           typeof result.runId !== "string" ||
-          (!runOperation && typeof result.messageId !== "string"))
+          (!runOperation &&
+            admitted.operation !== "answer" &&
+            typeof result.messageId !== "string"))
     )
       throw new Error();
     localStorage.removeItem(pendingKey);
     pending = undefined;
+    if (admitted.questionId) answerDrafts.delete(admitted.questionId);
     if (admitted.selectedMessageIds?.length) clearBackgroundSelection();
-    if (admitted.botId === botId && !runOperation && admitted.operation !== "reset")
+    if (
+      admitted.botId === botId &&
+      !runOperation &&
+      admitted.operation !== "reset" &&
+      admitted.operation !== "answer"
+    )
       text.value = "";
     notice.textContent =
-      admitted.operation === "reset"
-        ? `Chat background boundary is ${result.backgroundBoundary}. Existing Runs keep their captured background.`
-        : runOperation
-          ? `Recorded ${admitted.operation} for Run ${result.runId}. Refresh after the Run state changes.`
-          : `Admitted to Task ${result.taskId}, Run ${result.runId}. Await its durable outcome.`;
+      admitted.operation === "answer"
+        ? `Answer recorded for question ${admitted.questionId}. The same Run continues when capacity is available.`
+        : admitted.operation === "reset"
+          ? `Chat background boundary is ${result.backgroundBoundary}. Existing Runs keep their captured background.`
+          : runOperation
+            ? `Recorded ${admitted.operation} for Run ${result.runId}. Refresh after the Run state changes.`
+            : `Admitted to Task ${result.taskId}, Run ${result.runId}. Await its durable outcome.`;
     await showChat(botId);
   } catch {
     notice.textContent = pending

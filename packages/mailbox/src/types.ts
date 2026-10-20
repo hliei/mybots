@@ -79,6 +79,7 @@ export interface RunContext {
   sourceMessageId: string;
   backgroundBoundary: number;
   references: { id: string; role: string; content: string }[];
+  answers?: { id: string; question: string; answer: string }[];
 }
 
 /** Stable product evidence, excluding hidden reasoning and provider-only payloads. */
@@ -109,6 +110,7 @@ export type HistoryOperation = (
   operation:
     | "search_history"
     | "read_history"
+    | "ask_question"
     | "publish_progress"
     | "publish_result"
     | "read_operation",

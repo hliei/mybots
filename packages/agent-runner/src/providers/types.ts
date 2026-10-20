@@ -20,6 +20,7 @@ export interface QueryInput {
 
 export type ProviderEvent =
   | { type: "evidence"; record: ExecutionRecord }
+  | { type: "wait"; reason: string }
   | { type: "recorded"; inputId: string }
   | { type: "init"; continuation: string }
   | { type: "activity" }

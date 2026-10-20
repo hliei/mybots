@@ -489,7 +489,7 @@ historical seed references, hidden reasoning, system prompts and provider-only
 payloads. Original tool calls/results remain separate from Thread conversation
 and survive SDK compaction. Reads never execute or mutably reopen an SDK session.
 
-Production `search_history`, `read_history`, `publish_progress`, `publish_result`
+Production `search_history`, `read_history`, `ask_question`, `publish_progress`, `publish_result`
 and `read_operation` tools use the same correlated directional mailbox requests.
 The Host derives Bot/Task/Run/Attempt scope from the owned execution mailbox and
 its open Attempt, and checks the actual executor incarnation. Payload identity
@@ -506,6 +506,38 @@ corrections in the same authorized range. Unknown/cross-Bot anchors and stale
 executors cannot widen that scope. Historical text is untrusted reference data,
 not instructions or approval. Outcome anchors use the same original-reading
 boundary.
+
+## Persistent owner questions
+
+The Agent's `ask_question` tool accepts a stable `requestId`, required question
+text (up to 2,000 characters), and an optional explicit timestamp `deadline`.
+The Host derives Bot, Task, Run and Attempt from the fenced execution and saves
+its question in `data/host.db`. `read_operation` with that request ID retrieves
+the same question after a timeout. Questions appear in the Task's Run card in
+the Web client, with separate answer controls.
+
+`POST /api/bots/:botId/runs/:runId/questions/:questionId/answer` accepts
+`{ requestId, text }` under the same credential and Host/Origin checks as other
+owner operations. Its durable identity recovers a lost response; a different
+answer request cannot settle a resolved question again. Ordinary Thread text
+and targeted Task additions do not answer a question. Additions to waiting
+Tasks retain their Run and wait for its continuation.
+
+The runner ends the SDK query after the entire current tool batch has recorded
+its results. Only complete tool evidence plus confirmed executor termination
+allows the Host to end the Attempt and release Bot/global capacity. Waiting
+spends no Run budget. Unanswered required questions prevent success. Waiting
+survives browser disconnection and Host restart indefinitely by default; an
+explicit deadline marks a question expired and leaves the Run waiting for owner
+attention. The owner can stop that Run before explicitly retrying it.
+
+After all required questions are answered, the same Run joins the fair queue.
+Its next Attempt records current Bot configuration, reopens its SDK ledger and
+supplies correlated answers through the SDK's normal input path with current
+Memory. Recorded inputs and known tools are not deliberately replayed. Stop
+cancels unresolved questions and fences late answers; a repeated answer receipt
+never revives stopped work. These records do not remove the documented crash
+windows or establish exactly-once tool effects.
 
 ## Local WebSocket interface
 

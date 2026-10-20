@@ -11,6 +11,7 @@ export interface ModelRequest {
 export type ModelReply =
   | { text: string; finishReason?: string }
   | { tool: string; arguments: Record<string, unknown>; text?: string }
+  | { tools: { name: string; arguments: Record<string, unknown> }[]; text?: string }
   | { status: number }
   | { hold: true };
 
@@ -46,19 +47,20 @@ export async function startPiService(
       );
     };
     send({ role: "assistant", content: reply.text ?? null });
-    if ("tool" in reply) {
+    if ("tool" in reply || "tools" in reply) {
       send({
-        tool_calls: [
-          {
-            index: 0,
-            id: `call-${requests.length}`,
-            type: "function",
-            function: { name: reply.tool, arguments: JSON.stringify(reply.arguments) },
-          },
-        ],
+        tool_calls: ("tools" in reply
+          ? reply.tools
+          : [{ name: reply.tool, arguments: reply.arguments }]
+        ).map((tool, index) => ({
+          index,
+          id: `call-${requests.length}-${index}`,
+          type: "function",
+          function: { name: tool.name, arguments: JSON.stringify(tool.arguments) },
+        })),
       });
     }
-    send({}, "tool" in reply ? "tool_calls" : (reply.finishReason ?? "stop"));
+    send({}, "tool" in reply || "tools" in reply ? "tool_calls" : (reply.finishReason ?? "stop"));
     response.end("data: [DONE]\n\n");
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

@@ -420,6 +420,7 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
     let now = Date.now();
     let startError: unknown;
     const boundedHost = await Host.start({
+      reconcileMs: 365 * 86400000,
       root: boundedRoot,
       driver: {
         start: async (material, signal) => {
@@ -498,6 +499,49 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
         "Shared Agent note",
       );
       expect(await boundedDriver.list(signal)).toEqual([]);
+      const questionRun = await boundedHost.sendThread(
+        "personal",
+        {
+          requestId: "container-question",
+          text: "Ask owner for a city",
+        },
+        "new-task",
+      );
+      while (!signal.aborted) {
+        const run = (await boundedHost.threadDetail("personal")).tasks[2]?.runs[0];
+        if (run?.state === "waiting" && (await boundedDriver.list(signal)).length === 0) break;
+        await setTimeout(100, undefined, { signal });
+      }
+      const waiting = (await boundedHost.threadDetail("personal")).tasks[2]?.runs[0];
+      expect(waiting).toMatchObject({
+        state: "waiting",
+        outcome: null,
+        questions: [{ id: "container-city", state: "pending" }],
+      });
+      const records = await boundedHost.runHistory("personal", questionRun.runId, {
+        kind: "records",
+      });
+      expect(records.records).toContainEqual(
+        expect.objectContaining({ kind: "tool-result", toolName: "ask_question" }),
+      );
+      now += 24 * 60 * 60 * 1000;
+      expect((await boundedHost.threadDetail("personal")).tasks[2]?.runs[0]?.budget.activeMs).toBe(
+        waiting?.budget.activeMs,
+      );
+      await boundedHost.answerQuestion("personal", questionRun.runId, "container-city", {
+        requestId: "container-answer",
+        text: "Hangzhou",
+      });
+      while (!signal.aborted) {
+        const run = (await boundedHost.threadDetail("personal")).tasks[2]?.runs[0];
+        if (run?.state === "succeeded" && (await boundedDriver.list(signal)).length === 0) break;
+        await setTimeout(100, undefined, { signal });
+      }
+      expect((await boundedHost.threadDetail("personal")).tasks[2]?.runs[0]).toMatchObject({
+        id: questionRun.runId,
+        state: "succeeded",
+        outcome: { reply: "Continued the original Run for Hangzhou." },
+      });
     } finally {
       await boundedHost.stop();
     }

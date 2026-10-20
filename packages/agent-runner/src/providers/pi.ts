@@ -34,6 +34,8 @@ export class PiProvider implements AgentProvider {
     let wake: (() => void) | undefined;
     let finished = false;
     let aborted = false;
+    let questionWait = false;
+    const knownInputs = new Set<string>();
     let admissionClosed = input.control === "reset";
     let outstanding = 1;
     const durable = !!input.runContext;
@@ -141,6 +143,7 @@ export class PiProvider implements AgentProvider {
               ? [
                   "search_history",
                   "read_history",
+                  "ask_question",
                   "publish_progress",
                   "publish_result",
                   "read_operation",
@@ -150,7 +153,31 @@ export class PiProvider implements AgentProvider {
           customTools: [
             ...webTools,
             ...(input.history
-              ? [...createHistoryTools(input.history), ...createProgressTools(input.history)]
+              ? [
+                  ...createHistoryTools(input.history),
+                  ...createProgressTools(async (operation, value, signal) => {
+                    const result = await input.history?.(operation, value, signal);
+                    const response = result as {
+                      id?: string;
+                      state?: string;
+                      question?: { id: string; state: string };
+                    };
+                    const question = operation === "ask_question" ? response : response?.question;
+                    const suppliedAnswer = input.runContext?.answers?.some(
+                      (answer) => answer.id === question?.id,
+                    );
+                    if (
+                      question &&
+                      (question.state === "pending" ||
+                        question.state === "expired" ||
+                        (question.state === "answered" && !suppliedAnswer))
+                    ) {
+                      questionWait = true;
+                      admissionClosed = true;
+                    }
+                    return result;
+                  }),
+                ]
               : []),
           ],
           sessionManager: manager,
@@ -158,6 +185,36 @@ export class PiProvider implements AgentProvider {
           resourceLoader,
         });
         session = created.session;
+        const finishTurn = session.agent.finishTurn;
+        session.agent.finishTurn = async (turn, signal) => {
+          const decision = await finishTurn?.(turn, signal);
+          return questionWait ? { action: "end" } : decision || undefined;
+        };
+        if (durable) {
+          for (const entry of manager.getEntries()) {
+            if (
+              entry.type === "message" &&
+              "mybotsInputId" in entry.message &&
+              typeof entry.message.mybotsInputId === "string"
+            )
+              knownInputs.add(entry.message.mybotsInputId);
+          }
+        }
+        const answered = new Set(
+          manager
+            .getEntries()
+            .flatMap((entry) =>
+              entry.type === "message" &&
+              "mybotsQuestionIds" in entry.message &&
+              Array.isArray(entry.message.mybotsQuestionIds)
+                ? entry.message.mybotsQuestionIds
+                : [],
+            ),
+        );
+        const freshAnswers = (input.runContext?.answers ?? []).filter(
+          (answer) => !answered.has(answer.id),
+        );
+        let answerPromptPending = false;
         session.setFollowUpMode("one-at-a-time");
         if (durable) {
           const budget = this.options.model.contextWindow - this.options.model.maxTokens;
@@ -227,7 +284,12 @@ export class PiProvider implements AgentProvider {
             event.message.role === "user" &&
             !("mybotsReference" in event.message)
           ) {
-            if (!("mybotsInputId" in event.message) && input.inputId)
+            if (answerPromptPending) {
+              Object.assign(event.message, {
+                mybotsQuestionIds: freshAnswers.map((answer) => answer.id),
+              });
+              answerPromptPending = false;
+            } else if (!("mybotsInputId" in event.message) && input.inputId)
               Object.assign(event.message, { mybotsInputId: input.inputId });
           }
           if (event.type === "message_start" && event.message.role === "user" && pendingResult) {
@@ -403,9 +465,25 @@ export class PiProvider implements AgentProvider {
                 throw new Error(
                   "Run has incomplete tool evidence; inspect its outcome before continuing.",
                 );
-              await session.agent.continue();
+              if (freshAnswers.length) {
+                answerPromptPending = true;
+                await session.prompt(
+                  freshAnswers
+                    .map(
+                      (answer) =>
+                        `Owner answer to question ${answer.id}:\n${answer.question}\n\n${answer.answer}`,
+                    )
+                    .join("\n\n"),
+                  { expandPromptTemplates: false },
+                );
+              } else await session.agent.continue();
             }
           } else await session.prompt(input.prompt, { expandPromptTemplates: false });
+          if (questionWait && !aborted) {
+            publishEvidence();
+            emit({ type: "wait", reason: "owner-question" });
+            return;
+          }
           emit({
             type: "result",
             text: aborted ? null : finalText,
@@ -463,6 +541,11 @@ export class PiProvider implements AgentProvider {
           if (!inputId) return false;
           if (admitted.has(inputId)) return true;
           admitted.set(inputId, message);
+          if (knownInputs.has(inputId)) {
+            recorded.add(inputId);
+            emit({ type: "recorded", inputId });
+            return true;
+          }
           session.agent.steer(
             Object.assign(
               {

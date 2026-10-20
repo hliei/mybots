@@ -244,7 +244,7 @@ The Host writes the current executor incarnation and correlated operation respon
 to `host_operation_state` in runner-read-only `inbound.db`. The runner captures
 that incarnation at startup and writes `request:<id>` entries to its own
 `outbound.db` session state for `search_history`, `read_history`,
-`publish_progress`, `publish_result` and `read_operation`. Progress and selected
+`ask_question`, `publish_progress`, `publish_result` and `read_operation`. Progress and selected
 results use the caller-supplied request id so a timeout can query that same id.
 The Host checks current ownership and the actual executor generation before
 deriving scope from that mailbox. Adoption preserves the running executor token; a newly
@@ -260,3 +260,12 @@ contains a bounded accumulated preview and current tool. Hidden reasoning,
 provider-only payloads and system prompts are excluded. Thread text originals,
 Run recording and transient progress remain distinct; none of the preview or
 operation-transport acknowledgements establishes a completed Run outcome.
+
+A successful `ask_question` returns its persisted request immediately. The SDK
+finishes recording the full tool batch, then ends through its `finishTurn`
+boundary. The runner writes `durable-wait` only after publishing that evidence
+and remains silent until Host-confirmed termination. It does not acknowledge
+unfinished inputs as completed. The Host clears processing claims after stop;
+a later Attempt reopens the same Run, skips already-recorded input text and
+records correlated owner answers through the SDK. Immutable runner context
+captures those answers and the effective Bot settings for that Attempt.
