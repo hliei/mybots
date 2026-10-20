@@ -345,3 +345,12 @@ Install Chromium with `npx playwright install chromium` (Linux can use
 build plus browser checks; `npm run verify` includes them after its ordinary
 tests, build and startup checks. Browser reports remain ignored. CI installs
 Chromium before the same verification command.
+
+`tests/run-budgets.test.ts` drives authenticated Thread operations with a controlled
+Host clock, real SQLite and mailboxes. It verifies steering and Attempt budget
+continuity, waiting and stopped-time exclusion, exhaustion with delayed stop,
+linked retry budgets, and immediate completed-container reclamation. The budget
+browser journey checks visible exhaustion, confirmed stop and explicit retry.
+The opt-in infrastructure suite holds a real model request through the gateway,
+exhausts its Host budget and observes actual container removal; normal completion
+also removes its container and retains workspace effects.

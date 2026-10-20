@@ -65,7 +65,13 @@ driver.respond = async (input, _material, signal) => {
   ]);
   return input.content === "Inspect this session" ? "Controlled reply" : `Final: ${input.content}`;
 };
-const host = await Host.start({ root, configuration, driver: execution });
+let clockOffset = 0;
+const host = await Host.start({
+  root,
+  configuration,
+  driver: execution,
+  now: () => Date.now() + clockOffset,
+});
 let channel;
 try {
   channel = await WebSocketChannel.listen({ root, host, configuration, port });
@@ -87,6 +93,7 @@ try {
     process.once("SIGTERM", resolve);
     process.once("disconnect", resolve);
     process.on("message", (message) => {
+      if (message === "exhaust-budget") clockOffset += 60 * 60 * 1000;
       if (message === "complete") release.resolve();
       if (message === "complete-chat") chatRelease.resolve();
       if (message === "release-slots") {
