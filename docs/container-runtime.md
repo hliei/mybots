@@ -244,7 +244,7 @@ The Host writes the current executor incarnation and correlated operation respon
 to `host_operation_state` in runner-read-only `inbound.db`. The runner captures
 that incarnation at startup and writes `request:<id>` entries to its own
 `outbound.db` session state for `search_history`, `read_history`,
-`ask_question`, `publish_progress`, `publish_result` and `read_operation`. Progress and selected
+`create_routine`, `ask_question`, `publish_progress`, `publish_result` and `read_operation`. Progress and selected
 results use the caller-supplied request id so a timeout can query that same id.
 The Host checks current ownership and the actual executor generation before
 deriving scope from that mailbox. Adoption preserves the running executor token; a newly

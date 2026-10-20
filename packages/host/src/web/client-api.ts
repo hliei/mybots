@@ -11,6 +11,7 @@ const ASSETS = new Map([
   ["/", ["index.html", "text/html; charset=utf-8"]],
   ["/main.js", ["main.js", "text/javascript; charset=utf-8"]],
   ["/history.js", ["history.js", "text/javascript; charset=utf-8"]],
+  ["/routines.js", ["routines.js", "text/javascript; charset=utf-8"]],
   ["/chat.js", ["chat.js", "text/javascript; charset=utf-8"]],
   ["/attachments.js", ["attachments.js", "text/javascript; charset=utf-8"]],
   ["/skills.js", ["skills.js", "text/javascript; charset=utf-8"]],
@@ -172,6 +173,45 @@ export async function serveClient(
             error instanceof ChatRequestError
               ? error.message
               : "Run operation unavailable. Retry with the same requestId.",
+        }),
+      );
+    }
+    return;
+  }
+  const routineRoute = /^\/api\/bots\/([^/]+)\/routines$/.exec(path);
+  if (routineRoute) {
+    try {
+      const botId = decodeURIComponent(routineRoute[1] as string);
+      let result: object;
+      if (request.method === "GET") result = host.listRoutines(botId);
+      else if (request.method === "POST") {
+        let input: unknown;
+        try {
+          input = JSON.parse((await readLimited(request, 262144)).toString("utf8"));
+        } catch (error) {
+          if (error instanceof ChatRequestError) throw error;
+          throw new ChatRequestError("Routine creation requires valid JSON.");
+        }
+        result = host.createRoutine(botId, input);
+      } else {
+        response.writeHead(405, { Allow: "GET, POST" });
+        response.end();
+        return;
+      }
+      response.writeHead(request.method === "POST" ? 201 : 200, {
+        "Content-Type": "application/json",
+      });
+      response.end(JSON.stringify(result));
+    } catch (error) {
+      response.writeHead(error instanceof ChatRequestError ? error.status : 503, {
+        "Content-Type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error:
+            error instanceof ChatRequestError
+              ? error.message
+              : "Routine unavailable. Retry with the same requestId.",
         }),
       );
     }

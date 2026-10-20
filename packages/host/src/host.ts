@@ -50,6 +50,7 @@ import {
   recoverAbandonedClaims,
   recoverUnclaimedInput,
 } from "./reconcile-session.ts";
+import { routineInput } from "./routines.ts";
 import { LocalSkills } from "./skills.ts";
 
 /** Total platform-delivery attempts for one outbound reply, including the first. */
@@ -384,6 +385,7 @@ export class Host {
         await this.reconcileSession(execution);
       }
     }
+    this.admitDueRoutines();
     this.schedule();
   }
 
@@ -634,6 +636,8 @@ export class Host {
   /** Reconcile every prepared session against observed runtime and mailbox state. */
   async reconcile(): Promise<void> {
     this.store.touchHostInstance(this.instanceId, this.timestamp());
+    this.admitDueRoutines();
+    this.schedule();
     for (const pending of [...this.prepared.values()]) {
       try {
         const execution = await pending;
@@ -1165,6 +1169,37 @@ export class Host {
     return join(this.root, folder);
   }
 
+  listRoutines(botId: string) {
+    this.store.threads.thread(botId);
+    return { routines: this.store.routines.list(botId) };
+  }
+
+  createRoutine(botId: string, value: unknown) {
+    this.store.threads.thread(botId);
+    if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
+    const routine = this.store.routines.create(botId, routineInput(value), this.timestamp());
+    this.admitDueRoutines();
+    this.schedule();
+    return routine;
+  }
+
+  private admitDueRoutines(): void {
+    if (this.stopped) return;
+    for (const routine of this.store.routines.due(this.timestamp())) {
+      this.store.threads.send(
+        {
+          requestId: `occurrence-${routine.id}`,
+          botId: routine.botId,
+          text: routine.text,
+          newTask: true,
+          selectedMessageIds: routine.selectedMessageIds,
+          routine,
+        },
+        this.timestamp(),
+      );
+    }
+  }
+
   async threadDetail(botId: string) {
     this.store.threads.thread(botId);
     for (const pending of this.prepared.values()) {
@@ -1243,6 +1278,21 @@ export class Host {
       throw new ChatRequestError("Privilege grants are owner-only.", 403);
     if (ADMIN_FIELDS.some((key) => key in input))
       throw new ChatRequestError("Bot administration is owner-only.", 403);
+    if (request.operation === "create_routine") {
+      const run = this.store.threads.run(execution.route.session.id);
+      const attempt = this.store.threads.executingAttempt(run.id);
+      if (run.state !== "active" || !attempt || attempt.incarnation !== request.incarnation)
+        throw new ChatRequestError("Execution scope is no longer active.", 403);
+      if (input.requestId !== request.id)
+        throw new ChatRequestError("A stable requestId is required.");
+      const routine = this.store.routines.create(botId, routineInput(input), this.timestamp(), {
+        runId: run.id,
+        attemptId: attempt.id,
+      });
+      this.admitDueRoutines();
+      this.schedule();
+      return routine;
+    }
     if (request.operation === "ask_question") return this.askQuestion(execution, request, input);
     if (request.operation === "read_operation") return this.readPublication(execution, input);
     if (request.operation === "publish_progress" || request.operation === "publish_result")
@@ -1324,6 +1374,15 @@ export class Host {
       input.requestId,
     );
     const question = this.store.threads.questions(run.id).find((q) => q.id === input.requestId);
+    const routine = this.store.routines
+      .list(execution.route.session.agent_group_id)
+      .find(
+        (row) =>
+          row.requestId === input.requestId &&
+          row.source.kind === "run" &&
+          row.source.runId === run.id,
+      );
+    if (routine) return { state: "recorded" as const, routine };
     if (question) return { state: "recorded" as const, question };
     return publication ? { state: "recorded" as const, publication } : { state: "absent" as const };
   }

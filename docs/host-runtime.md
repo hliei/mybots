@@ -432,8 +432,7 @@ mailbox evidence, never queue acceptance or partial text. `stopping` remains
 until the executor's stop completes; a failed stop keeps that Bot's serial slot
 and reports `stopError`. Confirmed stop with an acknowledged input and no final
 output becomes `uncertain` and `held`. `held` records that a later Routine
-occurrence must not start; occurrence scheduling is a later capability and does
-not run in this version. Unrelated Tasks of the same Bot may then run. Ordinary Thread
+occurrence must not start. One-shot definitions admit only one occurrence Task. Unrelated Tasks of the same Bot may then run. Ordinary Thread
 sends do not retry or close that hold. Explicit retry confirms stop, keeps the
 original outcome, and creates one linked Run. Explicit close records the same
 uncertain outcome as `closed` without a new Run. Output that arrives after a
@@ -489,7 +488,7 @@ historical seed references, hidden reasoning, system prompts and provider-only
 payloads. Original tool calls/results remain separate from Thread conversation
 and survive SDK compaction. Reads never execute or mutably reopen an SDK session.
 
-Production `search_history`, `read_history`, `ask_question`, `publish_progress`, `publish_result`
+Production `search_history`, `read_history`, `create_routine`, `ask_question`, `publish_progress`, `publish_result`
 and `read_operation` tools use the same correlated directional mailbox requests.
 The Host derives Bot/Task/Run/Attempt scope from the owned execution mailbox and
 its open Attempt, and checks the actual executor incarnation. Payload identity
@@ -740,3 +739,47 @@ and download links. Authenticated
 `GET /api/bots/:botId/runs/:runId/artifacts/:artifactId` returns the saved bytes as
 an attachment and rejects a different Bot or Run. No Host storage path is exposed.
 Workspace replacement and Host restart do not change a delivered version.
+
+
+## One-shot Routines
+
+The selected Bot's Web page creates one-shot Routines from work instructions,
+an absolute ISO 8601 instant with offset, and a supported IANA timezone. The
+resolved UTC instant, timezone, next occurrence and source are visible before
+execution. An unresolved phrase or invalid calendar date is rejected. An instant
+already in the past is due immediately; timezone is retained as the resolution
+and display context and never shifts that instant.
+
+Authenticated `GET /api/bots/:botId/routines` lists definitions and occurrence
+Task links. `POST` accepts `requestId`, `text`, `runAt`, `timezone`, and optional
+`selectedMessageIds` (up to seven authorized originals). Reusing the owner
+request with different instructions or schedule returns a conflict. A lost
+response can be recovered with the same saved request, including after browser
+reload. The Agent's `create_routine` tool resolves natural-language intent into
+these explicit fields, reports the resolved schedule and creates work only for
+its own Bot. The Host derives creation-source Task/Run/Attempt from the fenced
+execution. `read_operation` retrieves that Run's creation request after an
+unconfirmed timeout; reissuing it does not create a second Routine. Independent
+Routine creation survives source cancellation.
+
+The Host checks persisted due definitions on startup and its reconciliation
+pass (every sixty seconds by default). Consuming the one-shot due time, saving
+the admitted definition, creating its distinct Task/Run and enqueueing background
+work share one SQLite transaction. An existing overdue definition therefore
+admits one occurrence after restart. The definition remains inspectable after
+success, failure, cancellation or uncertainty; no second automatic occurrence
+is generated. Each Task retains the one-unfinished-Run constraint through
+queueing, waits, stopping and uncertainty.
+
+Occurrence execution uses the existing fair admission, one-Attempt-per-Bot,
+global limit, cumulative active budget and confirmed-stop rules. Its fresh
+Run-local SDK ledger receives Bot identity, workspace/current Memory and explicit
+selected inputs, without implicit direct-chat or previous-occurrence context.
+Occurrence bodies stay in Task/Run evidence; the Thread presents linked work
+summaries separately from chat originals. Explicitly selected earlier occurrence
+originals remain accessible to that Run's history tools, including paginated
+reading, while default Thread history excludes them. Ordinary Thread input selects chat
+work; explicit Task additions target the occurrence through the same durable
+queued/active/waiting input path and never edit the Routine. Known failures are
+retained, and acknowledged unknown effects are held for inspection rather than
+automatically replayed. Cron and Routine lifecycle controls are separate work.

@@ -409,3 +409,21 @@ and a fresh Host. The opt-in container/gateway fixture checks the production
 runner's complete question result, actual container removal, budget exclusion and
 same-Run continuation through an owner answer. These checks use controlled
 upstreams and do not establish actual-service acceptance.
+
+
+## One-shot Routines
+
+`tests/routines.test.ts` uses authenticated HTTP, real SQLite and directional
+mailboxes with a controlled Host clock/executor. It verifies due/overdue restart,
+atomic one-shot admission, source-cancellation independence, failed/cancelled
+outcomes, acknowledged uncertainty without replay, identity rejection, explicit
+selected inputs, paginated rereading of selected prior occurrence originals,
+queued/active Task additions and chat isolation. The real Pi
+case creates and looks up a Routine with actual tools, starts a fresh occurrence
+ledger and durably records steering through the production polling loop.
+`tests/browser/routines.spec.ts` exercises creation, saved schedule, reload,
+overdue fresh-Host restart, linked occurrence inspection and targeted input in
+the built client. The opt-in mailbox/gateway fixture creates a Routine through
+the actual container's Pi tool and observes independent execution, shared Bot
+materials and terminal container removal. All use controlled model responses;
+actual-service acceptance remains separate.

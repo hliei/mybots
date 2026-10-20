@@ -3,7 +3,7 @@ import type { HistoryOperation } from "@mybots/mailbox";
 import { Type } from "typebox";
 
 export const PROGRESS_INSTRUCTIONS =
-  "ask_question persists a required owner question and ends the Attempt after all tool results are recorded. Answers arrive as correlated evidence in a later Attempt of this Run. Ordinary Task input does not answer a question. publish_progress records owner-visible progress for this Attempt. publish_result records a selected result summary and optional immutable snapshots of workspace-relative files (up to 16, each within the installation file limit, 25 MiB by default). Neither completes the Run, changes its outcome, grants privileges, nor administers a Bot. Do not send Bot, Task, Run, or Attempt identity. After a timeout, call read_operation with the same requestId; do not publish that request again.";
+  "create_routine schedules independent own-Bot work. Resolve time to an ISO instant with offset and IANA timezone; clarify unresolved intent. Report the resolved schedule. Include selected inputs explicitly; chat is not inherited. ask_question persists a required owner question and ends the Attempt after all tool results are recorded. Answers arrive as correlated evidence in a later Attempt of this Run. Ordinary Task input does not answer a question. publish_progress records owner-visible progress for this Attempt. publish_result records a selected result summary and optional immutable snapshots of workspace-relative files (up to 16, each within the installation file limit, 25 MiB by default). Neither completes the Run, changes its outcome, grants privileges, nor administers a Bot. Do not send Bot, Task, Run, or Attempt identity. After a timeout, call read_operation with the same requestId; do not publish that request again.";
 
 export function createProgressTools(operation: HistoryOperation) {
   const text = (value: unknown) => ({
@@ -11,6 +11,31 @@ export function createProgressTools(operation: HistoryOperation) {
     details: {},
   });
   return [
+    defineTool({
+      name: "create_routine",
+      label: "Create one-shot Routine",
+      description:
+        "Schedule independent own-Bot work. Return the resolved instant/timezone/next occurrence. On timeout, read_operation with the same requestId.",
+      parameters: Type.Object(
+        {
+          requestId: Type.String({ minLength: 1, maxLength: 128 }),
+          text: Type.String({
+            minLength: 1,
+            maxLength: 32000,
+          }),
+          runAt: Type.String({
+            description: "ISO instant with Z or numeric offset.",
+          }),
+          timezone: Type.String({
+            description: "IANA timezone.",
+          }),
+        },
+        { additionalProperties: false },
+      ),
+      async execute(_id, input, signal) {
+        return text(await operation("create_routine", input, signal));
+      },
+    }),
     defineTool({
       name: "ask_question",
       label: "Ask owner question",
@@ -69,7 +94,7 @@ export function createProgressTools(operation: HistoryOperation) {
       name: "read_operation",
       label: "Read host operation",
       description:
-        "Read a question, progress or selected-result request by its requestId. This does not publish another copy.",
+        "Read a Routine, question, progress or selected-result request by its requestId. This does not publish another copy.",
       parameters: Type.Object(
         { requestId: Type.String({ minLength: 1, maxLength: 128 }) },
         { additionalProperties: false },

@@ -4,6 +4,7 @@ import type { InboundMessage, OutboundMessage, ProcessingAck } from "@mybots/mai
 import { ChatRequestError } from "../chat.ts";
 import { history } from "./history.ts";
 import type { SavedSession } from "./index.ts";
+import type { Routine } from "./routines.ts";
 
 const RUN_ACTIVE_BUDGET_MS = 60 * 60 * 1000;
 
@@ -137,6 +138,7 @@ export class ThreadStore {
       newTask: boolean;
       taskId?: string;
       selectedMessageIds?: string[];
+      routine?: Routine;
     },
     now: string,
     destinationId = "local-client",
@@ -156,7 +158,7 @@ export class ThreadStore {
       } else if (!input.newTask) {
         run = this.db
           .prepare(`SELECT r.* FROM runs r JOIN tasks t ON t.id = r.task_id
-     WHERE t.thread_id = ? AND r.state IN ('queued', 'active') ORDER BY r.rowid DESC LIMIT 1`)
+     WHERE t.thread_id = ? AND t.origin = 'chat' AND r.state IN ('queued', 'active') ORDER BY r.rowid DESC LIMIT 1`)
           .get(thread.id) as unknown as RunRow | undefined;
       }
       const messageId = randomUUID();
@@ -175,7 +177,21 @@ export class ThreadStore {
         }
         const taskId = randomUUID();
         const runId = randomUUID();
-        this.db.prepare("INSERT INTO tasks VALUES (?, ?, 'chat', ?)").run(taskId, thread.id, now);
+        this.db
+          .prepare("INSERT INTO tasks VALUES (?, ?, ?, ?)")
+          .run(taskId, thread.id, input.routine ? "routine" : "chat", now);
+        if (input.routine) {
+          const updated = this.db
+            .prepare(
+              "UPDATE routines SET next_occurrence = NULL WHERE id = ? AND next_occurrence IS NOT NULL",
+            )
+            .run(input.routine.id);
+          if (!updated.changes)
+            throw new ChatRequestError("Routine occurrence already admitted.", 409);
+          this.db
+            .prepare("INSERT INTO routine_occurrences VALUES (?, ?, ?, ?)")
+            .run(taskId, input.routine.id, JSON.stringify(input.routine), input.routine.runAt);
+        }
         this.db
           .prepare(`INSERT INTO messaging_groups (id, channel_type, platform_id, instance, created_at)
      VALUES ('local-client', 'client', 'owner', 'local-client', ?) ON CONFLICT(id) DO NOTHING`)
@@ -454,17 +470,22 @@ export class ThreadStore {
    ORDER BY seq`)
           .all(thread, sourceSeq, ...selectedIds) as unknown as Original[])
       : [];
+    const origin = this.db
+      .prepare("SELECT origin FROM tasks WHERE id = ?")
+      .get(run.task_id)?.origin;
     const references = [
       ...selected,
-      ...(
-        this.db
-          .prepare(`SELECT id, seq, role, content, run_id, created_at FROM thread_messages
-   WHERE thread_id = ? AND seq >= ? AND seq < ? AND run_id != ? ORDER BY seq DESC LIMIT 200`)
-          .all(thread, run.background_boundary, sourceSeq, id) as unknown as Original[]
-      )
-        .filter((row) => !selectedIds.includes(row.id))
-        .slice(0, Math.max(0, 7 - selected.length))
-        .reverse(),
+      ...(origin === "chat"
+        ? (
+            this.db
+              .prepare(`SELECT id, seq, role, content, run_id, created_at FROM thread_messages
+   WHERE thread_id = ? AND seq >= ? AND seq < ? AND run_id != ? AND run_id IN (SELECT r.id FROM runs r JOIN tasks t ON t.id = r.task_id WHERE t.origin = 'chat') ORDER BY seq DESC LIMIT 200`)
+              .all(thread, run.background_boundary, sourceSeq, id) as unknown as Original[]
+          )
+            .filter((row) => !selectedIds.includes(row.id))
+            .slice(0, Math.max(0, 7 - selected.length))
+            .reverse()
+        : []),
     ];
     const context = {
       references,
@@ -1316,6 +1337,12 @@ export class ThreadStore {
       .map((task) => ({
         id: task.id as string,
         origin: task.origin as string,
+        routine: (() => {
+          const row = this.db
+            .prepare("SELECT definition FROM routine_occurrences WHERE task_id = ?")
+            .get(task.id as string);
+          return row ? (JSON.parse(row.definition as string) as Routine) : null;
+        })(),
         createdAt: task.created_at as string,
         runs: (
           this.db
@@ -1386,7 +1413,7 @@ export class ThreadStore {
       tasks,
       messages: this.db
         .prepare(
-          "SELECT id, seq, run_id AS runId, role, content, created_at AS createdAt FROM thread_messages WHERE thread_id = ? ORDER BY seq DESC LIMIT 5",
+          "SELECT id, seq, run_id AS runId, role, content, created_at AS createdAt FROM thread_messages WHERE thread_id = ? AND run_id IN (SELECT r.id FROM runs r JOIN tasks t ON t.id = r.task_id WHERE t.origin = 'chat') ORDER BY seq DESC LIMIT 5",
         )
         .all(thread.id)
         .reverse()

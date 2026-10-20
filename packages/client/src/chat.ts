@@ -6,6 +6,7 @@ import {
   showHistory,
   showRunHistory,
 } from "./history.ts";
+import { showRoutines } from "./routines.ts";
 
 interface Outcome {
   kind: string;
@@ -277,6 +278,10 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
   if (pending && !sending)
     notice.textContent = `Response unconfirmed for Bot ${pending.botId}. Retry the saved input to recover its Task/Run association.`;
   try {
+    const pendingRoutine = await showRoutines(botId, () => {
+      if (botId) void showChat(botId);
+    });
+    if (current !== version) return;
     const response = await fetch(`/api/bots/${encodeURIComponent(botId)}/thread`, {
       cache: "no-store",
     });
@@ -404,9 +409,7 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
             );
           if (run.held)
             article.append(
-              paragraph(
-                "Held for a later Routine occurrence, which is not scheduled in this version.",
-              ),
+              paragraph("Outcome uncertainty holds this work and any later Routine occurrence."),
             );
           for (const late of run.lateEvidence ?? [])
             article.append(paragraph(`Late result: ${late.text}`));
@@ -453,9 +456,10 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
     );
     if (
       current === version &&
-      detail.tasks.some((task) =>
-        task.runs.some((run) => ["active", "queued", "stopping", "waiting"].includes(run.state)),
-      )
+      (pendingRoutine ||
+        detail.tasks.some((task) =>
+          task.runs.some((run) => ["active", "queued", "stopping", "waiting"].includes(run.state)),
+        ))
     )
       refreshTimer = window.setTimeout(() => {
         if (current === version && botId) void showChat(botId);
