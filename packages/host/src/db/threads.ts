@@ -139,6 +139,13 @@ export class ThreadStore {
       taskId?: string;
       selectedMessageIds?: string[];
       routine?: Routine;
+      delegation?: {
+        sourceBotId: string;
+        parentTaskId: string;
+        parentRunId: string;
+        parentAttemptId: string;
+        originatingRunId: string;
+      };
     },
     now: string,
     destinationId = "local-client",
@@ -179,7 +186,12 @@ export class ThreadStore {
         const runId = randomUUID();
         this.db
           .prepare("INSERT INTO tasks VALUES (?, ?, ?, ?)")
-          .run(taskId, thread.id, input.routine ? "routine" : "chat", now);
+          .run(
+            taskId,
+            thread.id,
+            input.delegation ? "delegation" : input.routine ? "routine" : "chat",
+            now,
+          );
         if (input.routine) {
           if (routineBusy(this.db, input.routine.id))
             throw new ChatRequestError("Routine already has an unfinished occurrence.", 409);
@@ -213,6 +225,25 @@ export class ThreadStore {
 ) VALUES (?, ?, 'queued', ?, ?, NULL, NULL, ?, ?)`)
           .run(runId, taskId, thread.background_boundary, messageId, now, now);
         this.enqueue(runId, input.botId, now);
+        if (input.delegation)
+          this.db
+            .prepare(`INSERT INTO delegations (
+ id, source_bot_id, target_bot_id, parent_task_id, parent_run_id, parent_attempt_id,
+ originating_run_id, child_task_id, child_run_id, text, state, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
+            .run(
+              input.requestId,
+              input.delegation.sourceBotId,
+              input.botId,
+              input.delegation.parentTaskId,
+              input.delegation.parentRunId,
+              input.delegation.parentAttemptId,
+              input.delegation.originatingRunId,
+              taskId,
+              runId,
+              input.text,
+              now,
+            );
         this.db
           .prepare("UPDATE runs SET selected_message_ids = ? WHERE id = ?")
           .run(JSON.stringify(selected), runId);
@@ -406,6 +437,12 @@ export class ThreadStore {
           run.id,
         );
       this.enqueue(newRunId, botId, now);
+      this.db
+        .prepare(
+          `UPDATE delegations SET child_run_id = ?, state = 'pending', result = NULL, resolved_at = NULL
+ WHERE child_run_id = ? AND state = 'uncertain'`,
+        )
+        .run(newRunId, run.id);
       for (const input of copied) {
         this.db
           .prepare("INSERT INTO run_inputs VALUES (?, ?, ?, ?, NULL, ?, NULL)")
@@ -731,7 +768,8 @@ export class ThreadStore {
       let outcome = run.outcome;
       if (
         !missing.length &&
-        !this.questions(id).some((q) => q.state === "pending" || q.state === "expired")
+        !this.questions(id).some((q) => q.state === "pending" || q.state === "expired") &&
+        !this.openDelegations(id)
       ) {
         const results = inputs.map((row) => JSON.parse(row.outcome as string));
         const failure = results.find((row) => row.kind === "failed");
@@ -1396,7 +1434,7 @@ export class ThreadStore {
               botId: row.botId,
               taskId: row.taskId,
               runId: row.runId,
-              delegationId: null,
+              delegationId: this.delegationForChild(run.id)?.id ?? null,
               artifacts: this.artifactRows(row.id),
             })),
           inputs: this.inputs(run.id)
@@ -1413,6 +1451,7 @@ export class ThreadStore {
           admissionClass: admission.placement.get(run.id)?.admissionClass ?? null,
           queuePosition: admission.placement.get(run.id)?.queuePosition ?? null,
           questions: this.questions(run.id),
+          delegations: this.delegationsInvolving(run.id),
           waitReason: run.wait_reason,
         })),
       }));
@@ -1426,6 +1465,7 @@ export class ThreadStore {
           task.runs.filter((run) => run.held).map((run) => ({ taskId: task.id, runId: run.id })),
         ),
       },
+      collaboration: this.collaborationPeers(botId),
       tasks,
       messages: this.db
         .prepare(
@@ -1487,5 +1527,275 @@ export class ThreadStore {
     const row = this.attachments(botId, taskId).find((item) => item.id === attachmentId);
     if (!row) throw new ChatRequestError("Attachment not found.", 404);
     return row;
+  }
+
+  collaborationPeers(botId: string) {
+    const grants = new Map(
+      (
+        this.db
+          .prepare(
+            "SELECT target_bot_id AS targetBotId, mode FROM collaboration_grants WHERE source_bot_id = ?",
+          )
+          .all(botId) as { targetBotId: string; mode: "deny" | "allow" }[]
+      ).map((row) => [row.targetBotId, row.mode]),
+    );
+    return (
+      this.db
+        .prepare("SELECT id, name FROM agent_groups WHERE id != ? ORDER BY name, id")
+        .all(botId) as { id: string; name: string }[]
+    ).map((bot) => ({
+      targetBotId: bot.id,
+      name: bot.name,
+      mode: grants.get(bot.id) ?? ("deny" as const),
+    }));
+  }
+
+  setCollaboration(
+    sourceBotId: string,
+    targetBotId: string,
+    requestId: string,
+    mode: "deny" | "allow",
+    now: string,
+  ) {
+    return this.admit(
+      requestId,
+      { operation: "collaboration", sourceBotId, targetBotId, mode },
+      () => {
+        if (sourceBotId === targetBotId)
+          throw new ChatRequestError("A Bot cannot grant itself collaboration.", 403);
+        this.thread(sourceBotId);
+        this.thread(targetBotId);
+        this.db
+          .prepare(`INSERT INTO collaboration_grants (source_bot_id, target_bot_id, mode, updated_at)
+ VALUES (?, ?, ?, ?)
+ ON CONFLICT (source_bot_id, target_bot_id) DO UPDATE SET mode = excluded.mode, updated_at = excluded.updated_at`)
+          .run(sourceBotId, targetBotId, mode, now);
+        return { sourceBotId, targetBotId, mode };
+      },
+    );
+  }
+
+  delegation(id: string) {
+    return this.delegationsWhere("id = ?", [id])[0];
+  }
+
+  delegationsInvolving(runId: string) {
+    return this.delegationsWhere("parent_run_id = ? OR child_run_id = ?", [runId, runId]);
+  }
+
+  openDelegations(runId: string): boolean {
+    return this.delegationsInvolving(runId).some(
+      (row) => row.parentRunId === runId && (row.state === "pending" || row.state === "uncertain"),
+    );
+  }
+
+  childRunIds(parentRunId: string): string[] {
+    return this.delegationsInvolving(parentRunId)
+      .filter((row) => row.parentRunId === parentRunId && row.childRunId)
+      .map((row) => row.childRunId as string);
+  }
+
+  delegationForChild(runId: string) {
+    return this.delegationsWhere("child_run_id = ?", [runId])[0];
+  }
+
+  /**
+   * Record a permitted child or a correlated denial.
+   * Nested work and self-targeting are rejected before a child exists.
+   */
+  delegate(input: {
+    requestId: string;
+    sourceBotId: string;
+    targetBotId: string;
+    parentTaskId: string;
+    parentRunId: string;
+    parentAttemptId: string;
+    text: string;
+    now: string;
+  }) {
+    if (input.sourceBotId === input.targetBotId)
+      throw new ChatRequestError("A Bot cannot delegate to itself.", 403);
+    this.thread(input.targetBotId);
+    const saved = this.delegation(input.requestId);
+    if (saved) {
+      if (saved.parentRunId !== input.parentRunId)
+        throw new ChatRequestError("Request identity belongs to another operation.", 409);
+      return saved;
+    }
+    if (this.delegationIdentityUsed(input.requestId))
+      throw new ChatRequestError("Request identity belongs to another operation.", 409);
+    const allowed =
+      (
+        this.db
+          .prepare(
+            "SELECT mode FROM collaboration_grants WHERE source_bot_id = ? AND target_bot_id = ?",
+          )
+          .get(input.sourceBotId, input.targetBotId) as { mode: string } | undefined
+      )?.mode === "allow";
+    if (!allowed) return this.recordDenial(input);
+    if (this.delegationForChild(input.parentRunId))
+      throw new ChatRequestError("Nested delegation is not available.", 409);
+    this.send(
+      {
+        requestId: input.requestId,
+        botId: input.targetBotId,
+        text: input.text,
+        newTask: true,
+        delegation: {
+          sourceBotId: input.sourceBotId,
+          parentTaskId: input.parentTaskId,
+          parentRunId: input.parentRunId,
+          parentAttemptId: input.parentAttemptId,
+          originatingRunId: input.parentRunId,
+        },
+      },
+      input.now,
+    );
+    return this.delegation(input.requestId);
+  }
+
+  /**
+   * Copy a terminal child outcome onto its delegation.
+   * Returns true when the original parent Run becomes runnable again.
+   */
+  observeChild(childRunId: string, now: string): boolean {
+    const delegation = this.delegationForChild(childRunId);
+    if (!delegation || !["pending", "uncertain"].includes(delegation.state)) return false;
+    const child = this.run(childRunId);
+    if (!["succeeded", "failed", "uncertain", "closed"].includes(child.state)) return false;
+    const outcome = child.outcome
+      ? (JSON.parse(child.outcome) as { kind?: string; reply?: string })
+      : {};
+    const state =
+      child.state === "uncertain"
+        ? "uncertain"
+        : child.state === "succeeded"
+          ? "succeeded"
+          : child.state === "failed"
+            ? "failed"
+            : "cancelled";
+    const result = typeof outcome.reply === "string" ? outcome.reply : child.state;
+    this.db
+      .prepare(
+        `UPDATE delegations SET state = ?, result = ?, resolved_at = ?
+ WHERE id = ? AND state IN ('pending', 'uncertain')`,
+      )
+      .run(state, result, now, delegation.id);
+    const parent = this.run(delegation.parentRunId);
+    if (["succeeded", "failed", "closed"].includes(parent.state)) {
+      this.db
+        .prepare("INSERT OR IGNORE INTO late_results VALUES (?, ?, ?, ?)")
+        .run(delegation.id, parent.id, result, now);
+      return false;
+    }
+    if (state === "uncertain") {
+      this.db
+        .prepare(
+          `UPDATE runs SET held = 1,
+ wait_reason = CASE WHEN state = 'waiting' THEN 'delegation' ELSE wait_reason END,
+ updated_at = ? WHERE id = ?`,
+        )
+        .run(now, parent.id);
+      return false;
+    }
+    if (parent.state === "stopping") return false;
+    if (
+      parent.state !== "waiting" ||
+      this.openDelegations(parent.id) ||
+      this.openQuestions(parent.id)
+    )
+      return false;
+    this.db.prepare("UPDATE runs SET held = 0 WHERE id = ?").run(parent.id);
+    this.resumeWait(parent.id, now);
+    return true;
+  }
+
+  private openQuestions(runId: string): boolean {
+    return this.questions(runId).some((q) => q.state === "pending" || q.state === "expired");
+  }
+
+  private recordDenial(input: {
+    requestId: string;
+    sourceBotId: string;
+    targetBotId: string;
+    parentTaskId: string;
+    parentRunId: string;
+    parentAttemptId: string;
+    text: string;
+    now: string;
+  }) {
+    return this.admit(
+      input.requestId,
+      {
+        operation: "delegate-denied",
+        sourceBotId: input.sourceBotId,
+        targetBotId: input.targetBotId,
+        parentRunId: input.parentRunId,
+        text: input.text,
+      },
+      () => {
+        const existing = this.db
+          .prepare(
+            `SELECT id FROM delegations
+ WHERE source_bot_id = ? AND target_bot_id = ? AND parent_run_id = ? AND text = ? AND state = 'denied'`,
+          )
+          .get(input.sourceBotId, input.targetBotId, input.parentRunId, input.text) as
+          | { id: string }
+          | undefined;
+        if (existing) return this.delegation(existing.id);
+        this.db
+          .prepare(`INSERT INTO delegations (
+ id, source_bot_id, target_bot_id, parent_task_id, parent_run_id, parent_attempt_id,
+ originating_run_id, text, state, result, created_at, resolved_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'denied', ?, ?, ?)`)
+          .run(
+            input.requestId,
+            input.sourceBotId,
+            input.targetBotId,
+            input.parentTaskId,
+            input.parentRunId,
+            input.parentAttemptId,
+            input.parentRunId,
+            input.text,
+            "Directed collaboration is denied.",
+            input.now,
+            input.now,
+          );
+        return this.delegation(input.requestId);
+      },
+    );
+  }
+
+  private delegationIdentityUsed(id: string): boolean {
+    return Boolean(
+      this.publicationRow(id) ||
+        this.db.prepare("SELECT id FROM owner_questions WHERE id = ?").get(id) ||
+        this.db.prepare("SELECT id FROM routines WHERE request_id = ?").get(id),
+    );
+  }
+
+  private delegationsWhere(clause: string, values: string[]) {
+    return this.db
+      .prepare(`SELECT id, source_bot_id AS sourceBotId, target_bot_id AS targetBotId,
+ parent_task_id AS parentTaskId, parent_run_id AS parentRunId, parent_attempt_id AS parentAttemptId,
+ originating_run_id AS originatingRunId, child_task_id AS childTaskId, child_run_id AS childRunId,
+ text, state, result, created_at AS createdAt, resolved_at AS resolvedAt
+ FROM delegations WHERE ${clause} ORDER BY rowid`)
+      .all(...values) as unknown as {
+      id: string;
+      sourceBotId: string;
+      targetBotId: string;
+      parentTaskId: string;
+      parentRunId: string;
+      parentAttemptId: string;
+      originatingRunId: string;
+      childTaskId: string | null;
+      childRunId: string | null;
+      text: string;
+      state: "pending" | "succeeded" | "failed" | "denied" | "cancelled" | "uncertain";
+      result: string | null;
+      createdAt: string;
+      resolvedAt: string | null;
+    }[];
   }
 }

@@ -1,7 +1,7 @@
 # Durable Runs and serial Bot execution
 
 Status: accepted
-Implementation: partial. Serial Bot execution and fair admission are implemented. Cumulative Run budgets are implemented. Persistent question waits and same-Run continuation are implemented. One-shot and cron Routine occurrences use the same admission and budget rules. Child waits remain later work.
+Implementation: partial. Serial Bot execution and fair admission are implemented. Cumulative Run budgets are implemented. Persistent question waits and same-Run continuation are implemented. One-shot and cron Routine occurrences use the same admission and budget rules. Single-hop child waits release capacity and resume the original parent Run. Nested delegation remains later work.
 
 A Task is the requested objective; a Run is one logical execution of that Task;
 an Attempt is a period of actual execution. A durable wait retains the Task and

@@ -411,6 +411,21 @@ same-Run continuation through an owner answer. These checks use controlled
 upstreams and do not establish actual-service acceptance.
 
 
+## Single-hop delegation
+
+`tests/delegations.test.ts` uses authenticated HTTP, real SQLite and mailboxes,
+and a controlled clock. It covers default deny, rejected self-grants and
+ask-each-time mode, one allowed child Task/Run, selected text without the source
+workspace, reverse denial, rejected nesting, parent wait and budget release,
+targeted child steering, ordinary chat isolation, child failure, uncertain child
+hold, confirmed cancellation with a late result, and restart of the same parent
+Run. A real Pi case delegates through the production tool, steers the child at a
+model boundary, and resumes the parent ledger with the child result, saved
+instructions and current Memory. `tests/browser/delegations.spec.ts` saves an
+allow grant and shows the parent and child links after reload and a fresh Host.
+The opt-in container suite does not add a delegation case; text handoff does not
+depend on a source mount. Actual-service acceptance remains separate.
+
 ## Routines
 
 `tests/routines.test.ts` uses authenticated HTTP, real SQLite and directional

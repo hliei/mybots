@@ -1,4 +1,5 @@
 import { showAttachments } from "./attachments.ts";
+import { showCollaboration } from "./collaboration.ts";
 import {
   clearBackgroundSelection,
   selectedBackgroundIds,
@@ -34,6 +35,19 @@ interface Question {
   answer: string | null;
   deadline: string | null;
 }
+interface Delegation {
+  id: string;
+  sourceBotId: string;
+  targetBotId: string;
+  parentTaskId: string;
+  parentRunId: string;
+  originatingRunId: string;
+  childTaskId: string | null;
+  childRunId: string | null;
+  text: string;
+  state: string;
+  result: string | null;
+}
 interface Run {
   id: string;
   state: string;
@@ -47,6 +61,7 @@ interface Run {
   references: { id: string; role: string; text: string }[];
   outcome: Outcome | null;
   questions: Question[];
+  delegations: Delegation[];
   progress: Publication[];
   selectedResults: SelectedResult[];
   lateEvidence?: { text: string }[];
@@ -71,6 +86,7 @@ interface Task {
 }
 interface Detail {
   admission: { activeLimit: number; activeCount: number };
+  collaboration: { targetBotId: string; name: string; mode: "deny" | "allow" }[];
   thread: { id: string; botId: string; backgroundBoundary: number };
   tasks: Task[];
   messages: { id: string; runId: string; role: string; content: string }[];
@@ -110,6 +126,14 @@ function isDetail(value: unknown): value is Detail {
     typeof value.admission.activeLimit === "number" &&
     typeof value.admission.activeCount === "number" &&
     record(value.thread) &&
+    Array.isArray(value.collaboration) &&
+    value.collaboration.every(
+      (peer: unknown) =>
+        record(peer) &&
+        typeof peer.targetBotId === "string" &&
+        typeof peer.name === "string" &&
+        (peer.mode === "deny" || peer.mode === "allow"),
+    ) &&
     typeof value.thread.id === "string" &&
     typeof value.thread.backgroundBoundary === "number" &&
     Array.isArray(value.messages) &&
@@ -160,6 +184,24 @@ function isDetail(value: unknown): value is Detail {
                 ["pending", "answered", "expired", "cancelled"].includes(q.state as string) &&
                 (q.answer === null || typeof q.answer === "string") &&
                 (q.deadline === null || typeof q.deadline === "string"),
+            ) &&
+            Array.isArray(run.delegations) &&
+            run.delegations.every(
+              (row: unknown) =>
+                record(row) &&
+                [
+                  row.id,
+                  row.sourceBotId,
+                  row.targetBotId,
+                  row.parentTaskId,
+                  row.parentRunId,
+                  row.originatingRunId,
+                  row.text,
+                  row.state,
+                ].every((item) => typeof item === "string") &&
+                (row.childTaskId === null || typeof row.childTaskId === "string") &&
+                (row.childRunId === null || typeof row.childRunId === "string") &&
+                (row.result === null || typeof row.result === "string"),
             ) &&
             Array.isArray(run.progress) &&
             run.progress.every(publication) &&
@@ -269,6 +311,7 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
   }
   panel.hidden = !botId;
   if (!botId) {
+    showCollaboration(undefined, [], () => undefined);
     await showHistory(undefined, []);
     await showAttachments(undefined, []);
     return;
@@ -289,6 +332,9 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
     const detail: unknown = await response.json();
     if (!isDetail(detail)) throw new Error();
     if (current !== version) return;
+    showCollaboration(botId, detail.collaboration, () => {
+      if (botId) void showChat(botId);
+    });
     setBackgroundBoundary(detail.thread.backgroundBoundary);
     selected.textContent = `Thread ID: ${detail.thread.id} · Chat background boundary: ${detail.thread.backgroundBoundary}. Host execution: ${detail.admission.activeCount} of ${detail.admission.activeLimit} active.`;
     const priorTarget = target.value;
@@ -380,6 +426,7 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
           );
           for (const question of run.questions)
             article.append(questionCard(task.id, run, question));
+          for (const delegation of run.delegations) article.append(delegationCard(delegation));
           if (run.outcome)
             article.append(
               paragraph(
@@ -469,6 +516,24 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
       notice.textContent =
         "Thread state unavailable. Displayed results may be stale. Refresh to retry.";
   }
+}
+function delegationCard(delegation: Delegation): HTMLElement {
+  const section = document.createElement("section");
+  section.dataset.delegationId = delegation.id;
+  section.append(
+    paragraph(
+      `Delegation ${delegation.id}: ${delegation.sourceBotId} → ${delegation.targetBotId} · ${delegation.state}`,
+    ),
+    paragraph(`Parent Task ${delegation.parentTaskId} · Parent Run ${delegation.parentRunId}`),
+    paragraph(`Originating Run ${delegation.originatingRunId}`),
+    paragraph(`Selected text: ${delegation.text}`),
+  );
+  if (delegation.childTaskId && delegation.childRunId)
+    section.append(
+      paragraph(`Child Task ${delegation.childTaskId} · Child Run ${delegation.childRunId}`),
+    );
+  if (delegation.result) section.append(paragraph(`Child result: ${delegation.result}`));
+  return section;
 }
 function questionCard(taskId: string, run: Run, question: Question): HTMLElement {
   const section = document.createElement("section");

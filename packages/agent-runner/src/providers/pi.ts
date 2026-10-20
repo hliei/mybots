@@ -35,6 +35,7 @@ export class PiProvider implements AgentProvider {
     let finished = false;
     let aborted = false;
     let questionWait = false;
+    let delegationWait = false;
     const knownInputs = new Set<string>();
     let admissionClosed = input.control === "reset";
     let outstanding = 1;
@@ -145,6 +146,7 @@ export class PiProvider implements AgentProvider {
                   "read_history",
                   "create_routine",
                   "ask_question",
+                  "delegate",
                   "publish_progress",
                   "publish_result",
                   "read_operation",
@@ -162,6 +164,7 @@ export class PiProvider implements AgentProvider {
                       id?: string;
                       state?: string;
                       question?: { id: string; state: string };
+                      delegation?: { id?: string; state?: string };
                     };
                     const question = operation === "ask_question" ? response : response?.question;
                     const suppliedAnswer = input.runContext?.answers?.some(
@@ -174,6 +177,11 @@ export class PiProvider implements AgentProvider {
                         (question.state === "answered" && !suppliedAnswer))
                     ) {
                       questionWait = true;
+                      admissionClosed = true;
+                    }
+                    const delegation = operation === "delegate" ? response : response?.delegation;
+                    if (delegation?.state === "pending" || delegation?.state === "uncertain") {
+                      delegationWait = true;
                       admissionClosed = true;
                     }
                     return result;
@@ -189,7 +197,7 @@ export class PiProvider implements AgentProvider {
         const finishTurn = session.agent.finishTurn;
         session.agent.finishTurn = async (turn, signal) => {
           const decision = await finishTurn?.(turn, signal);
-          return questionWait ? { action: "end" } : decision || undefined;
+          return questionWait || delegationWait ? { action: "end" } : decision || undefined;
         };
         if (durable) {
           for (const entry of manager.getEntries()) {
@@ -215,7 +223,22 @@ export class PiProvider implements AgentProvider {
         const freshAnswers = (input.runContext?.answers ?? []).filter(
           (answer) => !answered.has(answer.id),
         );
+        const suppliedDelegations = new Set(
+          manager
+            .getEntries()
+            .flatMap((entry) =>
+              entry.type === "message" &&
+              "mybotsDelegationIds" in entry.message &&
+              Array.isArray(entry.message.mybotsDelegationIds)
+                ? entry.message.mybotsDelegationIds
+                : [],
+            ),
+        );
+        const freshDelegations = (input.runContext?.delegations ?? []).filter(
+          (row) => row.state !== "pending" && !suppliedDelegations.has(row.id),
+        );
         let answerPromptPending = false;
+        let delegationPromptPending = false;
         session.setFollowUpMode("one-at-a-time");
         if (durable) {
           const budget = this.options.model.contextWindow - this.options.model.maxTokens;
@@ -285,11 +308,17 @@ export class PiProvider implements AgentProvider {
             event.message.role === "user" &&
             !("mybotsReference" in event.message)
           ) {
-            if (answerPromptPending) {
+            if (answerPromptPending || delegationPromptPending) {
               Object.assign(event.message, {
-                mybotsQuestionIds: freshAnswers.map((answer) => answer.id),
+                ...(answerPromptPending
+                  ? { mybotsQuestionIds: freshAnswers.map((answer) => answer.id) }
+                  : {}),
+                ...(delegationPromptPending
+                  ? { mybotsDelegationIds: freshDelegations.map((row) => row.id) }
+                  : {}),
               });
               answerPromptPending = false;
+              delegationPromptPending = false;
             } else if (!("mybotsInputId" in event.message) && input.inputId)
               Object.assign(event.message, { mybotsInputId: input.inputId });
           }
@@ -466,23 +495,37 @@ export class PiProvider implements AgentProvider {
                 throw new Error(
                   "Run has incomplete tool evidence; inspect its outcome before continuing.",
                 );
+              const continuation: string[] = [];
               if (freshAnswers.length) {
                 answerPromptPending = true;
-                await session.prompt(
+                continuation.push(
                   freshAnswers
                     .map(
                       (answer) =>
                         `Owner answer to question ${answer.id}:\n${answer.question}\n\n${answer.answer}`,
                     )
                     .join("\n\n"),
-                  { expandPromptTemplates: false },
                 );
-              } else await session.agent.continue();
+              }
+              if (freshDelegations.length) {
+                delegationPromptPending = true;
+                continuation.push(
+                  freshDelegations
+                    .map(
+                      (row) =>
+                        `Delegated work ${row.id} for Bot ${row.targetBotId} is ${row.state}.\nSelected text:\n${row.text}\nResult:\n${row.result ?? ""}`,
+                    )
+                    .join("\n\n"),
+                );
+              }
+              if (continuation.length)
+                await session.prompt(continuation.join("\n\n"), { expandPromptTemplates: false });
+              else await session.agent.continue();
             }
           } else await session.prompt(input.prompt, { expandPromptTemplates: false });
-          if (questionWait && !aborted) {
+          if ((questionWait || delegationWait) && !aborted) {
             publishEvidence();
-            emit({ type: "wait", reason: "owner-question" });
+            emit({ type: "wait", reason: delegationWait ? "delegation" : "owner-question" });
             return;
           }
           emit({

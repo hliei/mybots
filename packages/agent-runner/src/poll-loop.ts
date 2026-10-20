@@ -68,6 +68,7 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
             const id =
               operation === "create_routine" ||
               operation === "ask_question" ||
+              operation === "delegate" ||
               operation === "publish_progress" ||
               operation === "publish_result"
                 ? supplied

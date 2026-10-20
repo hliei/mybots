@@ -1320,6 +1320,7 @@ export class Host {
       this.schedule();
       return routine;
     }
+    if (request.operation === "delegate") return this.delegate(execution, request, input);
     if (request.operation === "ask_question") return this.askQuestion(execution, request, input);
     if (request.operation === "read_operation") return this.readPublication(execution, input);
     if (request.operation === "publish_progress" || request.operation === "publish_result")
@@ -1367,6 +1368,62 @@ export class Host {
     });
   }
 
+  updateCollaboration(sourceBotId: string, targetBotId: string, value: unknown) {
+    this.store.threads.thread(sourceBotId);
+    if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
+    const input = chatInput(value, ["mode"]);
+    if (input.mode === "ask-each-time")
+      throw new ChatRequestError("Ask-each-time collaboration is not available.", 409);
+    if (input.mode !== "deny" && input.mode !== "allow")
+      throw new ChatRequestError("Collaboration mode must be deny or allow.");
+    return this.store.threads.setCollaboration(
+      sourceBotId,
+      targetBotId,
+      input.requestId,
+      input.mode,
+      this.timestamp(),
+    );
+  }
+
+  private delegate(
+    execution: SessionExecution,
+    request: HistoryRequest,
+    input: Record<string, unknown>,
+  ) {
+    if (Object.keys(input).some((key) => !["requestId", "targetBotId", "text"].includes(key)))
+      throw new ChatRequestError("Unknown delegation field.");
+    const run = this.store.threads.run(execution.route.session.id);
+    const attempt = this.store.threads.executingAttempt(run.id);
+    if (run.state !== "active" || !attempt || attempt.incarnation !== request.incarnation)
+      throw new ChatRequestError("Execution scope is no longer active.", 403);
+    if (
+      typeof input.requestId !== "string" ||
+      input.requestId !== request.id ||
+      !REQUEST_ID.test(input.requestId) ||
+      typeof input.targetBotId !== "string" ||
+      !input.targetBotId.trim()
+    )
+      throw new ChatRequestError("A stable requestId and target Bot are required.");
+    if (
+      typeof input.text !== "string" ||
+      !input.text.trim() ||
+      Array.from(input.text).length > 32000
+    )
+      throw new ChatRequestError("Selected delegation text must be 1 to 32000 characters.");
+    const recorded = this.store.threads.delegate({
+      requestId: input.requestId,
+      sourceBotId: execution.route.session.agent_group_id,
+      targetBotId: input.targetBotId,
+      parentTaskId: run.task_id,
+      parentRunId: run.id,
+      parentAttemptId: attempt.id,
+      text: input.text,
+      now: this.timestamp(),
+    });
+    if (recorded?.state === "pending") this.schedule();
+    return recorded;
+  }
+
   async answerQuestion(botId: string, runId: string, questionId: string, value: unknown) {
     const input = chatInput(value, ["text"]);
     await this.threadDetail(botId);
@@ -1410,6 +1467,11 @@ export class Host {
           row.source.runId === run.id,
       );
     if (routine) return { state: "recorded" as const, routine };
+    const delegation = this.store.threads.delegation(
+      typeof input.requestId === "string" ? input.requestId : "",
+    );
+    if (delegation && delegation.parentRunId === run.id)
+      return { state: "recorded" as const, delegation };
     if (question) return { state: "recorded" as const, question };
     return publication ? { state: "recorded" as const, publication } : { state: "absent" as const };
   }
@@ -1720,7 +1782,14 @@ export class Host {
     await this.threadDetail(botId);
     if (this.stopped) throw new Error("Host is stopped");
     await this.ensureStopped(botId, runId);
-    return this.store.threads.close(botId, runId, input.requestId as string, this.timestamp());
+    const result = this.store.threads.close(
+      botId,
+      runId,
+      input.requestId as string,
+      this.timestamp(),
+    );
+    if (this.store.threads.observeChild(runId, this.timestamp()) && !this.stopped) this.schedule();
+    return result;
   }
 
   private async beginStop(runId: string): Promise<void> {
@@ -1749,6 +1818,8 @@ export class Host {
       execution.cutover = undefined;
       const handle = execution.handle;
       if (!handle) {
+        await this.stopOwnedChildren(id);
+        if (this.ownedChildrenUnconfirmed(id)) return;
         this.finishConfirmedStop(execution);
         return;
       }
@@ -1756,6 +1827,8 @@ export class Host {
       try {
         await handle.stop();
         if (execution.handle === handle) execution.handle = undefined;
+        await this.stopOwnedChildren(id);
+        if (this.ownedChildrenUnconfirmed(id)) return;
         this.finishConfirmedStop(execution);
       } catch {
         execution.superseded.delete(handle);
@@ -1786,7 +1859,37 @@ export class Host {
     execution.mailbox.syncAcknowledgements();
     this.syncChat(execution);
     this.store.threads.finishStop(id, execution.mailbox.acknowledgements(), this.timestamp());
+    if (this.store.threads.observeChild(id, this.timestamp()) && !this.stopped) this.schedule();
     this.releaseBot(execution);
+  }
+
+  /** A parent stop stays unconfirmed while an owned child is still running or uncertain. */
+  private ownedChildrenUnconfirmed(parentRunId: string): boolean {
+    const blocked = this.store.threads.childRunIds(parentRunId).some((childRunId) => {
+      const state = this.store.threads.run(childRunId).state;
+      return state !== "succeeded" && state !== "failed" && state !== "closed";
+    });
+    if (blocked)
+      this.store.threads.markStopUnconfirmed(
+        parentRunId,
+        "Owned child stop is unconfirmed.",
+        this.timestamp(),
+      );
+    return blocked;
+  }
+
+  /** Confirmed parent stop also stops owned child Runs and leaves unrelated target work running. */
+  private async stopOwnedChildren(parentRunId: string): Promise<void> {
+    for (const childRunId of this.store.threads.childRunIds(parentRunId)) {
+      const run = this.store.threads.run(childRunId);
+      if (run.state === "uncertain" || ["succeeded", "failed", "closed"].includes(run.state))
+        continue;
+      if (run.state !== "stopping") this.store.threads.markStopping(run, this.timestamp());
+      const execution = await this.prepare(
+        this.store.route(this.store.threads.session(childRunId)),
+      );
+      await this.executeStop(execution);
+    }
   }
 
   /** Recovery backoff is not execution. The driver observes wall-clock process_after. */
@@ -1844,6 +1947,7 @@ export class Host {
       },
       this.timestamp(),
     );
+    if (this.store.threads.observeChild(id, this.timestamp()) && !this.stopped) this.schedule();
     const state = this.store.threads.run(id).state;
     if (state === "stopping" || state === "waiting") return;
     if (["uncertain", "succeeded", "failed", "closed"].includes(state)) {
@@ -1992,6 +2096,18 @@ export class Host {
           .questions(execution.route.session.id)
           .filter((q) => q.state === "answered")
           .map((q) => ({ id: q.id, question: q.text, answer: q.answer as string })),
+        delegations: this.store.threads
+          .delegationsInvolving(execution.route.session.id)
+          .filter(
+            (row) => row.parentRunId === execution.route.session.id && row.state !== "pending",
+          )
+          .map((row) => ({
+            id: row.id,
+            targetBotId: row.targetBotId,
+            state: row.state,
+            text: row.text,
+            result: row.result,
+          })),
       },
     });
   }
@@ -2018,10 +2134,20 @@ export class Host {
     this.store.threads.expireQuestions(this.timestamp());
     const state = this.store.threads.run(id).state;
     const questions = this.store.threads.questions(id);
-    const questionsSettled = questions.length > 0 && questions.every((q) => q.state === "answered");
+    const delegations = this.store.threads
+      .delegationsInvolving(id)
+      .filter((row) => row.parentRunId === id);
+    const questionsOpen = questions.some((q) => q.state === "pending" || q.state === "expired");
+    const delegationsOpen = delegations.some(
+      (row) => row.state === "pending" || row.state === "uncertain",
+    );
     if (
       state === "waiting" &&
-      (questions.length ? questionsSettled : execution.mailbox.durableResume())
+      !questionsOpen &&
+      !delegationsOpen &&
+      (questions.some((q) => q.state === "answered") ||
+        delegations.some((row) => row.state !== "pending") ||
+        execution.mailbox.durableResume())
     ) {
       this.store.threads.resumeWait(id, this.timestamp());
       execution.mailbox.clearDurableSignal("durable-resume");
@@ -2042,8 +2168,21 @@ export class Host {
               record.text.includes(`"id":"${question.id}"`),
           ),
       );
+    const recordedDelegation =
+      !execution.handle &&
+      delegations.some(
+        (row) =>
+          (row.state === "pending" || row.state === "uncertain") &&
+          records.some(
+            (record) =>
+              record.kind === "tool-result" &&
+              ["delegate", "read_operation"].includes(record.toolName ?? "") &&
+              record.text.includes(`"id":"${row.id}"`),
+          ),
+      );
     const reason =
-      execution.mailbox.durableWait() ?? (recordedQuestion ? "owner-question" : undefined);
+      execution.mailbox.durableWait() ??
+      (recordedQuestion ? "owner-question" : recordedDelegation ? "delegation" : undefined);
     if (
       !reason ||
       !toolResultsComplete(

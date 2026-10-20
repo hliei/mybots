@@ -3,7 +3,7 @@ import type { HistoryOperation } from "@mybots/mailbox";
 import { Type } from "typebox";
 
 export const PROGRESS_INSTRUCTIONS =
-  "create_routine schedules independent own-Bot work. Use runAt/timezone for one-shot or five-field cron inheriting Bot timezone; clarify unresolved intent. Report the resolved schedule. Include selected inputs explicitly; chat is not inherited. ask_question persists a required owner question and ends the Attempt after all tool results are recorded. Answers arrive as correlated evidence in a later Attempt of this Run. Ordinary Task input does not answer a question. publish_progress records owner-visible progress for this Attempt. publish_result records a selected result summary and optional immutable snapshots of workspace-relative files (up to 16, each within the installation file limit, 25 MiB by default). Neither completes the Run, changes its outcome, grants privileges, nor administers a Bot. Do not send Bot, Task, Run, or Attempt identity. After a timeout, call read_operation with the same requestId; do not publish that request again.";
+  "create_routine schedules independent own-Bot work with runAt/timezone or five-field cron. Include selected inputs; chat is not inherited. ask_question ends the Attempt; answers arrive later and ordinary input does not answer. delegate sends selected text to an allowed Bot and ends the Attempt. Denial is input; do not repeat it, target yourself, nest, or grant permission. publish_progress and publish_result do not complete the Run, change its outcome, or grant authority. Do not send Bot, Task, Run, or Attempt identity. After a timeout, read_operation with the same requestId.";
 
 export function createProgressTools(operation: HistoryOperation) {
   const text = (value: unknown) => ({
@@ -15,7 +15,7 @@ export function createProgressTools(operation: HistoryOperation) {
       name: "create_routine",
       label: "Create Routine",
       description:
-        "Schedule independent own-Bot work. Return the resolved instant/timezone/next occurrence. On timeout, read_operation with the same requestId.",
+        "Schedule independent own-Bot work. On timeout, read_operation with the same requestId.",
       parameters: Type.Object(
         {
           requestId: Type.String({ minLength: 1, maxLength: 128 }),
@@ -23,13 +23,9 @@ export function createProgressTools(operation: HistoryOperation) {
             minLength: 1,
             maxLength: 32000,
           }),
-          runAt: Type.Optional(Type.String({ description: "One-shot ISO instant with offset." })),
-          timezone: Type.Optional(
-            Type.String({ description: "One-shot IANA timezone; omit for cron." }),
-          ),
-          cron: Type.Optional(
-            Type.String({ description: "Five-field cron, instead of runAt/timezone." }),
-          ),
+          runAt: Type.Optional(Type.String({ description: "ISO instant with offset." })),
+          timezone: Type.Optional(Type.String({ description: "IANA timezone." })),
+          cron: Type.Optional(Type.String({ description: "Five-field cron." })),
         },
         { additionalProperties: false },
       ),
@@ -38,17 +34,34 @@ export function createProgressTools(operation: HistoryOperation) {
       },
     }),
     defineTool({
+      name: "delegate",
+      label: "Delegate to Bot",
+      description:
+        "Send selected text to an allowed Bot. Ends this Attempt; the result arrives later.",
+      parameters: Type.Object(
+        {
+          requestId: Type.String({ minLength: 1, maxLength: 128 }),
+          targetBotId: Type.String({ minLength: 1, maxLength: 128 }),
+          text: Type.String({ minLength: 1, maxLength: 32000 }),
+        },
+        { additionalProperties: false },
+      ),
+      async execute(_id, input, signal) {
+        return text(await operation("delegate", input, signal));
+      },
+    }),
+    defineTool({
       name: "ask_question",
       label: "Ask owner question",
       description:
-        "Ask the owner for required information. Persist a question and end this Attempt after the complete tool batch. The owner answers in a separate Web control; a later Attempt continues this Run. Default wait is indefinite. Use a stable requestId; after timeout use read_operation with that identity.",
+        "Persist an owner question and end this Attempt. A later Attempt receives the answer.",
       parameters: Type.Object(
         {
           requestId: Type.String({ minLength: 1, maxLength: 128 }),
           text: Type.String({ minLength: 1, maxLength: 2000 }),
           deadline: Type.Optional(
             Type.String({
-              description: "Explicit ISO 8601 deadline; omit for indefinite waiting.",
+              description: "ISO deadline; omit if indefinite.",
             }),
           ),
         },
@@ -61,8 +74,7 @@ export function createProgressTools(operation: HistoryOperation) {
     defineTool({
       name: "publish_progress",
       label: "Publish progress",
-      description:
-        "Record owner-visible progress for the current Attempt. Reuse requestId after a timeout. This does not complete the Run or change its outcome.",
+      description: "Record owner-visible progress. This does not complete the Run.",
       parameters: Type.Object(
         {
           requestId: Type.String({ minLength: 1, maxLength: 128 }),
@@ -78,7 +90,7 @@ export function createProgressTools(operation: HistoryOperation) {
       name: "publish_result",
       label: "Publish selected result",
       description:
-        "Record a selected result summary with optional workspace-relative files preserved as immutable downloads for the current Attempt. This is not the Run outcome and grants no authority. Reuse requestId after a timeout.",
+        "Record a result summary and optional workspace files. This is not the Run outcome.",
       parameters: Type.Object(
         {
           requestId: Type.String({ minLength: 1, maxLength: 128 }),
@@ -95,7 +107,7 @@ export function createProgressTools(operation: HistoryOperation) {
       name: "read_operation",
       label: "Read host operation",
       description:
-        "Read a Routine, question, progress or selected-result request by its requestId. This does not publish another copy.",
+        "Read a Routine, question, delegation, progress or selected-result request by its requestId. This does not publish another copy.",
       parameters: Type.Object(
         { requestId: Type.String({ minLength: 1, maxLength: 128 }) },
         { additionalProperties: false },
