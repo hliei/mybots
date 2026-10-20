@@ -1109,55 +1109,63 @@ it("pauses automatic starts without cancelling current work and resumes a future
   }
 });
 
-it("runs a paused Routine once without enabling recurrence or overlapping an unfinished occurrence", async () => {
-  const driver = new MailboxDriver();
-  const release = Promise.withResolvers<void>();
-  driver.respond = async (_input, _material, signal) => {
-    await Promise.race([
-      release.promise,
-      new Promise<void>((resolve) => {
-        if (signal.aborted) resolve();
-        else signal.addEventListener("abort", () => resolve(), { once: true });
-      }),
-    ]);
-    return "Manual archive";
-  };
-  try {
-    await start(driver);
-    const cron = await (
-      await post("routines", {
-        requestId: "manual-cron",
-        text: "Archive manually",
-        cron: "* * * * *",
-      })
-    ).json();
-    expect((await post(`routines/${cron.id}/pause`, { requestId: "manual-pause" })).status).toBe(
-      200,
-    );
-    const started = await post(`routines/${cron.id}/run`, { requestId: "manual-run" });
-    expect(started.status).toBe(202);
-    expect(await started.json()).toMatchObject({ id: cron.id, paused: true, replayed: false });
-    expect((await post(`routines/${cron.id}/run`, { requestId: "manual-run" })).status).toBe(202);
-    await vi.waitFor(async () =>
-      expect((await get("thread")).tasks[0].runs[0].state).toBe("active"),
-    );
-    expect((await get("thread")).tasks[0].routine.text).toBe("Archive manually");
-    expect((await post(`routines/${cron.id}/run`, { requestId: "manual-again" })).status).toBe(409);
-    now += 120000;
-    await host.reconcile();
-    expect((await get("thread")).tasks).toHaveLength(1);
-    expect((await get("routines")).routines[0]).toMatchObject({ paused: true });
-    release.resolve();
-    await vi.waitFor(async () =>
-      expect((await get("thread")).tasks[0].runs[0].state).toBe("succeeded"),
-    );
-    await host.reconcile();
-    expect((await get("thread")).tasks).toHaveLength(1);
-    expect((await get("routines")).routines[0].paused).toBe(true);
-  } finally {
-    release.resolve();
-  }
-});
+it.each([false, true])(
+  "runs a Routine once without replaying busy slots (paused: %s)",
+  async (paused) => {
+    const driver = new MailboxDriver();
+    const release = Promise.withResolvers<void>();
+    driver.respond = async (_input, _material, signal) => {
+      await Promise.race([
+        release.promise,
+        new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+      ]);
+      return "Manual archive";
+    };
+    try {
+      await start(driver);
+      const cron = await (
+        await post("routines", {
+          requestId: "manual-cron",
+          text: "Archive manually",
+          cron: "* * * * *",
+        })
+      ).json();
+      if (paused)
+        expect(
+          (await post(`routines/${cron.id}/pause`, { requestId: "manual-pause" })).status,
+        ).toBe(200);
+      const started = await post(`routines/${cron.id}/run`, { requestId: "manual-run" });
+      expect(started.status).toBe(202);
+      expect(await started.json()).toMatchObject({ id: cron.id, paused, replayed: false });
+      expect((await post(`routines/${cron.id}/run`, { requestId: "manual-run" })).status).toBe(202);
+      await vi.waitFor(async () =>
+        expect((await get("thread")).tasks[0].runs[0].state).toBe("active"),
+      );
+      expect((await get("thread")).tasks[0].routine.text).toBe("Archive manually");
+      expect((await post(`routines/${cron.id}/run`, { requestId: "manual-again" })).status).toBe(
+        409,
+      );
+      now += 120000;
+      await host.reconcile();
+      expect((await get("thread")).tasks).toHaveLength(1);
+      expect((await get("routines")).routines[0]).toMatchObject({ paused });
+      release.resolve();
+      await vi.waitFor(async () =>
+        expect((await get("thread")).tasks[0].runs[0].state).toBe("succeeded"),
+      );
+      await host.reconcile();
+      expect((await get("thread")).tasks).toHaveLength(1);
+      expect((await get("routines")).routines[0].paused).toBe(paused);
+      if (!paused)
+        expect((await get("routines")).routines[0].nextOccurrence).toBe("2026-10-20T00:03:00.000Z");
+    } finally {
+      release.resolve();
+    }
+  },
+);
 
 it("keeps recurrence after an occurrence stop and retains a deleted Routine without future starts", async () => {
   const driver = new MailboxDriver();

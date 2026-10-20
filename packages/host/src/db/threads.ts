@@ -252,6 +252,9 @@ export class ThreadStore {
       if (saved.deleted_at) throw new ChatRequestError("Routine is deleted.", 409);
       if (routineBusy(this.db, routine.id))
         throw new ChatRequestError("Routine already has an unfinished occurrence.", 409);
+      this.db
+        .prepare("UPDATE routines SET next_occurrence = NULL WHERE id = ? AND cron IS NOT NULL")
+        .run(routine.id);
       const thread = this.thread(botId);
       const taskId = randomUUID();
       const runId = randomUUID();
