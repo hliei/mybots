@@ -26,7 +26,9 @@ function isHistoryRequest(value: unknown): value is HistoryRequest {
     value.id.length > 0 &&
     Number.isSafeInteger(value.incarnation) &&
     Number(value.incarnation) >= 0 &&
-    (value.operation === "search_history" || value.operation === "read_history") &&
+    typeof value.operation === "string" &&
+    value.operation.length > 0 &&
+    value.operation.length <= 64 &&
     "input" in value
   );
 }

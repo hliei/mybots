@@ -483,10 +483,18 @@ historical seed references, hidden reasoning, system prompts and provider-only
 payloads. Original tool calls/results remain separate from Thread conversation
 and survive SDK compaction. Reads never execute or mutably reopen an SDK session.
 
-Production `search_history` and `read_history` tools use correlated directional
-mailbox requests. The Host derives Bot/Thread/Run scope from the owned execution
-mailbox and checks its actual executor incarnation. Payload identity fields are
-rejected. Search is bounded by the Run's captured background boundary and excludes
+Production `search_history`, `read_history`, `publish_progress`, `publish_result`
+and `read_operation` tools use the same correlated directional mailbox requests.
+The Host derives Bot/Task/Run/Attempt scope from the owned execution mailbox and
+its open Attempt, and checks the actual executor incarnation. Payload identity
+fields, privilege grants, Bot administration and cross-Bot administration are
+rejected. Progress and a selected text result keep their request identity:
+repeating that identity, or calling `read_operation` after a timeout, returns the
+stored record and does not publish another copy. A late or cancelled request
+cannot change the Run outcome or make cancelled work active again. Progress and
+selected results are not searchable conversation text and are not the Run outcome.
+
+Search is bounded by the Run's captured background boundary and excludes
 its source message and all later messages; anchor reading may include later
 corrections in the same authorized range. Unknown/cross-Bot anchors and stale
 executors cannot widen that scope. Historical text is untrusted reference data,

@@ -63,6 +63,21 @@ function preview(text: string) {
   const chars = Array.from(text);
   return { text: chars.slice(0, 2000).join(""), truncated: chars.length > 2000 };
 }
+function publicationPreview(row: {
+  id: string;
+  attemptId: string;
+  text: string;
+  createdAt: string;
+}) {
+  const shown = preview(row.text);
+  return {
+    id: row.id,
+    attemptId: row.attemptId,
+    text: shown.text,
+    truncated: shown.truncated,
+    createdAt: row.createdAt,
+  };
+}
 function outcomePreview(serialized: string | null) {
   if (!serialized) return null;
   const outcome = JSON.parse(serialized);
@@ -1043,6 +1058,100 @@ export class ThreadStore {
     }));
   }
 
+  executingAttempt(runId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, incarnation FROM attempts
+     WHERE run_id = ? AND ended_at IS NULL ORDER BY rowid DESC LIMIT 1`,
+      )
+      .get(runId) as { id: string; incarnation: number } | undefined;
+  }
+
+  recordPublication(input: {
+    id: string;
+    kind: "progress" | "result";
+    botId: string;
+    taskId: string;
+    runId: string;
+    attemptId: string;
+    text: string;
+    now: string;
+  }) {
+    const existing = this.publicationRow(input.id);
+    if (existing) {
+      if (existing.botId !== input.botId || existing.runId !== input.runId)
+        throw new ChatRequestError("Request identity is outside this execution.", 403);
+      return existing;
+    }
+    this.db
+      .prepare(
+        `INSERT INTO agent_publications
+       (id, kind, bot_id, task_id, run_id, attempt_id, text, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.kind,
+        input.botId,
+        input.taskId,
+        input.runId,
+        input.attemptId,
+        input.text,
+        input.now,
+      );
+    return {
+      id: input.id,
+      kind: input.kind,
+      botId: input.botId,
+      taskId: input.taskId,
+      runId: input.runId,
+      attemptId: input.attemptId,
+      text: input.text,
+      createdAt: input.now,
+    };
+  }
+
+  publication(botId: string, id: string) {
+    const row = this.publicationRow(id);
+    return row?.botId === botId ? row : undefined;
+  }
+
+  private publicationRow(id: string) {
+    return this.db
+      .prepare(
+        `SELECT id, kind, bot_id AS botId, task_id AS taskId, run_id AS runId,
+            attempt_id AS attemptId, text, created_at AS createdAt
+     FROM agent_publications WHERE id = ?`,
+      )
+      .get(id) as
+      | {
+          id: string;
+          kind: "progress" | "result";
+          botId: string;
+          taskId: string;
+          runId: string;
+          attemptId: string;
+          text: string;
+          createdAt: string;
+        }
+      | undefined;
+  }
+
+  private runPublications(runId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, kind, attempt_id AS attemptId, text, created_at AS createdAt
+     FROM agent_publications WHERE run_id = ? ORDER BY rowid`,
+      )
+      .all(runId) as unknown as {
+      id: string;
+      kind: "progress" | "result";
+      attemptId: string;
+      text: string;
+      createdAt: string;
+    }[];
+  }
+
   attempts(runId: string) {
     return this.db
       .prepare(
@@ -1087,6 +1196,12 @@ export class ThreadStore {
           references: this.references(run),
           sourceMessageId: run.source_message_id,
           outcome: outcomePreview(run.outcome),
+          progress: this.runPublications(run.id)
+            .filter((row) => row.kind === "progress")
+            .map((row) => publicationPreview(row)),
+          selectedResults: this.runPublications(run.id)
+            .filter((row) => row.kind === "result")
+            .map((row) => publicationPreview(row)),
           inputs: this.inputs(run.id)
             .slice(0, 5)
             .map((input) => ({

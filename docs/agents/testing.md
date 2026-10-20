@@ -321,6 +321,13 @@ inside the boundary captured at admission; the owner can still read older
 originals and can select them into a new Run. Restart keeps the boundary.
 Workspace files remain.
 
+`tests/agent-progress.test.ts` publishes progress and a selected text result
+through the production history-operation mailbox while a Run is active. It checks
+authenticated Thread reads, separation from the Run outcome and searchable
+originals, forged identity, stale Attempts, cross-Bot administration, owner-only
+changes, self-grants, duplicate request identity, timeout lookup, cancellation,
+Host restart and a real Pi tool round.
+
 `tests/thread-execution.test.ts` exercises one-Thread operations through public
 HTTP with real Host/SQLite/mailboxes. It covers stable request replay/conflicts,
 completion races, targeted active/queued additions, admission-before-publication
