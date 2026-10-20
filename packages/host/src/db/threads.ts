@@ -512,9 +512,9 @@ export class ThreadStore {
       this.db
         .prepare(
           `UPDATE delegations SET child_run_id = ?, state = 'pending', result = NULL, resolved_at = NULL
- WHERE child_run_id = ? AND state IN ('failed', 'cancelled', 'uncertain')`,
+ WHERE child_task_id = ? AND state IN ('failed', 'cancelled', 'uncertain')`,
         )
-        .run(newRunId, run.id);
+        .run(newRunId, run.task_id);
       for (const input of copied) {
         this.db
           .prepare("INSERT INTO run_inputs VALUES (?, ?, ?, ?, NULL, ?, NULL)")

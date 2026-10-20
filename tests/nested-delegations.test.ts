@@ -584,6 +584,7 @@ it("keeps failed child retries in the originating chain and waits for necessary 
   const driver = new MailboxDriver();
   const entered = new Set<string>();
   const fail = Promise.withResolvers<void>();
+  const failRetry = Promise.withResolvers<void>();
   let leafCalls = 0;
   driver.respond = async (input, material, signal) => {
     if (input.content === "Leaf") {
@@ -591,6 +592,10 @@ it("keeps failed child retries in the originating chain and waits for necessary 
       if (leafCalls === 1) {
         await Promise.race([fail.promise, untilAbort(signal)]);
         return { error: "Review failed" };
+      }
+      if (leafCalls === 2) {
+        await Promise.race([failRetry.promise, untilAbort(signal)]);
+        return { error: "Retried review failed" };
       }
       await untilAbort(signal);
       return "unused";
@@ -633,18 +638,28 @@ it("keeps failed child retries in the originating chain and waits for necessary 
   expect(oldRun.delegations).toEqual([
     expect.objectContaining({ id: "nested-leaf", originatingRunId: chain.source.runId }),
   ]);
-  expect(
-    (
-      await post(`/api/bots/${chain.reviewer}/runs/${retried.runId}/stop`, {
-        requestId: "cancel-retry",
-      })
-    ).status,
-  ).toBe(202);
+  failRetry.resolve();
   await vi.waitFor(async () =>
-    expect((await run(chain.reviewer, retried.runId)).state).toBe("closed"),
+    expect((await run(chain.reviewer, retried.runId)).state).toBe("failed"),
   );
-  expect((await run(chain.specialist, chain.middle?.childRunId as string)).state).toBe("waiting");
-  expect((await run("personal", chain.source.runId)).state).toBe("waiting");
+  const retryOutcome = (await run(chain.reviewer, retried.runId)).outcome;
+  const fromOlder = await post(`/api/bots/${chain.reviewer}/runs/${chain.leaf?.childRunId}/retry`, {
+    requestId: "retry-from-older-run",
+  });
+  expect(fromOlder.status).toBe(202);
+  const latest = await fromOlder.json();
+  await mailbox(driver, latest.runId);
+  expect((await run(chain.specialist, chain.middle?.childRunId as string)).delegations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: "nested-leaf",
+        childRunId: latest.runId,
+        state: "pending",
+        originatingRunId: chain.source.runId,
+      }),
+    ]),
+  );
+  expect((await run(chain.reviewer, retried.runId)).outcome).toEqual(retryOutcome);
   expect(
     (
       await post(
@@ -653,12 +668,24 @@ it("keeps failed child retries in the originating chain and waits for necessary 
       )
     ).status,
   ).toBe(202);
+  expect((await run(chain.specialist, chain.middle?.childRunId as string)).state).toBe("waiting");
+  expect((await run("personal", chain.source.runId)).state).toBe("waiting");
+  expect(
+    (
+      await post(`/api/bots/${chain.reviewer}/runs/${latest.runId}/stop`, {
+        requestId: "cancel-latest-retry",
+      })
+    ).status,
+  ).toBe(202);
+  await vi.waitFor(async () =>
+    expect((await run(chain.reviewer, latest.runId)).state).toBe("closed"),
+  );
   await vi.waitFor(async () =>
     expect((await run("personal", chain.source.runId)).state).toBe("succeeded"),
   );
   expect((await run(chain.specialist, chain.middle?.childRunId as string)).delegations).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ id: "nested-leaf", childRunId: retried.runId, state: "cancelled" }),
+      expect.objectContaining({ id: "nested-leaf", childRunId: latest.runId, state: "cancelled" }),
     ]),
   );
 });

@@ -155,9 +155,8 @@ for (const outcome of ["cancel", "uncertain"] as const) {
       await page.getByRole("button", { name: "Select Writer" }).click();
       await expect(page.locator("#chat-works")).toContainText("Execution: waiting");
       await expect(page.locator("#chat-works")).toContainText("Delegation browser-review");
-      await page.screenshot({
+      await page.locator("#chat-works").screenshot({
         path: join(tmpdir(), "mybots-nested-delegation.png"),
-        fullPage: true,
       });
       await expect(page.locator("#chat-works")).toContainText("Origin: delegation");
       if (outcome === "cancel") {
@@ -184,9 +183,8 @@ for (const outcome of ["cancel", "uncertain"] as const) {
         await page.getByRole("button", { name: "Select Personal" }).click();
         await expect(page.locator("#chat-works")).toContainText("Owned child outcome is uncertain");
         await expect(page.locator("#chat-works")).toContainText("Execution: waiting");
-        await page.screenshot({
+        await page.locator("#chat-works").screenshot({
           path: join(tmpdir(), "mybots-nested-uncertainty.png"),
-          fullPage: true,
         });
         await page.getByRole("button", { name: "Select Writer" }).click();
         await expect(page.locator("#chat-works")).toContainText("Owned child outcome is uncertain");
