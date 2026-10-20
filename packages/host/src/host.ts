@@ -344,7 +344,10 @@ export class Host {
           this.store.threads.run(session.id).state === "stopping"
         )
           void this.executeStop(execution);
-      } else await this.reconcileSession(execution);
+      } else {
+        if (session.purpose === "run") this.store.threads.abandonBudget(session.id);
+        await this.reconcileSession(execution);
+      }
     }
     this.schedule();
   }
@@ -486,6 +489,7 @@ export class Host {
       this.store.threads.abandonAdmission(id);
       return;
     }
+    if (execution.route.session.purpose === "run" && this.enforceBudget(execution)) return;
     execution.starting = (async () => {
       const incarnation = this.store.tryClaimSession({
         sessionId: id,
@@ -606,6 +610,16 @@ export class Host {
     }
   }
 
+  private enforceBudget(execution: SessionExecution): boolean {
+    if (execution.route.session.purpose !== "run" || this.storeClosed || this.stopped) return false;
+    const id = execution.route.session.id;
+    if (execution.handle || execution.starting)
+      this.store.threads.checkpointBudget(id, this.timestamp());
+    if (!this.store.threads.exhaustBudget(id, this.timestamp())) return false;
+    void this.executeStop(execution);
+    return true;
+  }
+
   private async reconcileSession(
     execution: SessionExecution,
     now: number = this.clock(),
@@ -614,6 +628,7 @@ export class Host {
     try {
       execution.mailbox.syncAcknowledgements();
       this.syncChat(execution);
+      if (this.enforceBudget(execution)) return;
       if (execution.route.session.purpose === "run") {
         const state = this.store.threads.run(id).state;
         if (state === "uncertain" || state === "closed") return;
@@ -722,6 +737,7 @@ export class Host {
           if (signal.aborted) break;
           execution.mailbox.syncAcknowledgements();
           this.syncChat(execution);
+          this.enforceBudget(execution);
           this.reconcileDurableWait(execution);
           this.historyOperations(execution);
           if (!execution.handle && !execution.starting && !execution.replacing)
@@ -1072,7 +1088,7 @@ export class Host {
       const execution = await pending;
       if (execution.route.session.agent_group_id === botId) this.syncChat(execution);
     }
-    return this.store.threads.detail(botId);
+    return this.store.threads.detail(botId, this.timestamp());
   }
 
   private historyOperations(execution: SessionExecution): void {

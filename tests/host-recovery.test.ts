@@ -165,7 +165,7 @@ it("recovers an abandoned claim through five bounded waits and fails it without 
 
 it("replaces a container whose claim went silent and recovers its unfinished input", async () => {
   const current = await temporaryRoot();
-  let now = Date.parse("2026-02-01T00:00:00.000Z");
+  let now = Date.now();
   const driver = new MailboxDriver();
   const started = Promise.withResolvers<void>();
   const stopped = Promise.withResolvers<void>();
@@ -460,7 +460,7 @@ it.each([2, 3])(
     const upgraded = new DatabaseSync(file);
     expect(
       (upgraded.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-    ).toBe(13);
+    ).toBe(14);
     expect(
       upgraded
         .prepare(

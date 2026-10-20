@@ -15,6 +15,7 @@ interface Outcome {
 interface Run {
   id: string;
   state: string;
+  budget: { limitMs: number; activeMs: number; exhaustedAt: string | null };
   held?: boolean;
   stopError?: string | null;
   admissionClass: "interactive" | "background" | null;
@@ -96,6 +97,10 @@ function isDetail(value: unknown): value is Detail {
             record(run) &&
             typeof run.id === "string" &&
             typeof run.state === "string" &&
+            record(run.budget) &&
+            typeof run.budget.limitMs === "number" &&
+            typeof run.budget.activeMs === "number" &&
+            (run.budget.exhaustedAt === null || typeof run.budget.exhaustedAt === "string") &&
             (run.admissionClass === null ||
               run.admissionClass === "interactive" ||
               run.admissionClass === "background") &&
@@ -258,6 +263,9 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
               run.state === "queued" && run.admissionClass && run.queuePosition
                 ? `Execution: queued · ${run.admissionClass} · position ${run.queuePosition}`
                 : `Execution: ${run.state}`,
+            ),
+            paragraph(
+              `Active budget: ${(run.budget.activeMs / 60000).toFixed(1)} / ${run.budget.limitMs / 60000} minutes${run.budget.exhaustedAt ? " · exhausted; completed effects are retained" : ""}`,
             ),
             paragraph(`Captured background boundary: ${run.backgroundBoundary}`),
             paragraph(

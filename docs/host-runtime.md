@@ -633,3 +633,28 @@ messages. The Host selects quoted original Thread references for new Runs; withi
 context and compaction remain SDK-owned. Conversation messages are not copied
 into shared files. Persist working materials
 explicitly when they should be accessible from another session.
+
+## Run execution budgets and idle resources
+
+Each Run has a sixty-minute cumulative active-execution budget. The Host starts
+accounting with each Attempt and checkpoints spent milliseconds in SQLite.
+Steering keeps the same budget; configuration replacement and later Attempts
+continue its accumulated time. Queue time, completed durable waits and stopped
+Host intervals do not spend execution time. A surviving executor adopted after
+Host loss continues its open accounting interval. When no executor survives,
+recovery retains the last durable checkpoint and excludes the unobserved interval;
+a hard crash can lose the fraction between the last checkpoint and termination.
+Explicit owner retry creates a linked new Run with a fresh budget.
+
+Exhaustion persists its time, enters `stopping` and uses the same confirmed-stop
+path as an owner stop. A possible live executor retains Bot/global capacity.
+Confirmed termination releases capacity while retaining original results, working
+files and uncertain-outcome holds. Thread API reads expose `budget.limitMs`,
+`budget.activeMs` and `budget.exhaustedAt`; the Web client displays active minutes
+and the exhaustion reason. These limits have no Task/Run overrides.
+
+The Host immediately stops completed Run containers rather than retaining an
+idle cache. This keeps retained idle containers at zero, within the maximum of
+four and the five-minute idle lifetime. Complete durable waits also stop their
+executor before releasing capacity. A failed stop retains the reservation and
+reports unconfirmed termination; it is not counted as an idle cached container.

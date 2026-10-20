@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
 import { WebSocketChannel } from "../packages/host/src/channels/websocket.ts";
 import { loadHostSettings } from "../packages/host/src/config/host.ts";
@@ -65,6 +66,44 @@ async function newTask(botId: string, requestId: string) {
   const body = await response.json();
   return body.taskId as string;
 }
+
+it("upgrades a budget-enabled store with Task attachments and retains spent Run time", async () => {
+  const configuration = await start();
+  const taskId = await newTask("personal", "budget-before-attachments");
+  await vi.waitFor(async () => {
+    const detail = await (await fetch(`${base}/api/bots/personal/thread`, { headers })).json();
+    expect(detail.tasks[0].runs[0].state).toBe("succeeded");
+  });
+  await channel.close();
+  await host.stop();
+  const prior = new DatabaseSync(join(root, "data", "host.db"));
+  try {
+    prior.exec(`
+      DROP TABLE task_attachments;
+      UPDATE runs SET active_ms = 1234000, active_since = NULL;
+      PRAGMA user_version = 13;
+    `);
+  } finally {
+    prior.close();
+  }
+  host = await Host.start({ root, configuration, driver: new MailboxDriver() });
+  channel = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
+  base = `http://127.0.0.1:${channel.address.port}`;
+  const uploaded = await fetch(`${base}/api/bots/personal/tasks/${taskId}/attachments`, {
+    method: "POST",
+    headers: { ...headers, "X-Filename": "upgrade.txt" },
+    body: Buffer.from("retained attachment"),
+  });
+  expect(uploaded.status).toBe(201);
+  const attachment = await uploaded.json();
+  const downloaded = await fetch(
+    `${base}/api/bots/personal/tasks/${taskId}/attachments/${attachment.id}`,
+    { headers },
+  );
+  expect(await downloaded.text()).toBe("retained attachment");
+  const detail = await (await fetch(`${base}/api/bots/personal/thread`, { headers })).json();
+  expect(detail.tasks[0].runs[0].budget.activeMs).toBe(1234000);
+});
 
 it("keeps uploaded bytes on the selected Task across restart and out of the other Task", async () => {
   await start();

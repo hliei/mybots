@@ -10,6 +10,6 @@ CREATE TABLE task_attachments (
  UNIQUE (task_id, filename)
 );
 CREATE INDEX task_attachment_task ON task_attachments(task_id);
-PRAGMA user_version = 13;
+PRAGMA user_version = 14;
 COMMIT;
 `;
