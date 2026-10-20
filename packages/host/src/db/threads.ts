@@ -5,6 +5,8 @@ import { ChatRequestError } from "../chat.ts";
 import { history } from "./history.ts";
 import type { SavedSession } from "./index.ts";
 
+const RUN_ACTIVE_BUDGET_MS = 60 * 60 * 1000;
+
 interface ThreadRow {
   id: string;
   bot_id: string;
@@ -24,6 +26,9 @@ interface RunRow {
     | "closed"
     | "waiting";
   wait_reason: string | null;
+  active_ms: number;
+  active_since: string | null;
+  budget_exhausted_at: string | null;
   background_boundary: number;
   source_message_id: string;
   context: string | null;
@@ -476,7 +481,56 @@ export class ThreadStore {
      FROM attempts WHERE run_id = ? ORDER BY rowid DESC LIMIT 1`)
       .get(id) as { configurationVersion: number; steerThroughRowid: number | null } | undefined;
   }
+  budget(id: string, now: string) {
+    const run = this.run(id);
+    return {
+      limitMs: RUN_ACTIVE_BUDGET_MS,
+      activeMs:
+        run.active_ms +
+        (run.active_since ? Math.max(0, Date.parse(now) - Date.parse(run.active_since)) : 0),
+      exhaustedAt: run.budget_exhausted_at,
+    };
+  }
+
+  /** Checkpoint cumulative execution so an absent executor cannot reset spent time. */
+  checkpointBudget(id: string, now: string): void {
+    const run = this.run(id);
+    if (!run.active_since || now <= run.active_since) return;
+    this.db
+      .prepare("UPDATE runs SET active_ms = ?, active_since = ? WHERE id = ?")
+      .run(this.budget(id, now).activeMs, now, id);
+  }
+
+  /** A missing executor at startup retains the last durable observation, excluding downtime. */
+  abandonBudget(id: string): void {
+    this.db
+      .prepare(
+        "UPDATE attempts SET ended_at = (SELECT active_since FROM runs WHERE id = ?) WHERE run_id = ? AND ended_at IS NULL",
+      )
+      .run(id, id);
+    this.db.prepare("UPDATE runs SET active_since = NULL WHERE id = ?").run(id);
+  }
+
+  exhaustBudget(id: string, now: string): boolean {
+    const run = this.run(id);
+    if (
+      !["queued", "active"].includes(run.state) ||
+      this.budget(id, now).activeMs < RUN_ACTIVE_BUDGET_MS
+    )
+      return false;
+    this.db
+      .prepare(
+        "UPDATE runs SET budget_exhausted_at = COALESCE(budget_exhausted_at, ?) WHERE id = ?",
+      )
+      .run(now, id);
+    this.markStopping(run, now);
+    return true;
+  }
+
   startAttempt(id: string, incarnation: number, now: string) {
+    this.db
+      .prepare("UPDATE runs SET active_since = ? WHERE id = ? AND active_since IS NULL")
+      .run(now, id);
     const saved = this.db
       .prepare(
         "SELECT c.version FROM container_configs c JOIN sessions s ON s.agent_group_id = c.agent_group_id WHERE s.id = ?",
@@ -512,6 +566,8 @@ export class ThreadStore {
       .run(now, id);
   }
   endAttempt(id: string, now: string) {
+    this.checkpointBudget(id, now);
+    this.db.prepare("UPDATE runs SET active_since = NULL WHERE id = ?").run(id);
     this.db
       .prepare("UPDATE attempts SET ended_at = ? WHERE run_id = ? AND ended_at IS NULL")
       .run(now, id);
@@ -831,9 +887,7 @@ export class ThreadStore {
       this.db
         .prepare("UPDATE runs SET state = 'waiting', wait_reason = ?, updated_at = ? WHERE id = ?")
         .run(reason.slice(0, 200), now, runId);
-      this.db
-        .prepare("UPDATE attempts SET ended_at = ? WHERE run_id = ? AND ended_at IS NULL")
-        .run(now, runId);
+      this.endAttempt(runId, now);
       this.db.prepare("DELETE FROM execution_reservations WHERE run_id = ?").run(runId);
       this.db.prepare("UPDATE admission_queue SET runnable = 0 WHERE run_id = ?").run(runId);
       this.db.exec("COMMIT");
@@ -997,7 +1051,7 @@ export class ThreadStore {
       .all(runId);
   }
 
-  detail(botId: string) {
+  detail(botId: string, now: string) {
     const thread = this.thread(botId);
     const admission = this.admissionSnapshot();
     const tasks = this.db
@@ -1014,6 +1068,7 @@ export class ThreadStore {
         ).map((run) => ({
           id: run.id,
           state: run.state,
+          budget: this.budget(run.id, now),
           held: run.held === 1,
           priorRunId: run.prior_run_id,
           stopError: run.stop_error,
