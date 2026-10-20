@@ -106,7 +106,9 @@ async function mailbox(driver: MailboxDriver, runId: string) {
 }
 async function wait(mailbox: RunnerMailbox, botId: string, runId: string) {
   mailbox.requestDurableWait("delegation");
-  await vi.waitFor(async () => expect((await run(botId, runId)).state).toBe("waiting"));
+  await vi.waitFor(async () => expect((await run(botId, runId)).state).toBe("waiting"), {
+    timeout: 5000,
+  });
 }
 async function untilAbort(signal: AbortSignal) {
   if (!signal.aborted)
