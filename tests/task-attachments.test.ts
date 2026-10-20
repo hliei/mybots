@@ -103,9 +103,9 @@ it("keeps uploaded bytes on the selected Task across restart and out of the othe
     launch.material.taskAttachments?.includes(first),
   );
   expect(firstLaunch?.material.taskAttachments).toBeTruthy();
-  expect(await readFile(join(firstLaunch?.material.taskAttachments as string, created.id))).toEqual(
-    bytes,
-  );
+  expect(
+    await readFile(join(firstLaunch?.material.taskAttachments as string, "notes.txt")),
+  ).toEqual(bytes);
   const context = await readFile(firstLaunch?.material.contextFile as string, "utf8");
   expect(context).not.toContain("selected-task-bytes");
   await vi.waitFor(() =>
@@ -117,7 +117,7 @@ it("keeps uploaded bytes on the selected Task across restart and out of the othe
     launch.material.taskAttachments?.includes(second),
   );
   await expect(
-    readFile(join(secondLaunch?.material.taskAttachments as string, created.id)),
+    readFile(join(secondLaunch?.material.taskAttachments as string, "notes.txt")),
   ).rejects.toThrow();
 
   await channel.close();

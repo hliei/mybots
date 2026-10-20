@@ -73,9 +73,7 @@ test("uploads bytes to the selected Task and deliberately saves them for that Bo
     await page.getByLabel("Model", { exact: true }).selectOption("deepseek/deepseek-chat");
     await page.getByRole("button", { name: "Create Bot", exact: true }).click();
     await page.getByRole("button", { name: "Select Writer" }).click();
-    await expect(page.locator("#workspace-files")).toContainText(
-      "No deliberately saved workspace files.",
-    );
+    await expect(page.locator("#workspace-files")).toContainText("No workspace files.");
     await expect(page.locator("#workspace-files")).not.toContainText("sample.bin");
 
     await page.getByRole("button", { name: "Select Personal" }).click();

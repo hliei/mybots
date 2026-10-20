@@ -4,6 +4,23 @@ interface Attachment {
   bytes: number;
 }
 
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isAttachment(value: unknown): value is Attachment {
+  return (
+    record(value) &&
+    typeof value.id === "string" &&
+    typeof value.filename === "string" &&
+    typeof value.bytes === "number"
+  );
+}
+
+function textField(value: unknown, key: string): string | undefined {
+  return record(value) && typeof value[key] === "string" ? value[key] : undefined;
+}
+
 const form = document.querySelector<HTMLFormElement>("#attachment-form") as HTMLFormElement;
 const task = document.querySelector<HTMLSelectElement>("#attachment-task") as HTMLSelectElement;
 const file = document.querySelector<HTMLInputElement>("#attachment-file") as HTMLInputElement;
@@ -80,7 +97,11 @@ async function refresh(): Promise<void> {
     message.textContent = "Task attachments are unavailable.";
     return;
   }
-  const body = (await response.json()) as { attachments: Attachment[]; maxBytes: number };
+  const body: unknown = await response.json();
+  if (!record(body) || !Array.isArray(body.attachments) || !body.attachments.every(isAttachment)) {
+    message.textContent = "Task attachments are unavailable.";
+    return;
+  }
   if (typeof body.maxBytes === "number") maxBytes = body.maxBytes;
   const next = JSON.stringify(body.attachments);
   if (next === signature) return;
@@ -151,10 +172,11 @@ async function saveToWorkspace(item: Attachment, path: string): Promise<void> {
         body: JSON.stringify({ path }),
       },
     );
-    const payload = (await response.json().catch(() => ({}))) as { error?: string; path?: string };
+    const payload: unknown = await response.json().catch(() => undefined);
+    const savedPath = textField(payload, "path");
     message.textContent = response.ok
-      ? `Saved ${item.filename} to the Bot workspace at ${payload.path}. Other Tasks of this Bot can reuse that file.`
-      : (payload.error ?? "Workspace save failed.");
+      ? `Saved ${item.filename} to the Bot workspace at ${savedPath ?? path}. Other Tasks of this Bot can reuse that file.`
+      : (textField(payload, "error") ?? "Workspace save failed.");
     if (response.ok) await refreshWorkspace();
   } finally {
     busy = false;
@@ -178,12 +200,25 @@ async function refreshWorkspace(): Promise<void> {
     );
     return;
   }
-  const body = (await response.json()) as { files?: { path: string; bytes: number }[] };
-  const files = Array.isArray(body.files) ? body.files : [];
+  const body: unknown = await response.json();
+  const listed = record(body) && Array.isArray(body.files) ? body.files : undefined;
+  if (
+    !listed?.every(
+      (file) => record(file) && typeof file.path === "string" && typeof file.bytes === "number",
+    )
+  ) {
+    node.append(
+      Object.assign(document.createElement("li"), {
+        textContent: "Workspace files are unavailable.",
+      }),
+    );
+    return;
+  }
+  const files = listed as { path: string; bytes: number }[];
   if (files.length === 0) {
     node.append(
       Object.assign(document.createElement("li"), {
-        textContent: "No deliberately saved workspace files.",
+        textContent: "No workspace files.",
       }),
     );
     return;
@@ -225,16 +260,14 @@ async function upload(): Promise<void> {
         body: chosen,
       },
     );
-    const payload = (await response.json().catch(() => ({}))) as {
-      error?: string;
-      filename?: string;
-      bytes?: number;
-    };
+    const payload: unknown = await response.json().catch(() => undefined);
     if (!response.ok) {
-      message.textContent = payload.error ?? "Upload failed.";
+      message.textContent = textField(payload, "error") ?? "Upload failed.";
       return;
     }
-    message.textContent = `Uploaded ${payload.filename} (${payload.bytes} bytes) to the selected Task.`;
+    const filename = textField(payload, "filename") ?? chosen.name;
+    const size = record(payload) && typeof payload.bytes === "number" ? payload.bytes : chosen.size;
+    message.textContent = `Uploaded ${filename} (${size} bytes) to the selected Task.`;
     file.value = "";
     signature = "";
     await refresh();

@@ -56,24 +56,24 @@ export async function ensureTaskAttachmentDirectory(
 
 export async function writeTaskAttachment(
   directory: string,
-  id: string,
+  filename: string,
   bytes: Buffer,
 ): Promise<void> {
-  if (!IDENTITY.test(id)) throw new ChatRequestError("Attachment not found.", 404);
-  const handle = await open(join(directory, id), "wx", 0o600);
+  const name = attachmentFilename(filename);
+  const handle = await open(join(directory, name), "wx", 0o600);
   try {
     await handle.writeFile(bytes);
   } catch (error) {
     await handle.close();
-    await rm(join(directory, id), { force: true });
+    await rm(join(directory, name), { force: true });
     throw error;
   }
   await handle.close();
 }
 
-export async function readTaskAttachment(directory: string, id: string): Promise<Buffer> {
-  if (!IDENTITY.test(id)) throw new ChatRequestError("Attachment not found.", 404);
-  const file = join(directory, id);
+export async function readTaskAttachment(directory: string, filename: string): Promise<Buffer> {
+  const name = attachmentFilename(filename);
+  const file = join(directory, name);
   const info = await lstat(file).catch((error) => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
       throw new ChatRequestError("Attachment not found.", 404);

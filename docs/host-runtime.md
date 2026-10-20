@@ -184,12 +184,12 @@ response is lost or completion races admission.
 Internal executor sessions use Run IDs. Directional mailboxes and SDK state live
 at `data/sessions/<bot_id>/<run_id>/`; shared workspace files remain at
 `groups/<folder>/`. Task attachments live at
-`data/task-attachments/<bot_id>/<task_id>/` and are mounted read-only at
+`data/task-attachments/<bot_id>/<task_id>/`, under the uploaded file name, and are mounted read-only at
 `/workspace/group/.task-attachments` only for Runs of that Task. They are not
 copied into another Task, another Bot, or the model prompt. The owner can save
 one attachment into a relative path in that Bot's workspace; that copy is then
 available to the Bot's other Tasks. The reserved workspace path
-`.task-attachments` is not a shared save destination. One actual Attempt per Bot holds an execution slot from
+`.task-attachments` is not a shared save destination. A workspace listing returns at most 1000 regular files, and a workspace-save request must stay within 64 KiB. One actual Attempt per Bot holds an execution slot from
 admission until that Attempt ends. Unconfirmed stop keeps the slot. A durable
 wait releases it only after every recorded tool call has a result and no tool is
 still current; an idle container is not execution. Excess runnable work stays in

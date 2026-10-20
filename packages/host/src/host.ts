@@ -998,7 +998,7 @@ export class Host {
     this.store.threads.requireTask(botId, taskId);
     const id = randomUUID();
     const directory = await ensureTaskAttachmentDirectory(this.root, botId, taskId);
-    await writeTaskAttachment(directory, id, bytes);
+    await writeTaskAttachment(directory, name, bytes);
     const createdAt = this.timestamp();
     try {
       this.store.threads.insertAttachment({
@@ -1010,7 +1010,7 @@ export class Host {
         createdAt,
       });
     } catch (error) {
-      await rm(join(directory, id), { force: true });
+      await rm(join(directory, name), { force: true });
       if (error instanceof Error && error.message.includes("UNIQUE"))
         throw new ChatRequestError("This Task already has an attachment with that name.", 409);
       throw error;
@@ -1021,7 +1021,7 @@ export class Host {
   async downloadAttachment(botId: string, taskId: string, attachmentId: string) {
     const record = this.store.threads.attachment(botId, taskId, attachmentId);
     const directory = await ensureTaskAttachmentDirectory(this.root, botId, taskId);
-    const bytes = await readTaskAttachment(directory, record.id);
+    const bytes = await readTaskAttachment(directory, record.filename);
     return { filename: record.filename, bytes };
   }
 
@@ -1034,7 +1034,7 @@ export class Host {
     const record = this.store.threads.attachment(botId, taskId, attachmentId);
     const parts = workspaceRelativePath(path);
     const directory = await ensureTaskAttachmentDirectory(this.root, botId, taskId);
-    const bytes = await readTaskAttachment(directory, record.id);
+    const bytes = await readTaskAttachment(directory, record.filename);
     const folder = this.store.managedBots().find((bot) => bot.id === botId)?.workspace;
     if (!folder) throw new ChatRequestError("Bot not found.", 404);
     await saveInsideWorkspace(join(this.root, folder), parts, bytes);
