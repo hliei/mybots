@@ -406,13 +406,14 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
     await handle.stop();
     handle = undefined;
     const boundedRoot = join(root, "bounded-host");
+    const boundedGateway = new OneCliGateway({
+      url: `http://${await docker([...compose, "port", "gateway", "10254"])}`,
+      proxyHost: "proxy",
+      containerName: await docker([...compose, "ps", "-q", "gateway"]),
+      trustDirectory: join(boundedRoot, "data", "gateway-trust"),
+    });
     const boundedDriver = new DockerDriver({
-      gateway: new OneCliGateway({
-        url: gatewayUrl,
-        proxyHost: "proxy",
-        containerName: await docker([...compose, "ps", "-q", "gateway"]),
-        trustDirectory: join(boundedRoot, "data", "gateway-trust"),
-      }),
+      gateway: boundedGateway,
       image: "mybots-agent:mailbox",
       network: `${project}_session`,
     });
@@ -434,9 +435,9 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
       configuration: {
         owners: ["cli:local"],
         agent: {
-          id: "bounded",
+          id: "personal",
           name: "Bounded",
-          folder: "bounded",
+          folder: "personal",
           model: {
             provider: "controlled",
             id: "controlled-model",
@@ -457,7 +458,7 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
         text: "Hold execution budget",
       });
       while (!signal.aborted) {
-        if ((await boundedHost.inspect(held.sessionId)).session.container_status === "failed") {
+        if ((await boundedHost.inspect(held.sessionId)).session?.container_status === "failed") {
           throw new Error(
             `Budget fixture could not start: ${startError instanceof Error ? startError.message : "Host context setup failed"}`,
           );
@@ -471,13 +472,14 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
       now += 60 * 60 * 1000;
       await boundedHost.reconcile();
       while (!signal.aborted) {
-        const detail = await boundedHost.threadDetail("bounded");
+        const detail = await boundedHost.threadDetail("personal");
         if (detail.tasks[0]?.runs[0]?.state === "closed") break;
         await setTimeout(100, undefined, { signal });
       }
-      expect(
-        (await boundedHost.threadDetail("bounded")).tasks[0]?.runs[0]?.budget.exhaustedAt,
-      ).not.toBeNull();
+      expect((await boundedHost.threadDetail("personal")).tasks[0]?.runs[0]).toMatchObject({
+        state: "closed",
+        budget: { activeMs: 3600000, exhaustedAt: new Date(now).toISOString() },
+      });
       expect(
         (await boundedDriver.list(signal)).some((row) => row.key.sessionId === held.sessionId),
       ).toBe(false);
@@ -487,12 +489,12 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
         text: "Save a shared note and check the mount isolation",
       });
       while (!signal.aborted) {
-        const detail = await boundedHost.threadDetail("bounded");
+        const detail = await boundedHost.threadDetail("personal");
         if (detail.tasks[1]?.runs[0]?.state === "succeeded" && detail.admission.activeCount === 0)
           break;
         await setTimeout(100, undefined, { signal });
       }
-      expect(await readFile(join(boundedRoot, "groups", "bounded", "note.txt"), "utf8")).toContain(
+      expect(await readFile(join(boundedRoot, "groups", "personal", "note.txt"), "utf8")).toContain(
         "Shared Agent note",
       );
       expect(await boundedDriver.list(signal)).toEqual([]);
@@ -500,7 +502,7 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
       await boundedHost.stop();
     }
     process.stdout.write(
-      "Infrastructure passed: mounted freshness, tool isolation, gateway injection, streaming reply, explicit Pi reopening, runtime observation/adoption observed container termination, Host budget exhaustion and immediate idle reclamation.\n",
+      "Infrastructure passed: mounted freshness, tool isolation, gateway injection, streaming reply, explicit Pi reopening, runtime observation/adoption, observed container termination, Host budget exhaustion and immediate idle reclamation.\n",
     );
   } finally {
     try {

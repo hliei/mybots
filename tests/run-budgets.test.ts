@@ -175,6 +175,10 @@ it("excludes a durable wait and restart downtime while preserving spending acros
     state: "waiting",
     budget: { activeMs: 1200000, exhaustedAt: null },
   });
+  new HostMailbox(external.launches[0].material.directory).retryInput(
+    admitted.messageId,
+    new Date(0).toISOString(),
+  );
   new RunnerMailbox(external.launches[0].material.directory).resumeDurableWait();
   await vi.waitFor(() => expect(external.launches).toHaveLength(2));
   now += 39 * 60000;
@@ -309,6 +313,12 @@ it.each([true, false])(
         admitted.runId,
       );
       db.prepare("UPDATE attempts SET ended_at = NULL WHERE run_id = ?").run(admitted.runId);
+      if (survives) {
+        // Recreate the preceding schema to verify that adoption also starts budget accounting on upgrade.
+        db.exec(
+          "ALTER TABLE runs DROP COLUMN active_ms; ALTER TABLE runs DROP COLUMN active_since; ALTER TABLE runs DROP COLUMN budget_exhausted_at; PRAGMA user_version = 12;",
+        );
+      }
     } finally {
       db.close();
     }
