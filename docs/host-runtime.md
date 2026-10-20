@@ -538,7 +538,7 @@ cancels unresolved questions and fences late answers; a repeated answer receipt
 never revives stopped work. These records do not remove the documented crash
 windows or establish exactly-once tool effects.
 
-## Single-hop delegation
+## Bounded nested delegation
 
 The owner sets each source-to-target direction to deny, ask-each-time, or allow. The default is
 deny, including when no row exists. A Bot cannot grant itself, and a runner
@@ -553,8 +553,22 @@ by the target Bot. The child does not receive the source workspace, source chat,
 or a source mount. The delegation records the source Bot, target Bot, parent
 Task, parent Run, originating Run, and child Task/Run. A denied request is stored
 on the parent Run and returned again for the same selected text; it does not
-create a child. Delegating from a child Run is rejected until nested delegation
-exists. Returning a child result does not require the reverse direction.
+create a child. A specialist may delegate to a reviewer, with a maximum of two
+edges from the originating Run. Each edge checks its own directed permission;
+requests to any ancestor Bot and requests beyond that depth fail explicitly.
+Returning a child result does not require the reverse direction or add an edge.
+
+At most eight delegations, including descendants, are admitted per originating
+Run. This counts completed, failed and cancelled children as well as unfinished
+ones; denied requests do not create children or consume that count. Pending
+approval proposals do not consume an admission. Executing an approved proposal
+rechecks ancestry, depth and the current total before creating its child; an
+outdated proposal becomes visibly stale without exceeding the bound. The stored
+admissions survive Host restart, steering and Attempt replacement. Each child Run
+has its own active budget. An explicit child retry keeps the same Task and
+originating chain, receives a fresh Run budget, and preserves the previous
+outcome. It is permitted only while every owning ancestor still accepts work;
+old Run evidence cannot overwrite the new Run's delegation result.
 
 After the current tool batch has complete results, the runner ends the Attempt.
 The Host records the dependency wait, stops that executor, and releases active
@@ -562,12 +576,15 @@ capacity and Run budget. The same parent Run becomes runnable when every owned
 child is succeeded, failed, or cancelled. The next Attempt uses the effective Bot
 configuration and current Memory, reopens the parent ledger, and receives the
 correlated child outcome. A child failure or denial does not by itself succeed or
-fail the parent. An uncertain child keeps the parent waiting. A pending question
-also keeps it waiting. Ordinary Thread chat is not added to a child Task; an
+fail the parent. An uncertain child holds every waiting ancestor for owner
+handling. The client identifies that hold and retains the child Task links.
+Closing or successfully retrying the uncertain child lets the chain settle
+without restarting a cancelled ancestor. A pending question also keeps it waiting. Ordinary Thread chat is not added to a child Task; an
 owner addition has to target that Task and does not settle the parent dependency.
 
-Stopping the parent confirms stop of unfinished owned children, retains completed
-effects and unrelated work of the target Bot, and keeps a late child result from
+Stopping the parent immediately blocks new descendant admissions. It confirms
+stop of unfinished owned children at each level before settling the ancestors,
+retains completed effects and unrelated work of the target Bot, and keeps a late child result from
 starting the parent again. These records do not establish exactly-once effects.
 
 ## Exact delegation action approvals

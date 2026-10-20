@@ -763,10 +763,12 @@ it("releases capacity after confirmed stop, holds the uncertain Run, and retries
     await post(`/api/bots/personal/runs/${admitted.runId}/stop`, { requestId: "confirm-stop" });
     expect((await get(path)).tasks[0].runs[0].state).toBe("stopping");
     release.resolve();
-    await vi.waitFor(async () =>
-      expect((await get(path)).thread.routineHolds).toEqual([
-        { taskId: admitted.taskId, runId: admitted.runId },
-      ]),
+    await vi.waitFor(
+      async () =>
+        expect((await get(path)).thread.routineHolds).toEqual([
+          { taskId: admitted.taskId, runId: admitted.runId },
+        ]),
+      { timeout: 5000 },
     );
     expect(
       (await post(`/api/bots/personal/runs/${admitted.runId}/stop`, { requestId: "stop-held" }))

@@ -479,6 +479,15 @@ export class ThreadStore {
         throw new ChatRequestError("A completed Run is not retried.", 409);
       if (this.openDelegations(run.id))
         throw new ChatRequestError("Resolve owned child work before retrying the parent.", 409);
+      let ownership = this.delegationForChild(run.id);
+      if (ownership && !["failed", "cancelled", "uncertain"].includes(ownership.state))
+        throw new ChatRequestError("Owned child work has no retryable outcome.", 409);
+      while (ownership) {
+        const parent = this.run(ownership.parentRunId);
+        if (!["active", "queued", "waiting"].includes(parent.state))
+          throw new ChatRequestError("The owning parent no longer accepts child retries.", 409);
+        ownership = this.delegationForChild(parent.id);
+      }
       const open = this.db
         .prepare(
           `SELECT id FROM runs WHERE task_id = ? AND id != ?
@@ -528,9 +537,9 @@ export class ThreadStore {
       this.db
         .prepare(
           `UPDATE delegations SET child_run_id = ?, state = 'pending', result = NULL, resolved_at = NULL
- WHERE child_run_id = ? AND state = 'uncertain'`,
+ WHERE child_task_id = ? AND state IN ('failed', 'cancelled', 'uncertain')`,
         )
-        .run(newRunId, run.id);
+        .run(newRunId, run.task_id);
       for (const input of copied) {
         this.db
           .prepare("INSERT INTO run_inputs VALUES (?, ?, ?, ?, NULL, ?, NULL)")
@@ -1683,7 +1692,10 @@ export class ThreadStore {
   }
 
   delegationsInvolving(runId: string) {
-    return this.delegationsWhere("parent_run_id = ? OR child_run_id = ?", [runId, runId]);
+    return this.delegationsWhere(
+      "parent_run_id = ? OR child_task_id = (SELECT task_id FROM runs WHERE id = ?)",
+      [runId, runId],
+    );
   }
 
   openDelegations(runId: string): boolean {
@@ -1699,12 +1711,14 @@ export class ThreadStore {
   }
 
   delegationForChild(runId: string) {
-    return this.delegationsWhere("child_run_id = ?", [runId])[0];
+    return this.delegationsWhere("child_task_id = (SELECT task_id FROM runs WHERE id = ?)", [
+      runId,
+    ])[0];
   }
 
   /**
    * Record a permitted child or a correlated denial.
-   * Nested work and self-targeting are rejected before a child exists.
+   * Ancestor loops and excessive depth are rejected before a child exists.
    */
   delegate(input: {
     requestId: string;
@@ -1745,9 +1759,13 @@ export class ThreadStore {
     );
     if (denied) return denied;
     const mode = this.collaborationMode(input.sourceBotId, input.targetBotId);
-    if (mode === "deny") return this.recordDenial(input);
-    if (this.delegationForChild(input.parentRunId))
-      throw new ChatRequestError("Nested delegation is not available.", 409);
+    if (mode === "deny")
+      return this.recordDenial({
+        ...input,
+        originatingRunId:
+          this.delegationForChild(input.parentRunId)?.originatingRunId ?? input.parentRunId,
+      });
+    const originatingRunId = this.delegationOrigin(input.parentRunId, input.targetBotId);
     if (mode === "ask-each-time") {
       this.db.exec("BEGIN IMMEDIATE");
       try {
@@ -1763,7 +1781,7 @@ export class ThreadStore {
             input.parentTaskId,
             input.parentRunId,
             input.parentAttemptId,
-            input.parentRunId,
+            originatingRunId,
             input.text,
             input.now,
           );
@@ -1788,7 +1806,7 @@ export class ThreadStore {
             parentTaskId: input.parentTaskId,
             parentRunId: input.parentRunId,
             parentAttemptId: input.parentAttemptId,
-            originatingRunId: input.parentRunId,
+            originatingRunId,
           },
         },
         input.now,
@@ -1807,6 +1825,32 @@ export class ThreadStore {
           .get(sourceBotId, targetBotId) as { mode: string } | undefined
       )?.mode ?? "deny"
     );
+  }
+
+  /** Validate ancestry and the persisted admission count before creating child work. */
+  private delegationOrigin(parentRunId: string, targetBotId: string): string {
+    const ancestors: string[] = [];
+    let edge = this.delegationForChild(parentRunId);
+    const originatingRunId = edge?.originatingRunId ?? parentRunId;
+    while (edge) {
+      const parent = this.run(edge.parentRunId);
+      if (!["active", "queued", "waiting"].includes(parent.state))
+        throw new ChatRequestError("The owning parent no longer accepts nested work.", 409);
+      ancestors.push(edge.sourceBotId);
+      edge = this.delegationForChild(edge.parentRunId);
+    }
+    if (ancestors.includes(targetBotId))
+      throw new ChatRequestError("A Bot cannot delegate to an ancestor Bot.", 409);
+    if (ancestors.length >= 2)
+      throw new ChatRequestError("A chain supports at most two delegation edges.", 409);
+    const count = this.db
+      .prepare(
+        "SELECT COUNT(*) AS total FROM delegations WHERE originating_run_id = ? AND child_task_id IS NOT NULL",
+      )
+      .get(originatingRunId) as { total: number };
+    if (count.total >= 8)
+      throw new ChatRequestError("An originating Run admits at most eight total delegations.", 409);
+    return originatingRunId;
   }
 
   private approval(id: string): ActionApproval | null {
@@ -1935,6 +1979,13 @@ export class ThreadStore {
         );
         continue;
       }
+      try {
+        this.delegationOrigin(row.parentRunId, row.targetBotId);
+      } catch (error) {
+        if (!(error instanceof ChatRequestError)) throw error;
+        this.settleApproval(row.id, "stale", error.message, now);
+        continue;
+      }
       this.send(
         {
           requestId: row.id,
@@ -1955,26 +2006,37 @@ export class ThreadStore {
   }
 
   /**
-   * Copy a terminal child outcome onto its delegation.
+   * Copy a child outcome or descendant uncertainty onto its delegation.
    * Returns true when the original parent Run becomes runnable again.
    */
   observeChild(childRunId: string, now: string): boolean {
     const delegation = this.delegationForChild(childRunId);
-    if (!delegation || !["pending", "uncertain"].includes(delegation.state)) return false;
+    if (
+      !delegation ||
+      delegation.childRunId !== childRunId ||
+      !["pending", "uncertain"].includes(delegation.state)
+    )
+      return false;
     const child = this.run(childRunId);
-    if (!["succeeded", "failed", "uncertain", "closed"].includes(child.state)) return false;
+    const uncertain =
+      child.state === "uncertain" || (child.state === "waiting" && child.held === 1);
+    if (!["succeeded", "failed", "closed"].includes(child.state) && !uncertain) return false;
     const outcome = child.outcome
       ? (JSON.parse(child.outcome) as { kind?: string; reply?: string })
       : {};
-    const state =
-      child.state === "uncertain"
-        ? "uncertain"
-        : child.state === "succeeded"
-          ? "succeeded"
-          : child.state === "failed"
-            ? "failed"
-            : "cancelled";
-    const result = typeof outcome.reply === "string" ? outcome.reply : child.state;
+    const state = uncertain
+      ? "uncertain"
+      : child.state === "succeeded"
+        ? "succeeded"
+        : child.state === "failed"
+          ? "failed"
+          : "cancelled";
+    const result =
+      typeof outcome.reply === "string"
+        ? outcome.reply
+        : uncertain
+          ? "Owned child outcome is uncertain."
+          : child.state;
     this.db
       .prepare(
         `UPDATE delegations SET state = ?, result = ?, resolved_at = ?
@@ -1996,6 +2058,7 @@ export class ThreadStore {
  updated_at = ? WHERE id = ?`,
         )
         .run(now, parent.id);
+      this.observeChild(parent.id, now);
       return false;
     }
     if (parent.state === "stopping") return false;
@@ -2021,6 +2084,7 @@ export class ThreadStore {
     parentTaskId: string;
     parentRunId: string;
     parentAttemptId: string;
+    originatingRunId: string;
     text: string;
     now: string;
   }) {
@@ -2055,7 +2119,7 @@ export class ThreadStore {
             input.parentTaskId,
             input.parentRunId,
             input.parentAttemptId,
-            input.parentRunId,
+            input.originatingRunId,
             input.text,
             "Directed collaboration is denied.",
             input.now,
