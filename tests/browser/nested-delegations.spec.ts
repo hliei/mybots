@@ -254,9 +254,10 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
         await expect(leaf).toContainText(
           outcome === "revoke" ? "Execution: closed" : "Execution: uncertain",
         );
+        // A briefly started Task may need the five-second interrupted-execution backoff.
         await expect(
           page.locator("#chat-works article").filter({ hasText: `Run ID: ${queued.runId}` }),
-        ).toContainText("Execution: active");
+        ).toContainText("Execution: active", { timeout: 10000 });
         new RunnerMailbox(directory).reply(input, "Late evidence after revocation", "message");
         await page.getByRole("button", { name: "Refresh status" }).click();
         await expect(leaf).toContainText("Late result: Late evidence after revocation");
