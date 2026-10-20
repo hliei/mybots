@@ -583,7 +583,9 @@ retrieves the durable delegation and its approval after an unconfirmed response.
 `POST /api/bots/:botId/runs/:runId/approvals/:approvalId/decision` accepts
 `{ requestId, decision, operation, targetBotId, text, deadline }`. Decision is
 `approve` or `deny`; operation is `delegate`; the target, text and deadline must
-match the stored card exactly, including `null` for an indefinite wait. A reused
+match the stored card exactly, including `null` for an indefinite wait. Approval
+request bodies allow up to 256 KiB so the delegation's 32,000-character limit also
+works for multibyte text and JSON escapes. A reused
 operation identity cannot change its inputs. Use a new request and owner decision
 for changed inputs. The local client's credential and Host/Origin checks apply.
 Repeated decision receipts are idempotent; other late or conflicting decisions

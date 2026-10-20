@@ -220,7 +220,7 @@ it("fences a granted action when permission becomes deny before execution, even 
   expect((await get(`/api/bots/${targetId}/thread`)).tasks).toEqual([]);
 });
 
-async function approvalScenario(deadline?: string) {
+async function approvalScenario(deadline?: string, text = "Concrete selected inputs") {
   const driver = new MailboxDriver();
   let attempts = 0;
   const sourceReady = Promise.withResolvers<void>();
@@ -252,7 +252,7 @@ async function approvalScenario(deadline?: string) {
   const proposal = {
     requestId: "scenario-action",
     targetBotId: targetId,
-    text: "Concrete selected inputs",
+    text,
     ...(deadline ? { deadline } : {}),
   };
   const response = await ask(mailbox, proposal.requestId, "delegate", proposal);
@@ -268,6 +268,31 @@ async function approvalScenario(deadline?: string) {
   };
   return { configuration, driver, targetId, source, mailbox, proposal, path, decision };
 }
+
+it.each([
+  ["Chinese", "资料".repeat(11000)],
+  ["astral characters", "🧪".repeat(17000)],
+])(
+  "approves accepted delegation inputs containing %s without changing them",
+  async (_label, text) => {
+    const { mailbox, path, decision, targetId } = await approvalScenario(undefined, text);
+    mailbox.requestDurableWait("delegation");
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("waiting"),
+    );
+    expect((await post(path, { ...decision, text: "x".repeat(32001) })).status).toBe(400);
+    expect((await post(path, { ...decision, text: "x".repeat(256 * 1024) })).status).toBe(413);
+    expect((await post(path, decision)).status).toBe(202);
+    await host.reconcile();
+    await vi.waitFor(async () =>
+      expect((await get(`/api/bots/${targetId}/thread`)).tasks).toHaveLength(1),
+    );
+    const childRun = (await get(`/api/bots/${targetId}/thread`)).tasks[0].runs[0];
+    expect(childRun.delegations[0].text).toBe(text);
+    expect(childRun.delegations[0].approval.text).toBe(text);
+    expect(childRun.inputs[0].truncated).toBe(true);
+  },
+);
 
 it("returns an owner denial to the source and suppresses identical automatic requests", async () => {
   const { mailbox, proposal, path, decision, targetId, source } = await approvalScenario();

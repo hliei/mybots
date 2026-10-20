@@ -1542,7 +1542,7 @@ export class Host {
       )
     )
       throw new ChatRequestError("Unsupported approval decision field.");
-    const { deadline, ...fields } = value as Record<string, unknown>;
+    const { deadline, text, ...fields } = value as Record<string, unknown>;
     if (
       deadline !== null &&
       (typeof deadline !== "string" || !Number.isFinite(Date.parse(deadline)))
@@ -1550,7 +1550,9 @@ export class Host {
       throw new ChatRequestError(
         "The exact approval deadline is required, including null for indefinite waiting.",
       );
-    const input = chatInput(fields, ["decision", "operation", "targetBotId", "text"]);
+    if (typeof text !== "string" || !text.trim() || Array.from(text).length > 32000)
+      throw new ChatRequestError("Selected delegation text must be 1 to 32000 characters.");
+    const input = chatInput(fields, ["decision", "operation", "targetBotId"]);
     if (input.decision !== "approve" && input.decision !== "deny")
       throw new ChatRequestError("Decision must be approve or deny.");
     if (input.operation !== "delegate") throw new ChatRequestError("Unknown controlled operation.");
@@ -1561,7 +1563,7 @@ export class Host {
       approvalId,
       input.requestId,
       input.decision,
-      { operation: "delegate", targetBotId: input.targetBotId, text: input.text, deadline },
+      { operation: "delegate", targetBotId: input.targetBotId, text, deadline },
       this.timestamp(),
     );
     // Execution is reconciled separately after the complete tool batch ends its Attempt.

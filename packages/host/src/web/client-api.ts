@@ -138,11 +138,15 @@ export async function serveClient(
     try {
       const chunks: Buffer[] = [];
       let bytes = 0;
+      const maxBytes = (approvalDecision ? 256 : 64) * 1024;
       for await (const chunk of request.iterator({ destroyOnReturn: false })) {
         bytes += chunk.length;
-        if (bytes > 65536) {
+        if (bytes > maxBytes) {
           request.resume();
-          throw new ChatRequestError("Chat request exceeds 64 KiB.", 413);
+          throw new ChatRequestError(
+            `${approvalDecision ? "Approval" : "Chat"} request exceeds ${maxBytes / 1024} KiB.`,
+            413,
+          );
         }
         chunks.push(chunk);
       }
