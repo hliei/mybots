@@ -1,4 +1,5 @@
 import { showChat } from "./chat.ts";
+import { showMemory } from "./memory.ts";
 import { type SkillSelection, selectedSkills, showSkills } from "./skills.ts";
 
 interface Snapshot {
@@ -310,6 +311,7 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
         ? (pendingSettings.skills ?? active.skills)
         : active.skills,
     );
+    void showMemory(active.id);
     settingsSection.hidden = false;
     settingsVersions.textContent =
       active.savedVersion === active.effectiveVersion
@@ -334,6 +336,7 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
   } else {
     settingsSection.hidden = true;
     void showSkills(undefined);
+    void showMemory(undefined);
   }
   void showChat(active?.id);
   if (snapshot.bots.length === 0) bots.textContent = "No Bots configured.";

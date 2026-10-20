@@ -32,6 +32,10 @@ button[aria-pressed="true"] { outline: 3px solid #9bcfb3; }
 #history-navigation { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 #thread-messages button { margin: 4px 8px 4px 0; }
 
+#memory form, #memory textarea, #memory input, #memory pre { max-width: 100%; box-sizing: border-box; }
+#memory textarea, #memory pre { width: 100%; }
+#memory pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }
+#memory-topics { display: flex; flex-wrap: wrap; gap: 8px; }
 #saved-skills label { display: grid; gap: 8px; min-width: 0; }
 #saved-skills select { width: 100%; box-sizing: border-box; }
 #skill-library { overflow-wrap: anywhere; }

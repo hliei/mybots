@@ -4,6 +4,7 @@ import { fileLimitMessage } from "../attachments.ts";
 import { BotRequestError } from "../bots.ts";
 import { ChatRequestError } from "../chat.ts";
 import type { Host } from "../host.ts";
+import { MemoryConflictError } from "../memory.ts";
 import type { LocalAccess } from "./local-access.ts";
 
 const ASSETS = new Map([
@@ -13,6 +14,7 @@ const ASSETS = new Map([
   ["/chat.js", ["chat.js", "text/javascript; charset=utf-8"]],
   ["/attachments.js", ["attachments.js", "text/javascript; charset=utf-8"]],
   ["/skills.js", ["skills.js", "text/javascript; charset=utf-8"]],
+  ["/memory.js", ["memory.js", "text/javascript; charset=utf-8"]],
   ["/style.css", ["style.css", "text/css; charset=utf-8"]],
 ]);
 
@@ -320,6 +322,68 @@ export async function serveClient(
     }
     return;
   }
+  const memoryTopicRoute = /^\/api\/bots\/([^/]+)\/memory\/topics\/([^/]+)$/.exec(path);
+  const memoryCoreRoute = /^\/api\/bots\/([^/]+)\/memory\/(index|definition)$/.exec(path);
+  const memoryRoute = /^\/api\/bots\/([^/]+)\/memory$/.exec(path);
+  if (memoryRoute && request.method === "GET") {
+    try {
+      const result = await host.readMemory(decodeURIComponent(memoryRoute[1] as string));
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(result));
+    } catch (error) {
+      response.writeHead(error instanceof BotRequestError ? error.status : 503, {
+        "Content-Type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error: error instanceof BotRequestError ? error.message : "Memory unavailable.",
+        }),
+      );
+    }
+    return;
+  }
+  if ((memoryCoreRoute || memoryTopicRoute) && ["PUT", "DELETE"].includes(request.method ?? "")) {
+    try {
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+        bytes += chunk.length;
+        if (bytes > 2_000_000) {
+          request.resume();
+          throw new BotRequestError("Memory request exceeds 2 MB.", 413);
+        }
+        chunks.push(chunk);
+      }
+      let input: unknown;
+      try {
+        input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        throw new BotRequestError("Memory operations require valid JSON.");
+      }
+      const botId = decodeURIComponent((memoryCoreRoute?.[1] ?? memoryTopicRoute?.[1]) as string);
+      const kind = memoryTopicRoute ? "topic" : (memoryCoreRoute?.[2] as "index" | "definition");
+      const topicId = memoryTopicRoute
+        ? decodeURIComponent(memoryTopicRoute[2] as string)
+        : undefined;
+      const result =
+        request.method === "DELETE"
+          ? await host.deleteMemory(botId, kind, input, topicId)
+          : await host.saveMemory(botId, kind, input, topicId);
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(result));
+    } catch (error) {
+      response.writeHead(error instanceof BotRequestError ? error.status : 503, {
+        "Content-Type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error: error instanceof BotRequestError ? error.message : "Memory unavailable.",
+          ...(error instanceof MemoryConflictError ? { observed: error.observed } : {}),
+        }),
+      );
+    }
+    return;
+  }
   const skillsRoute = /^\/api\/bots\/([^/]+)\/skills$/.exec(path);
   if (skillsRoute && ["GET", "POST"].includes(request.method ?? "")) {
     try {
@@ -457,10 +521,22 @@ export async function serveClient(
     path === "/api/status" ||
     path === "/api/pair" ||
     path === "/api/bots" ||
-    path === "/api/bot-options"
+    path === "/api/bot-options" ||
+    memoryRoute ||
+    memoryCoreRoute ||
+    memoryTopicRoute
   ) {
     response.writeHead(405, {
-      Allow: path === "/api/pair" ? "POST" : path === "/api/bots" ? "GET, POST" : "GET, HEAD",
+      Allow:
+        path === "/api/pair"
+          ? "POST"
+          : path === "/api/bots"
+            ? "GET, POST"
+            : memoryCoreRoute || memoryTopicRoute
+              ? "PUT, DELETE"
+              : memoryRoute
+                ? "GET"
+                : "GET, HEAD",
     });
   } else {
     response.writeHead(path === socketPath ? 426 : 404);

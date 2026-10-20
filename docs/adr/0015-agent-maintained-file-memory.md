@@ -1,7 +1,8 @@
 # Agent-maintained file memory
 
 Status: accepted
-Implementation: planned
+Implementation: per-Bot Markdown index, definition, and topic files, owner
+version-aware editing, and current-memory supply on later Run turns
 
 Each Bot retains long-term memory as readable Markdown in its own workspace,
 with a concise core/index and detailed topic files. The Agent deliberately

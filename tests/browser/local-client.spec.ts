@@ -273,7 +273,39 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     expect(returned.sessionId).toBe(ready.sessionId);
     await page.getByRole("button", { name: "Refresh status" }).click();
     await expect(page.getByRole("status")).toContainText("Connected");
+    const writerId = await page.evaluate(async () => {
+      const response = await fetch("/api/bots");
+      const body = (await response.json()) as { bots: { id: string; name: string }[] };
+      return body.bots.find((bot) => bot.name === "Writer")?.id;
+    });
+    const memoryPath = `**/api/bots/${writerId}/memory`;
+    const memoryRead = Promise.withResolvers<void>();
+    const releaseMemory = Promise.withResolvers<void>();
+    await page.route(
+      memoryPath,
+      async (route) => {
+        const response = await route.fetch();
+        memoryRead.resolve();
+        await releaseMemory.promise;
+        await route.fulfill({ response });
+      },
+      { times: 1 },
+    );
     await page.getByRole("button", { name: "Select Writer", exact: true }).click();
+    await page.getByLabel("Memory index", { exact: true }).fill("Writer prefers short paragraphs.");
+    await memoryRead.promise;
+    const loadedMemory = page.waitForResponse(memoryPath);
+    releaseMemory.resolve();
+    await loadedMemory;
+    await expect(page.getByLabel("Memory index", { exact: true })).toHaveValue(
+      "Writer prefers short paragraphs.",
+    );
+    await page.getByRole("button", { name: "Save memory index", exact: true }).click();
+    await expect(page.locator("#memory-message")).toContainText("Saved");
+    await page.getByLabel("Topic", { exact: true }).fill("voice");
+    await page.getByLabel("Topic text", { exact: true }).fill("Use plain words.");
+    await page.getByRole("button", { name: "Save memory topic", exact: true }).click();
+    await expect(page.locator("#memory-topics")).toContainText("voice");
     const skillSource = join(root, "reviewed-skill");
     await mkdir(skillSource);
     await writeFile(
@@ -321,6 +353,41 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await expect(page.locator("#selected-bot")).toContainText("Edited writer role.");
     await expect(page.locator("#selected-bot")).toContainText(`Saved Skills: brief@${revision}`);
     await expect(page.getByLabel("Skill brief", { exact: true })).toHaveValue(revision as string);
+    await expect(page.getByLabel("Memory index", { exact: true })).toHaveValue(
+      "Writer prefers short paragraphs.",
+      { timeout: 15000 },
+    );
+    await expect(page.locator("#memory-topics")).toContainText("voice");
+    await page.getByLabel("Memory index", { exact: true }).fill("Stale browser draft.");
+    const memoryBot = (
+      await page.locator("#selected-bot p").filter({ hasText: "Bot ID:" }).innerText()
+    )
+      .replace("Bot ID: ", "")
+      .trim();
+    expect(
+      await page.evaluate(async (botId) => {
+        const current = await fetch(`/api/bots/${botId}/memory`);
+        const memory = (await current.json()) as { index: { version: string } };
+        const response = await fetch(`/api/bots/${botId}/memory/index`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: "Intervening browser note.",
+            version: memory.index.version,
+          }),
+        });
+        return response.ok;
+      }, memoryBot),
+    ).toBe(true);
+    await page.getByRole("button", { name: "Save memory index", exact: true }).click();
+    await expect(page.locator("#memory-conflict")).toContainText("Intervening browser note.");
+    await page.getByRole("button", { name: "Load observed memory", exact: true }).click();
+    await expect(page.getByLabel("Memory index", { exact: true })).toHaveValue(
+      "Intervening browser note.",
+    );
+    await page.getByRole("button", { name: "Delete memory index", exact: true }).click();
+    await expect(page.locator("#memory-message")).toContainText("does not guarantee forgetting");
+    await expect(page.getByLabel("Memory index", { exact: true })).toHaveValue("");
     await page.setViewportSize({ width: 390, height: 844 });
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
