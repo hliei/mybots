@@ -247,7 +247,26 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await expect(page.locator("#thread-messages")).toContainText("Research first");
     await page.getByRole("button", { name: "Latest originals", exact: true }).click();
     await expect(page.locator("#thread-messages")).toContainText("Independent work");
+    const olderReady = Promise.withResolvers<void>();
+    const releaseOlder = Promise.withResolvers<void>();
+    await page.route(
+      "**/thread/history?beforeSeq=*",
+      async (route) => {
+        const response = await route.fetch();
+        olderReady.resolve();
+        await releaseOlder.promise;
+        await route.fulfill({ response });
+      },
+      { times: 1 },
+    );
     await page.getByRole("button", { name: "Older originals", exact: true }).click();
+    await olderReady.promise;
+    const refreshedThread = page.waitForResponse((response) =>
+      new URL(response.url()).pathname.endsWith("/thread"),
+    );
+    await page.getByRole("button", { name: "Refresh status", exact: true }).click();
+    await (await refreshedThread).finished();
+    releaseOlder.resolve();
     await expect(page.locator("#thread-messages")).toContainText("Research first");
     await page.getByRole("button", { name: "Inspect Run evidence", exact: true }).first().click();
     await expect(page.locator("#run-history")).toContainText("Recorded Run evidence");

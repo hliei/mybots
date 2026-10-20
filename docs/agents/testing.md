@@ -415,7 +415,7 @@ upstreams and do not establish actual-service acceptance.
 
 `tests/delegations.test.ts` uses authenticated HTTP, real SQLite and mailboxes,
 and a controlled clock. It covers default deny, rejected self-grants and
-ask-each-time mode, one allowed child Task/Run, selected text without the source
+ask-each-time approval, one allowed child Task/Run, selected text without the source
 workspace, reverse denial, rejected ancestor requests, parent wait and budget release,
 targeted child steering, ordinary chat isolation, child failure, uncertain child
 hold, confirmed cancellation with a late result, and restart of the same parent
@@ -431,7 +431,9 @@ uncertain leaves, necessary questions, ancestor holds, stop confirmation through
 both levels, immediate descendant-admission fencing and late evidence without
 revival. Its real Pi SDK case records both delegation tool results, reopens both
 parent ledgers without repeating the tools, and executes only in the reviewer's
-workspace. The built-client journey follows both levels across restart and
+workspace. Nested approval coverage rechecks the shared eight-admission count when delayed
+proposals execute. The built-client journey follows both levels across restart,
+approves reviewer work, and
 stops all owned work from the root, and closes an uncertain reviewer through
 the client before its waiting ancestors resume.
 The opt-in container suite does not add a delegation case; text handoff does not

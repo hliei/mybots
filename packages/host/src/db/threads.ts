@@ -6,6 +6,18 @@ import { history } from "./history.ts";
 import type { SavedSession } from "./index.ts";
 import { type Routine, routineBusy } from "./routines.ts";
 
+export interface ActionApproval {
+  id: string;
+  operation: "delegate";
+  targetBotId: string;
+  text: string;
+  deadline: string | null;
+  state: "pending" | "approved" | "executed" | "denied" | "expired" | "cancelled" | "stale";
+  decision: "approve" | "deny" | null;
+  decidedAt: string | null;
+  resolvedAt: string | null;
+}
+
 const RUN_ACTIVE_BUDGET_MS = 60 * 60 * 1000;
 
 interface ThreadRow {
@@ -112,6 +124,9 @@ export class ThreadStore {
   private admit<T extends object>(requestId: string, payload: object, apply: () => T) {
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      const approval = this.approval(requestId);
+      if (approval && !("delegation" in payload && approval.state === "approved"))
+        throw new ChatRequestError("Request identity belongs to an action approval.", 409);
       const serialized = JSON.stringify(payload);
       const saved = this.db
         .prepare("SELECT * FROM input_admissions WHERE request_id = ?")
@@ -235,7 +250,8 @@ export class ThreadStore {
             .prepare(`INSERT INTO delegations (
  id, source_bot_id, target_bot_id, parent_task_id, parent_run_id, parent_attempt_id,
  originating_run_id, child_task_id, child_run_id, text, state, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+ ON CONFLICT(id) DO UPDATE SET child_task_id = excluded.child_task_id, child_run_id = excluded.child_run_id`)
             .run(
               input.requestId,
               input.delegation.sourceBotId,
@@ -249,6 +265,12 @@ export class ThreadStore {
               input.text,
               now,
             );
+        if (input.delegation)
+          this.db
+            .prepare(
+              "UPDATE action_approvals SET state = 'executed', resolved_at = ? WHERE id = ? AND state = 'approved'",
+            )
+            .run(now, input.requestId);
         this.db
           .prepare("UPDATE runs SET selected_message_ids = ? WHERE id = ?")
           .run(JSON.stringify(selected), runId);
@@ -366,6 +388,7 @@ export class ThreadStore {
         "UPDATE owner_questions SET state = 'cancelled', resolved_at = ? WHERE run_id = ? AND state IN ('pending', 'expired')",
       )
       .run(now, run.id);
+    this.settleApprovals(run.id, "cancelled", "Source Run was cancelled.", now);
     if (run.state !== "stopping")
       this.db
         .prepare(
@@ -1242,6 +1265,8 @@ export class ThreadStore {
         throw new ChatRequestError("Request identity is outside this execution.", 403);
       return existing;
     }
+    if (this.approval(input.id))
+      throw new ChatRequestError("Request identity belongs to an action approval.", 409);
     const artifacts = input.kind === "result" ? (input.artifacts ?? []) : [];
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -1392,7 +1417,7 @@ export class ThreadStore {
     if (existing && existing.run_id !== input.runId)
       throw new ChatRequestError("Request identity is outside this execution.", 403);
     if (!existing) {
-      if (this.publicationRow(input.id))
+      if (this.publicationRow(input.id) || this.approval(input.id))
         throw new ChatRequestError("Request identity belongs to another operation.", 409);
       this.db
         .prepare(`INSERT INTO owner_questions
@@ -1610,7 +1635,7 @@ export class ThreadStore {
           .prepare(
             "SELECT target_bot_id AS targetBotId, mode FROM collaboration_grants WHERE source_bot_id = ?",
           )
-          .all(botId) as { targetBotId: string; mode: "deny" | "allow" }[]
+          .all(botId) as { targetBotId: string; mode: "deny" | "ask-each-time" | "allow" }[]
       ).map((row) => [row.targetBotId, row.mode]),
     );
     return (
@@ -1628,7 +1653,7 @@ export class ThreadStore {
     sourceBotId: string,
     targetBotId: string,
     requestId: string,
-    mode: "deny" | "allow",
+    mode: "deny" | "ask-each-time" | "allow",
     now: string,
   ) {
     return this.admit(
@@ -1644,6 +1669,19 @@ export class ThreadStore {
  VALUES (?, ?, ?, ?)
  ON CONFLICT (source_bot_id, target_bot_id) DO UPDATE SET mode = excluded.mode, updated_at = excluded.updated_at`)
           .run(sourceBotId, targetBotId, mode, now);
+        if (mode === "deny") {
+          const requests = this.db
+            .prepare(`SELECT d.id FROM delegations d JOIN action_approvals a ON a.id = d.id
+ WHERE d.source_bot_id = ? AND d.target_bot_id = ? AND a.state IN ('pending', 'approved')`)
+            .all(sourceBotId, targetBotId);
+          for (const row of requests)
+            this.settleApproval(
+              row.id as string,
+              "stale",
+              "Current collaboration permission denies this operation. A new request and decision are required.",
+              now,
+            );
+        }
         return { sourceBotId, targetBotId, mode };
       },
     );
@@ -1690,6 +1728,7 @@ export class ThreadStore {
     parentRunId: string;
     parentAttemptId: string;
     text: string;
+    deadline?: string | null;
     now: string;
   }) {
     if (input.sourceBotId === input.targetBotId)
@@ -1697,15 +1736,102 @@ export class ThreadStore {
     this.thread(input.targetBotId);
     const saved = this.delegation(input.requestId);
     if (saved) {
-      if (saved.parentRunId !== input.parentRunId)
-        throw new ChatRequestError("Request identity belongs to another operation.", 409);
+      if (
+        saved.parentRunId !== input.parentRunId ||
+        saved.targetBotId !== input.targetBotId ||
+        saved.text !== input.text ||
+        (saved.approval?.deadline ?? null) !== (input.deadline ?? null)
+      )
+        throw new ChatRequestError(
+          "Request identity has different delegation inputs. Use a new request and decision.",
+          409,
+        );
       return saved;
     }
     if (this.delegationIdentityUsed(input.requestId))
       throw new ChatRequestError("Request identity belongs to another operation.", 409);
+    const denied = this.delegationsInvolving(input.parentRunId).find(
+      (row) =>
+        row.parentRunId === input.parentRunId &&
+        row.targetBotId === input.targetBotId &&
+        row.text === input.text &&
+        row.approval?.state === "denied",
+    );
+    if (denied) return denied;
+    const mode = this.collaborationMode(input.sourceBotId, input.targetBotId);
+    if (mode === "deny")
+      return this.recordDenial({
+        ...input,
+        originatingRunId:
+          this.delegationForChild(input.parentRunId)?.originatingRunId ?? input.parentRunId,
+      });
+    const originatingRunId = this.delegationOrigin(input.parentRunId, input.targetBotId);
+    if (mode === "ask-each-time") {
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        this.db
+          .prepare(`INSERT INTO delegations (
+ id, source_bot_id, target_bot_id, parent_task_id, parent_run_id, parent_attempt_id,
+ originating_run_id, text, state, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
+          .run(
+            input.requestId,
+            input.sourceBotId,
+            input.targetBotId,
+            input.parentTaskId,
+            input.parentRunId,
+            input.parentAttemptId,
+            originatingRunId,
+            input.text,
+            input.now,
+          );
+        this.db
+          .prepare(`INSERT INTO action_approvals (id, operation, target_bot_id, text, deadline, state)
+ VALUES (?, 'delegate', ?, ?, ?, 'pending')`)
+          .run(input.requestId, input.targetBotId, input.text, input.deadline ?? null);
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    } else {
+      this.send(
+        {
+          requestId: input.requestId,
+          botId: input.targetBotId,
+          text: input.text,
+          newTask: true,
+          delegation: {
+            sourceBotId: input.sourceBotId,
+            parentTaskId: input.parentTaskId,
+            parentRunId: input.parentRunId,
+            parentAttemptId: input.parentAttemptId,
+            originatingRunId,
+          },
+        },
+        input.now,
+      );
+    }
+    return this.delegation(input.requestId);
+  }
+
+  private collaborationMode(sourceBotId: string, targetBotId: string): string {
+    return (
+      (
+        this.db
+          .prepare(
+            "SELECT mode FROM collaboration_grants WHERE source_bot_id = ? AND target_bot_id = ?",
+          )
+          .get(sourceBotId, targetBotId) as { mode: string } | undefined
+      )?.mode ?? "deny"
+    );
+  }
+
+  /** Validate ancestry and the persisted admission count before creating child work. */
+  private delegationOrigin(parentRunId: string, targetBotId: string): string {
     const ancestors: string[] = [];
-    let edge = this.delegationForChild(input.parentRunId);
-    const originatingRunId = edge?.originatingRunId ?? input.parentRunId;
+    let edge = this.delegationForChild(parentRunId);
+    const originatingRunId = edge?.originatingRunId ?? parentRunId;
     while (edge) {
       const parent = this.run(edge.parentRunId);
       if (!["active", "queued", "waiting"].includes(parent.state))
@@ -1713,16 +1839,7 @@ export class ThreadStore {
       ancestors.push(edge.sourceBotId);
       edge = this.delegationForChild(edge.parentRunId);
     }
-    const allowed =
-      (
-        this.db
-          .prepare(
-            "SELECT mode FROM collaboration_grants WHERE source_bot_id = ? AND target_bot_id = ?",
-          )
-          .get(input.sourceBotId, input.targetBotId) as { mode: string } | undefined
-      )?.mode === "allow";
-    if (!allowed) return this.recordDenial({ ...input, originatingRunId });
-    if (ancestors.includes(input.targetBotId))
+    if (ancestors.includes(targetBotId))
       throw new ChatRequestError("A Bot cannot delegate to an ancestor Bot.", 409);
     if (ancestors.length >= 2)
       throw new ChatRequestError("A chain supports at most two delegation edges.", 409);
@@ -1733,23 +1850,159 @@ export class ThreadStore {
       .get(originatingRunId) as { total: number };
     if (count.total >= 8)
       throw new ChatRequestError("An originating Run admits at most eight total delegations.", 409);
-    this.send(
-      {
-        requestId: input.requestId,
-        botId: input.targetBotId,
-        text: input.text,
-        newTask: true,
-        delegation: {
-          sourceBotId: input.sourceBotId,
-          parentTaskId: input.parentTaskId,
-          parentRunId: input.parentRunId,
-          parentAttemptId: input.parentAttemptId,
-          originatingRunId,
-        },
-      },
-      input.now,
+    return originatingRunId;
+  }
+
+  private approval(id: string): ActionApproval | null {
+    return (
+      (this.db
+        .prepare(`SELECT id, operation, target_bot_id AS targetBotId, text, deadline,
+ state, decision, decided_at AS decidedAt, resolved_at AS resolvedAt FROM action_approvals WHERE id = ?`)
+        .get(id) as unknown as ActionApproval | undefined) ?? null
     );
-    return this.delegation(input.requestId);
+  }
+
+  decideApproval(
+    botId: string,
+    runId: string,
+    approvalId: string,
+    requestId: string,
+    decision: "approve" | "deny",
+    expected: Pick<ActionApproval, "operation" | "targetBotId" | "text" | "deadline">,
+    now: string,
+  ) {
+    this.expireApprovals(now);
+    return this.admit(
+      requestId,
+      { operation: "decide-approval", botId, runId, approvalId, decision, expected },
+      () => {
+        const run = this.ownedRun(botId, runId);
+        const delegation = this.delegation(approvalId);
+        const approval = delegation?.approval;
+        if (!approval || delegation.parentRunId !== runId)
+          throw new ChatRequestError("Approval not found for this Run.", 404);
+        if (!["active", "waiting"].includes(run.state) || approval.state !== "pending")
+          throw new ChatRequestError("Approval no longer accepts a decision.", 409);
+        if (
+          approval.operation !== expected.operation ||
+          approval.targetBotId !== expected.targetBotId ||
+          approval.text !== expected.text ||
+          approval.deadline !== expected.deadline
+        )
+          throw new ChatRequestError(
+            "Approval inputs changed. Read the current request and make a new decision.",
+            409,
+          );
+        if (this.collaborationMode(botId, approval.targetBotId) === "deny")
+          throw new ChatRequestError(
+            "Current collaboration permission denies this operation.",
+            409,
+          );
+        this.db
+          .prepare(
+            `UPDATE action_approvals SET state = ?, decision = ?, decided_at = ?, resolved_at = ? WHERE id = ?`,
+          )
+          .run(
+            decision === "approve" ? "approved" : "denied",
+            decision,
+            now,
+            decision === "deny" ? now : null,
+            approvalId,
+          );
+        if (decision === "deny")
+          this.db
+            .prepare(
+              "UPDATE delegations SET state = 'denied', result = ?, resolved_at = ? WHERE id = ?",
+            )
+            .run(
+              "Owner denied this exact delegation. Do not repeat identical inputs.",
+              now,
+              approvalId,
+            );
+        return { botId, taskId: run.task_id, runId, approvalId, decision };
+      },
+    );
+  }
+
+  expireApprovals(now: string): void {
+    this.db
+      .prepare(
+        "UPDATE action_approvals SET state = 'expired', resolved_at = ? WHERE state IN ('pending', 'approved') AND deadline <= ?",
+      )
+      .run(now, now);
+  }
+
+  private settleApproval(
+    id: string,
+    state: "cancelled" | "stale",
+    result: string,
+    now: string,
+  ): void {
+    this.db
+      .prepare(`UPDATE delegations SET state = ?, result = ?, resolved_at = ? WHERE id = ?`)
+      .run(state === "cancelled" ? "cancelled" : "denied", result, now, id);
+    this.db
+      .prepare(`UPDATE action_approvals SET state = ?, resolved_at = ? WHERE id = ?`)
+      .run(state, now, id);
+  }
+
+  private settleApprovals(runId: string, state: "cancelled", result: string, now: string): void {
+    for (const row of this.delegationsInvolving(runId)) {
+      if (
+        row.parentRunId === runId &&
+        row.approval &&
+        ["pending", "approved", "expired"].includes(row.approval.state)
+      )
+        this.settleApproval(row.id, state, result, now);
+    }
+  }
+
+  /** Recheck the immutable proposal and current policy immediately before atomic child admission. */
+  executeApprovals(runId: string, now: string): void {
+    this.expireApprovals(now);
+    if (this.run(runId).state !== "waiting") return;
+    for (const row of this.delegationsInvolving(runId)) {
+      const approval = row.approval;
+      if (row.parentRunId !== runId || approval?.state !== "approved") continue;
+      if (
+        row.state !== "pending" ||
+        row.childRunId ||
+        approval.text !== row.text ||
+        approval.targetBotId !== row.targetBotId ||
+        this.collaborationMode(row.sourceBotId, row.targetBotId) === "deny"
+      ) {
+        this.settleApproval(
+          row.id,
+          "stale",
+          "Approved delegation is stale or no longer permitted. A new request and decision are required.",
+          now,
+        );
+        continue;
+      }
+      try {
+        this.delegationOrigin(row.parentRunId, row.targetBotId);
+      } catch (error) {
+        if (!(error instanceof ChatRequestError)) throw error;
+        this.settleApproval(row.id, "stale", error.message, now);
+        continue;
+      }
+      this.send(
+        {
+          requestId: row.id,
+          botId: row.targetBotId,
+          text: row.text,
+          newTask: true,
+          delegation: {
+            sourceBotId: row.sourceBotId,
+            parentTaskId: row.parentTaskId,
+            parentRunId: row.parentRunId,
+            parentAttemptId: row.parentAttemptId,
+            originatingRunId: row.originatingRunId,
+          },
+        },
+        now,
+      );
+    }
   }
 
   /**
@@ -1880,6 +2133,7 @@ export class ThreadStore {
   private delegationIdentityUsed(id: string): boolean {
     return Boolean(
       this.publicationRow(id) ||
+        this.db.prepare("SELECT request_id FROM input_admissions WHERE request_id = ?").get(id) ||
         this.db.prepare("SELECT id FROM owner_questions WHERE id = ?").get(id) ||
         this.db.prepare("SELECT id FROM routines WHERE request_id = ?").get(id) ||
         this.db.prepare("SELECT request_id FROM routine_commands WHERE request_id = ?").get(id),
@@ -1887,7 +2141,7 @@ export class ThreadStore {
   }
 
   private delegationsWhere(clause: string, values: string[]) {
-    return this.db
+    const rows = this.db
       .prepare(`SELECT id, source_bot_id AS sourceBotId, target_bot_id AS targetBotId,
  parent_task_id AS parentTaskId, parent_run_id AS parentRunId, parent_attempt_id AS parentAttemptId,
  originating_run_id AS originatingRunId, child_task_id AS childTaskId, child_run_id AS childRunId,
@@ -1909,5 +2163,6 @@ export class ThreadStore {
       createdAt: string;
       resolvedAt: string | null;
     }[];
+    return rows.map((row) => ({ ...row, approval: this.approval(row.id) }));
   }
 }

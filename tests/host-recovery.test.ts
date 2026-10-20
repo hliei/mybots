@@ -460,7 +460,7 @@ it.each([2, 3])(
     const upgraded = new DatabaseSync(file);
     expect(
       (upgraded.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-    ).toBe(21);
+    ).toBe(22);
     expect(
       upgraded
         .prepare(

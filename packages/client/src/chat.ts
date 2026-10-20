@@ -35,6 +35,15 @@ interface Question {
   answer: string | null;
   deadline: string | null;
 }
+interface Approval {
+  id: string;
+  operation: "delegate";
+  targetBotId: string;
+  text: string;
+  deadline: string | null;
+  state: string;
+  decision: "approve" | "deny" | null;
+}
 interface Delegation {
   id: string;
   sourceBotId: string;
@@ -44,6 +53,7 @@ interface Delegation {
   originatingRunId: string;
   childTaskId: string | null;
   childRunId: string | null;
+  approval: Approval | null;
   text: string;
   state: string;
   result: string | null;
@@ -86,7 +96,7 @@ interface Task {
 }
 interface Detail {
   admission: { activeLimit: number; activeCount: number };
-  collaboration: { targetBotId: string; name: string; mode: "deny" | "allow" }[];
+  collaboration: { targetBotId: string; name: string; mode: "deny" | "ask-each-time" | "allow" }[];
   thread: { id: string; botId: string; backgroundBoundary: number };
   tasks: Task[];
   messages: { id: string; runId: string; role: string; content: string }[];
@@ -94,15 +104,38 @@ interface Detail {
 interface Pending {
   botId: string;
   requestId: string;
-  operation: "message" | "new-task" | "task" | "stop" | "retry" | "close" | "reset" | "answer";
+  operation:
+    | "message"
+    | "new-task"
+    | "task"
+    | "stop"
+    | "retry"
+    | "close"
+    | "reset"
+    | "answer"
+    | "decision";
   text: string;
   questionId?: string;
+  approval?: Approval;
+  decision?: "approve" | "deny";
   taskId?: string;
   runId?: string;
   selectedMessageIds?: string[];
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function validApproval(value: unknown): value is Approval {
+  return (
+    record(value) &&
+    typeof value.id === "string" &&
+    value.operation === "delegate" &&
+    typeof value.targetBotId === "string" &&
+    typeof value.text === "string" &&
+    (value.deadline === null || typeof value.deadline === "string") &&
+    typeof value.state === "string" &&
+    (value.decision === null || value.decision === "approve" || value.decision === "deny")
+  );
 }
 function publication(value: unknown): value is Publication {
   return (
@@ -132,7 +165,7 @@ function isDetail(value: unknown): value is Detail {
         record(peer) &&
         typeof peer.targetBotId === "string" &&
         typeof peer.name === "string" &&
-        (peer.mode === "deny" || peer.mode === "allow"),
+        (peer.mode === "deny" || peer.mode === "allow" || peer.mode === "ask-each-time"),
     ) &&
     typeof value.thread.id === "string" &&
     typeof value.thread.backgroundBoundary === "number" &&
@@ -201,6 +234,7 @@ function isDetail(value: unknown): value is Detail {
                 ].every((item) => typeof item === "string") &&
                 (row.childTaskId === null || typeof row.childTaskId === "string") &&
                 (row.childRunId === null || typeof row.childRunId === "string") &&
+                (row.approval === null || validApproval(row.approval)) &&
                 (row.result === null || typeof row.result === "string"),
             ) &&
             Array.isArray(run.progress) &&
@@ -246,14 +280,26 @@ function isPending(value: unknown): value is Pending {
   return (
     record(value) &&
     [value.botId, value.requestId, value.text].every((item) => typeof item === "string") &&
-    ["message", "new-task", "task", "stop", "retry", "close", "reset", "answer"].includes(
-      value.operation as string,
-    ) &&
+    [
+      "message",
+      "new-task",
+      "task",
+      "stop",
+      "retry",
+      "close",
+      "reset",
+      "answer",
+      "decision",
+    ].includes(value.operation as string) &&
     (value.selectedMessageIds === undefined ||
       (Array.isArray(value.selectedMessageIds) &&
         value.selectedMessageIds.every((id: unknown) => typeof id === "string"))) &&
     (value.operation !== "answer" ||
       (typeof value.questionId === "string" && typeof value.runId === "string")) &&
+    (value.operation !== "decision" ||
+      (typeof value.runId === "string" &&
+        validApproval(value.approval) &&
+        (value.decision === "approve" || value.decision === "deny"))) &&
     (value.operation !== "task" || typeof value.taskId === "string") &&
     (!["stop", "retry", "close"].includes(value.operation as string) ||
       typeof value.runId === "string")
@@ -426,7 +472,7 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
           );
           for (const question of run.questions)
             article.append(questionCard(task.id, run, question));
-          for (const delegation of run.delegations) article.append(delegationCard(delegation));
+          for (const delegation of run.delegations) article.append(delegationCard(run, delegation));
           if (run.outcome)
             article.append(
               paragraph(
@@ -521,7 +567,7 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
         "Thread state unavailable. Displayed results may be stale. Refresh to retry.";
   }
 }
-function delegationCard(delegation: Delegation): HTMLElement {
+function delegationCard(run: Run, delegation: Delegation): HTMLElement {
   const section = document.createElement("section");
   section.dataset.delegationId = delegation.id;
   section.append(
@@ -536,9 +582,68 @@ function delegationCard(delegation: Delegation): HTMLElement {
     section.append(
       paragraph(`Child Task ${delegation.childTaskId} · Child Run ${delegation.childRunId}`),
     );
-  if (delegation.result) section.append(paragraph(`Child result: ${delegation.result}`));
+  if (delegation.result) section.append(paragraph(`Delegation result: ${delegation.result}`));
+  if (delegation.approval) section.append(approvalCard(delegation, delegation.approval, run));
   return section;
 }
+function approvalCard(source: Delegation, approval: Approval, run: Run): HTMLElement {
+  const section = document.createElement("section");
+  section.dataset.approvalId = approval.id;
+  section.append(
+    paragraph(`Action approval ${approval.id} · ${approval.state}`),
+    paragraph(`Operation: ${approval.operation} · Target Bot: ${approval.targetBotId}`),
+    paragraph(`Inputs: ${approval.text}`),
+    paragraph(`Source Task ${source.parentTaskId} · Run ${source.parentRunId}`),
+    paragraph(
+      approval.deadline
+        ? `Deadline: ${approval.deadline}`
+        : "Waits for your decision without a deadline.",
+    ),
+  );
+  if (approval.decision) section.append(paragraph(`Owner decision: ${approval.decision}`));
+  if (approval.state === "expired")
+    section.append(
+      paragraph(
+        "Approval expired without executing. This Run needs owner attention. Stop it before retrying.",
+      ),
+    );
+  if (approval.state === "stale")
+    section.append(
+      paragraph(
+        "Approval is stale or no longer permitted. A new request and decision are required.",
+      ),
+    );
+  if (
+    approval.state === "pending" &&
+    source.parentRunId === run.id &&
+    ["active", "waiting"].includes(run.state)
+  ) {
+    for (const decision of ["approve", "deny"] as const) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = decision === "approve" ? "Approve action" : "Deny action";
+      button.disabled = sending || !!pending;
+      button.addEventListener("click", () => {
+        if (!botId || sending || pending) return;
+        pending = {
+          botId,
+          taskId: source.parentTaskId,
+          runId: source.parentRunId,
+          requestId: crypto.randomUUID(),
+          operation: "decision",
+          text: approval.text,
+          approval,
+          decision,
+        };
+        localStorage.setItem(pendingKey, JSON.stringify(pending));
+        void submit();
+      });
+      section.append(button);
+    }
+  }
+  return section;
+}
+
 function questionCard(taskId: string, run: Run, question: Question): HTMLElement {
   const section = document.createElement("section");
   section.dataset.questionId = question.id;
@@ -626,28 +731,39 @@ async function submit(newTask = false): Promise<void> {
       admitted.operation === "retry" ||
       admitted.operation === "close";
     const path =
-      admitted.operation === "answer"
-        ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/questions/${encodeURIComponent(admitted.questionId as string)}/answer`
-        : admitted.operation === "reset"
-          ? `${prefix}/thread/reset`
-          : runOperation
-            ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/${admitted.operation}`
-            : admitted.operation === "task"
-              ? `${prefix}/tasks/${encodeURIComponent(admitted.taskId as string)}/inputs`
-              : `${prefix}/thread/${admitted.operation === "new-task" ? "tasks" : "messages"}`;
+      admitted.operation === "decision"
+        ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/approvals/${encodeURIComponent(admitted.approval?.id as string)}/decision`
+        : admitted.operation === "answer"
+          ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/questions/${encodeURIComponent(admitted.questionId as string)}/answer`
+          : admitted.operation === "reset"
+            ? `${prefix}/thread/reset`
+            : runOperation
+              ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/${admitted.operation}`
+              : admitted.operation === "task"
+                ? `${prefix}/tasks/${encodeURIComponent(admitted.taskId as string)}/inputs`
+                : `${prefix}/thread/${admitted.operation === "new-task" ? "tasks" : "messages"}`;
     const response = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(
-        admitted.operation === "reset" || runOperation
-          ? { requestId: admitted.requestId }
-          : {
+        admitted.operation === "decision"
+          ? {
               requestId: admitted.requestId,
-              text: admitted.text,
-              ...(admitted.selectedMessageIds
-                ? { selectedMessageIds: admitted.selectedMessageIds }
-                : {}),
-            },
+              decision: admitted.decision,
+              operation: admitted.approval?.operation,
+              targetBotId: admitted.approval?.targetBotId,
+              text: admitted.approval?.text,
+              deadline: admitted.approval?.deadline,
+            }
+          : admitted.operation === "reset" || runOperation
+            ? { requestId: admitted.requestId }
+            : {
+                requestId: admitted.requestId,
+                text: admitted.text,
+                ...(admitted.selectedMessageIds
+                  ? { selectedMessageIds: admitted.selectedMessageIds }
+                  : {}),
+              },
       ),
     });
     const result: unknown = await response.json();
@@ -671,6 +787,7 @@ async function submit(newTask = false): Promise<void> {
           typeof result.runId !== "string" ||
           (!runOperation &&
             admitted.operation !== "answer" &&
+            admitted.operation !== "decision" &&
             typeof result.messageId !== "string"))
     )
       throw new Error();
@@ -682,17 +799,20 @@ async function submit(newTask = false): Promise<void> {
       admitted.botId === botId &&
       !runOperation &&
       admitted.operation !== "reset" &&
-      admitted.operation !== "answer"
+      admitted.operation !== "answer" &&
+      admitted.operation !== "decision"
     )
       text.value = "";
     notice.textContent =
-      admitted.operation === "answer"
-        ? `Answer recorded for question ${admitted.questionId}. The same Run continues when capacity is available.`
-        : admitted.operation === "reset"
-          ? `Chat background boundary is ${result.backgroundBoundary}. Existing Runs keep their captured background.`
-          : runOperation
-            ? `Recorded ${admitted.operation} for Run ${result.runId}. Refresh after the Run state changes.`
-            : `Admitted to Task ${result.taskId}, Run ${result.runId}. Await its durable outcome.`;
+      admitted.operation === "decision"
+        ? `Decision recorded for action ${admitted.approval?.id}. The same Run continues from correlated evidence.`
+        : admitted.operation === "answer"
+          ? `Answer recorded for question ${admitted.questionId}. The same Run continues when capacity is available.`
+          : admitted.operation === "reset"
+            ? `Chat background boundary is ${result.backgroundBoundary}. Existing Runs keep their captured background.`
+            : runOperation
+              ? `Recorded ${admitted.operation} for Run ${result.runId}. Refresh after the Run state changes.`
+              : `Admitted to Task ${result.taskId}, Run ${result.runId}. Await its durable outcome.`;
     await showChat(botId);
   } catch {
     notice.textContent = pending

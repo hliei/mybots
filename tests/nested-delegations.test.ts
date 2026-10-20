@@ -943,3 +943,89 @@ it("rejects retrying an older child Run after a later Run has succeeded", async 
     expect((await run("personal", chain.source.runId)).state).toBe("succeeded"),
   );
 });
+
+it("rechecks the shared chain limit when nested approvals execute", async () => {
+  const driver = new MailboxDriver();
+  driver.respond = async (input, _material, signal) => {
+    if (input.content.startsWith("Approved leaf")) return "Reviewed";
+    await untilAbort(signal);
+    return "unused";
+  };
+  await start(driver);
+  const specialist = await bot("Specialist");
+  const reviewer = await bot("Reviewer");
+  await allow("personal", specialist);
+  expect(
+    (
+      await post(`/api/bots/${specialist}/collaboration/${reviewer}`, {
+        requestId: "ask-reviewer",
+        mode: "ask-each-time",
+      })
+    ).status,
+  ).toBe(201);
+  const source = await (
+    await post("/api/bots/personal/thread/messages", {
+      requestId: "approval-chain-root",
+      text: "Coordinate approvals",
+    })
+  ).json();
+  const sourceMailbox = await mailbox(driver, source.runId);
+  const middle = (
+    await ask(sourceMailbox, "approval-specialist", "delegate", {
+      requestId: "approval-specialist",
+      targetBotId: specialist,
+      text: "Specialist approvals",
+    })
+  ).result;
+  await wait(sourceMailbox, "personal", source.runId);
+  const middleMailbox = await mailbox(driver, middle?.childRunId as string);
+  for (let index = 1; index <= 8; index++) {
+    const requestId = `approved-leaf-${index}`;
+    expect(
+      (
+        await ask(middleMailbox, requestId, "delegate", {
+          requestId,
+          targetBotId: reviewer,
+          text: `Approved leaf ${index}`,
+        })
+      ).result,
+    ).toMatchObject({
+      childTaskId: null,
+      originatingRunId: source.runId,
+      approval: { state: "pending" },
+    });
+  }
+  await wait(middleMailbox, specialist, middle?.childRunId as string);
+  for (let index = 1; index <= 8; index++) {
+    expect(
+      (
+        await post(
+          `/api/bots/${specialist}/runs/${middle?.childRunId}/approvals/approved-leaf-${index}/decision`,
+          {
+            requestId: `approve-leaf-${index}`,
+            decision: "approve",
+            operation: "delegate",
+            targetBotId: reviewer,
+            text: `Approved leaf ${index}`,
+            deadline: null,
+          },
+        )
+      ).status,
+    ).toBe(202);
+  }
+  await vi.waitFor(async () => {
+    const current = await run(specialist, middle?.childRunId as string);
+    expect(
+      current.delegations.find((row: { id: string }) => row.id === "approved-leaf-8"),
+    ).toMatchObject({
+      childTaskId: null,
+      childRunId: null,
+      state: "denied",
+      approval: { state: "stale" },
+    });
+    expect(
+      current.delegations.find((row: { id: string }) => row.id === "approved-leaf-8").result,
+    ).toMatch(/eight total delegations/);
+  });
+  expect((await get(`/api/bots/${reviewer}/thread`)).tasks).toHaveLength(7);
+}, 15000);

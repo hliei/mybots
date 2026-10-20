@@ -139,6 +139,8 @@ export class RoutineStore {
         .get(input.requestId, input.requestId)
     )
       throw new ChatRequestError("This requestId belongs to another operation.", 409);
+    if (this.db.prepare("SELECT id FROM action_approvals WHERE id = ?").get(input.requestId))
+      throw new ChatRequestError("This requestId belongs to an action approval.", 409);
     for (const id of input.selectedMessageIds) {
       if (
         !this.db
