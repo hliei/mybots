@@ -85,9 +85,10 @@ it("waits for an exact local approval before delegating and continues the same R
   driver.respond = async (input, _material, signal) => {
     if (input.content === "Approve this work" && !visits.has(input.content)) {
       visits.add(input.content);
-      await new Promise<void>((resolve) =>
-        signal.addEventListener("abort", () => resolve(), { once: true }),
-      );
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      });
     }
     return `Completed: ${input.content}`;
   };
@@ -161,9 +162,10 @@ it("waits for an exact local approval before delegating and continues the same R
 it("fences a granted action when permission becomes deny before execution, even if restored", async () => {
   const driver = new MailboxDriver();
   driver.respond = async (_input, _material, signal) => {
-    await new Promise<void>((resolve) =>
-      signal.addEventListener("abort", () => resolve(), { once: true }),
-    );
+    await new Promise<void>((resolve) => {
+      if (signal.aborted) resolve();
+      else signal.addEventListener("abort", () => resolve(), { once: true });
+    });
     return "stopped";
   };
   await start(driver);
@@ -221,11 +223,15 @@ it("fences a granted action when permission becomes deny before execution, even 
 async function approvalScenario(deadline?: string) {
   const driver = new MailboxDriver();
   let attempts = 0;
+  const sourceReady = Promise.withResolvers<void>();
   driver.respond = async (input, _material, signal) => {
-    if (input.content === "Approval source" && ++attempts === 1)
-      await new Promise<void>((resolve) =>
-        signal.addEventListener("abort", () => resolve(), { once: true }),
-      );
+    if (input.content === "Approval source" && ++attempts === 1) {
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+        sourceReady.resolve();
+      });
+    }
     return `Handled: ${input.content}`;
   };
   const configuration = await start(driver);
@@ -241,6 +247,7 @@ async function approvalScenario(deadline?: string) {
     })
   ).json();
   await vi.waitFor(() => expect(driver.launches).toHaveLength(1));
+  await sourceReady.promise;
   const mailbox = new RunnerMailbox(driver.launches[0]?.material.directory as string);
   const proposal = {
     requestId: "scenario-action",
@@ -471,11 +478,14 @@ it("reserves approval identity against other public operations", async () => {
 it("holds uncertain approved child effects instead of automatically delegating again after restart", async () => {
   const { configuration, driver, targetId, mailbox, path, decision, source } =
     await approvalScenario();
+  const childReady = Promise.withResolvers<void>();
   driver.respond = async (input, material, signal) => {
     new RunnerMailbox(material.directory).acknowledge(input.id, "failed");
-    await new Promise<void>((resolve) =>
-      signal.addEventListener("abort", () => resolve(), { once: true }),
-    );
+    await new Promise<void>((resolve) => {
+      if (signal.aborted) resolve();
+      else signal.addEventListener("abort", () => resolve(), { once: true });
+      childReady.resolve();
+    });
     return "Cannot prove the action result";
   };
   mailbox.requestDurableWait("delegation");
@@ -487,6 +497,7 @@ it("holds uncertain approved child effects instead of automatically delegating a
   await vi.waitFor(async () =>
     expect((await get(`/api/bots/${targetId}/thread`)).tasks[0].runs[0].state).toBe("active"),
   );
+  await childReady.promise;
   const child = (await get(`/api/bots/${targetId}/thread`)).tasks[0].runs[0];
   expect(
     (
