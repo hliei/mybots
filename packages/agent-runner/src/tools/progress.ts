@@ -19,7 +19,7 @@ export function createProgressTools(operation: HistoryOperation) {
       parameters: Type.Object(
         {
           requestId: Type.String({ minLength: 1, maxLength: 128 }),
-          text: Type.String({ minLength: 1, maxLength: 4000 }),
+          text: Type.String({ minLength: 1, maxLength: 2000 }),
         },
         { additionalProperties: false },
       ),
@@ -35,7 +35,7 @@ export function createProgressTools(operation: HistoryOperation) {
       parameters: Type.Object(
         {
           requestId: Type.String({ minLength: 1, maxLength: 128 }),
-          text: Type.String({ minLength: 1, maxLength: 4000 }),
+          text: Type.String({ minLength: 1, maxLength: 2000 }),
         },
         { additionalProperties: false },
       ),

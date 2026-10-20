@@ -22,6 +22,7 @@ export interface PollLoopOptions {
   runContext?: RunContext;
   signal: AbortSignal;
   pollMs?: number;
+  operationTimeoutMs?: number;
 }
 
 export async function runMailbox(options: PollLoopOptions): Promise<void> {
@@ -72,7 +73,7 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
             const requestSignal = AbortSignal.any([
               signal,
               ...(toolSignal ? [toolSignal] : []),
-              AbortSignal.timeout(30000),
+              AbortSignal.timeout(options.operationTimeoutMs ?? 30000),
             ]);
             mailbox.requestHistory({ id, incarnation, operation, input });
             try {

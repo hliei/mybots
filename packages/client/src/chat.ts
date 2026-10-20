@@ -15,6 +15,7 @@ interface Publication {
   id: string;
   attemptId: string;
   text: string;
+  truncated: boolean;
   createdAt: string;
 }
 interface Run {
@@ -74,7 +75,8 @@ function publication(value: unknown): value is Publication {
     record(value) &&
     [value.id, value.attemptId, value.text, value.createdAt].every(
       (item) => typeof item === "string",
-    )
+    ) &&
+    typeof value.truncated === "boolean"
   );
 }
 function outcome(value: unknown): boolean {
@@ -285,10 +287,14 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
               `Run background: ${run.references.length ? run.references.map((reference) => reference.text).join(" · ") : "none"}`,
             ),
             ...run.progress.map((note) =>
-              paragraph(`Progress · Attempt ${note.attemptId}: ${note.text}`),
+              paragraph(
+                `Progress · Attempt ${note.attemptId}: ${note.text}${note.truncated ? " [Excerpt]" : ""}`,
+              ),
             ),
             ...run.selectedResults.map((result) =>
-              paragraph(`Selected result · Attempt ${result.attemptId}: ${result.text}`),
+              paragraph(
+                `Selected result · Attempt ${result.attemptId}: ${result.text}${result.truncated ? " [Excerpt]" : ""}`,
+              ),
             ),
             paragraph(`Outcome: ${run.outcome?.kind ?? "unresolved"}`),
           );

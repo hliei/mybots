@@ -1111,9 +1111,9 @@ export class ThreadStore {
     };
   }
 
-  publication(botId: string, id: string) {
+  publication(botId: string, runId: string, id: string) {
     const row = this.publicationRow(id);
-    return row?.botId === botId ? row : undefined;
+    return row?.botId === botId && row.runId === runId ? row : undefined;
   }
 
   private publicationRow(id: string) {

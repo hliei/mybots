@@ -1090,6 +1090,7 @@ export class Host {
       );
     const publication = this.store.threads.publication(
       execution.route.session.agent_group_id,
+      run.id,
       input.requestId,
     );
     return publication ? { state: "recorded" as const, publication } : { state: "absent" as const };
@@ -1124,9 +1125,9 @@ export class Host {
     if (
       typeof input.text !== "string" ||
       Array.from(input.text).length < 1 ||
-      Array.from(input.text).length > 4000
+      Array.from(input.text).length > 2000
     )
-      throw new ChatRequestError("Progress and selected results must be 1 to 4000 characters.");
+      throw new ChatRequestError("Progress and selected results must be 1 to 2000 characters.");
     return this.store.threads.recordPublication({
       id: request.id,
       kind: request.operation === "publish_progress" ? "progress" : "result",

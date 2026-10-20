@@ -1,9 +1,11 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RunnerMailbox } from "@mybots/mailbox/node";
+import { HostMailbox, initializeMailbox, RunnerMailbox } from "@mybots/mailbox/node";
 import { afterEach, expect, it, vi } from "vitest";
+import { runMailbox } from "../packages/agent-runner/src/poll-loop.ts";
 import { PiProvider } from "../packages/agent-runner/src/providers/pi.ts";
+import type { AgentProvider } from "../packages/agent-runner/src/providers/types.ts";
 import { WebSocketChannel } from "../packages/host/src/channels/websocket.ts";
 import { loadHostSettings } from "../packages/host/src/config/host.ts";
 import type { SessionDriver } from "../packages/host/src/drivers/types.ts";
@@ -374,3 +376,107 @@ it("publishes through the production runner and real SDK without a second result
     await service.close();
   }
 }, 20000);
+
+it("does not return a publication from another Run", async () => {
+  const driver = new MailboxDriver();
+  driver.respond = async (input, material) => {
+    const mailbox = new RunnerMailbox(material.directory);
+    if (input.content === "First archive") {
+      await ask(mailbox, "old-note", "publish_progress", {
+        requestId: "old-note",
+        text: "Reading shelf 3",
+      });
+      return "Authoritative reply";
+    }
+    expect(
+      (await ask(mailbox, "lookup-old", "read_operation", { requestId: "old-note" })).result,
+    ).toEqual({ state: "absent" });
+    return "Authoritative reply";
+  };
+  await start(driver);
+  await (
+    await post("/api/bots/personal/thread/tasks", {
+      requestId: "first-archive",
+      text: "First archive",
+    })
+  ).json();
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("succeeded"),
+  );
+  await (
+    await post("/api/bots/personal/thread/tasks", {
+      requestId: "second-archive",
+      text: "Second archive",
+    })
+  ).json();
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).tasks[1].runs[0].state).toBe("succeeded"),
+  );
+  const tasks = (await get("/api/bots/personal/thread")).tasks;
+  expect(tasks[0].runs[0].progress).toEqual([expect.objectContaining({ text: "Reading shelf 3" })]);
+  expect(tasks[1].runs[0].progress).toEqual([]);
+});
+
+it("tells the runner to query the same request after a timeout", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mybots-progress-timeout-"));
+  const controller = new AbortController();
+  let running: Promise<void> | undefined;
+  try {
+    initializeMailbox(directory);
+    const mailbox = new RunnerMailbox(directory);
+    const hostMailbox = new HostMailbox(directory);
+    hostMailbox.setExecutionIncarnation(4);
+    hostMailbox.submit({
+      id: "timed-input",
+      content: "Publish progress",
+      channel_type: "client",
+      platform_id: "owner",
+      thread_id: "thread",
+    });
+    const provider: AgentProvider = {
+      query(input) {
+        const pending = input.history?.("publish_progress", {
+          requestId: "timed",
+          text: "Reading shelf 3",
+        });
+        return {
+          events: (async function* () {
+            try {
+              await pending;
+              yield { type: "result" as const, text: "Confirmed too early" };
+            } catch (error) {
+              yield {
+                type: "result" as const,
+                text: null,
+                isError: true,
+                error: (error as Error).message,
+              };
+            }
+          })(),
+          push: () => false,
+          end() {},
+          abort: async () => {},
+        };
+      },
+    };
+    running = runMailbox({
+      mailbox,
+      provider,
+      cwd: directory,
+      sessionDir: directory,
+      runContext: { sourceMessageId: "timed-input", backgroundBoundary: 0, references: [] },
+      signal: controller.signal,
+      pollMs: 5,
+      operationTimeoutMs: 30,
+    });
+    await vi.waitFor(() =>
+      expect(hostMailbox.outputs()[0]?.content).toContain(
+        "Host operation timed is not confirmed. Call read_operation with the same requestId",
+      ),
+    );
+  } finally {
+    controller.abort();
+    await running?.catch(() => {});
+    await rm(directory, { recursive: true, force: true });
+  }
+});
