@@ -117,11 +117,20 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await page.getByLabel("Message", { exact: true }).fill("Independent work");
     await page.getByRole("button", { name: "New task", exact: true }).click();
     await expect(page.locator("#chat-works article").nth(2)).toContainText("Execution: queued");
+    await expect(page.locator("#chat-works article").nth(2)).toContainText("interactive");
+    await expect(page.locator("#chat-works article").nth(2)).toContainText("position 1");
+    await expect(page.locator("#selected-chat")).toContainText("1 of 4 active");
+    const executing = await page
+      .locator("#chat-works article")
+      .nth(1)
+      .getByText("is executing")
+      .textContent();
     const target = await page.locator("#chat-works article").nth(1).getAttribute("data-task-id");
     await page.getByLabel("Input target").selectOption(target as string);
     await page.getByLabel("Message", { exact: true }).fill("Follow-up");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await expect(page.locator("#chat-works article").nth(1)).toContainText("Follow-up");
+    await expect(page.locator("#chat-works article").nth(1)).toContainText(executing ?? "");
     await expect(page.locator("#chat-works article").nth(2)).not.toContainText("Follow-up");
     await page.getByRole("button", { name: "Select Writer", exact: true }).click();
     await page.getByLabel("Message", { exact: true }).fill("Write independently");
@@ -130,10 +139,53 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await expect(page.locator("#chat-works")).not.toContainText("Research first");
     await page.getByRole("button", { name: "Select Researcher", exact: true }).click();
     await expect(page.locator("#chat-works article").nth(1)).toContainText("Execution: active");
-    child?.send("complete-chat");
+    await expect(page.locator("#chat-works article").nth(1)).toContainText(executing ?? "");
+    for (const name of ["North", "South", "East"]) {
+      await page.getByLabel("Bot name").fill(name);
+      await page.getByLabel("Role instructions").fill(`${name} holds a slot.`);
+      await page.getByLabel("Model", { exact: true }).selectOption("deepseek/deepseek-chat");
+      await page.getByLabel("write", { exact: true }).check();
+      await page.getByRole("button", { name: "Create Bot", exact: true }).click();
+      await expect(page.locator("#selected-bot")).toContainText(name);
+      await page.getByLabel("Message", { exact: true }).fill("Hold slot");
+      await page.getByRole("button", { name: "Send message", exact: true }).click();
+      await expect(page.locator("#chat-works")).toContainText("Execution: active");
+    }
+    await page.getByLabel("Bot name").fill("West");
+    await page.getByLabel("Role instructions").fill("West waits for a slot.");
+    await page.getByLabel("Model", { exact: true }).selectOption("deepseek/deepseek-chat");
+    await page.getByLabel("write", { exact: true }).check();
+    await page.getByRole("button", { name: "Create Bot", exact: true }).click();
+    await expect(page.locator("#selected-bot")).toContainText("West");
+    await page.getByLabel("Message", { exact: true }).fill("West waits");
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    await expect(page.locator("#selected-chat")).toContainText("4 of 4 active");
+    await expect(page.locator("#chat-works")).toContainText("Execution: queued");
+    await expect(page.locator("#chat-works")).toContainText("West waits");
+    await page.getByRole("button", { name: "Select Researcher", exact: true }).click();
+    await expect(page.locator("#chat-works article").nth(1)).toContainText(executing ?? "");
+    await expect(page.locator("#chat-works article").nth(2)).toContainText("Execution: queued");
+    const capacityPort = Number(new URL(ready.url).port);
+    await stop();
+    await start(capacityPort);
     await page.getByRole("button", { name: "Refresh status" }).click();
-    await expect(page.locator("#chat-works article").nth(1)).toContainText("Outcome: succeeded");
-    await expect(page.locator("#chat-works article").nth(2)).toContainText("Outcome: succeeded");
+    await expect(page.getByRole("status")).toContainText("Connected");
+    await page.getByRole("button", { name: "Select West", exact: true }).click();
+    // Stopped containers are not executing during recovery backoff, so the cap stays honest.
+    await expect(page.locator("#selected-chat")).toContainText(/[0-4] of 4 active/);
+    await expect(page.locator("#chat-works article")).toHaveCount(1);
+    await expect(page.locator("#chat-works")).toContainText("West waits");
+    child?.send("release-slots");
+    child?.send("complete");
+    child?.send("complete-chat");
+    await page.getByRole("button", { name: "Select Researcher", exact: true }).click();
+    await page.getByRole("button", { name: "Refresh status" }).click();
+    await expect(page.locator("#chat-works article").nth(1)).toContainText("Outcome: succeeded", {
+      timeout: 20_000,
+    });
+    await expect(page.locator("#chat-works article").nth(2)).toContainText("Outcome: succeeded", {
+      timeout: 20_000,
+    });
     await expect(page.locator("#chat-works")).toContainText("Run ID:");
     await expect(page.locator("#chat-works")).toContainText("Attempt:");
     await page.getByLabel("Search original history").fill("Research");

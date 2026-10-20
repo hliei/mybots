@@ -321,6 +321,39 @@ export function createMailbox(withDatabase: WithDatabase) {
       );
     }
 
+    durableWait(): string | undefined {
+      const value = this.readState("durable-wait");
+      return typeof value === "string" && value.trim() ? value.trim().slice(0, 200) : undefined;
+    }
+
+    durableResume(): boolean {
+      return this.readState("durable-resume") === true;
+    }
+
+    clearDurableSignal(key: "durable-wait" | "durable-resume"): void {
+      withDatabase(this.directory, "outbound", false, (db) =>
+        db.run("DELETE FROM session_state WHERE key = ?", key),
+      );
+    }
+
+    private readState(key: string): unknown {
+      const row = withDatabase(
+        this.directory,
+        "outbound",
+        true,
+        (db) =>
+          db.get("SELECT value FROM session_state WHERE key = ?", key) as
+            | { value: string }
+            | undefined,
+      );
+      if (!row) return undefined;
+      try {
+        return JSON.parse(row.value) as unknown;
+      } catch {
+        return undefined;
+      }
+    }
+
     syncAcknowledgements(): void {
       const acknowledgements = this.acknowledgements();
       withDatabase(this.directory, "inbound", false, (db) => {
@@ -377,6 +410,16 @@ export function createMailbox(withDatabase: WithDatabase) {
     historyResponse(id: string) {
       return new HostMailbox(this.directory).operationResponse(id);
     }
+    requestDurableWait(reason: string): void {
+      if (typeof reason !== "string" || !reason.trim() || reason.length > 200)
+        throw new Error("Durable wait reason must be 1 to 200 characters");
+      this.saveState("durable-wait", reason.trim());
+    }
+
+    resumeDurableWait(): void {
+      this.saveState("durable-resume", true);
+    }
+
     recordExecution(record: ExecutionRecord): void {
       withDatabase(this.directory, "outbound", false, (db) =>
         db.run(

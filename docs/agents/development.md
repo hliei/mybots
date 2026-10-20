@@ -68,7 +68,9 @@ details and scope. See
 Active Run queries accept durable steering at permitted SDK boundaries. Queue
 insertion alone is not consumption; SDK recording precedes mailbox evidence.
 Query shutdown closes admission and awaits polling/SDK cleanup. One actual
-Attempt per Bot holds capacity until confirmed stop; other Bots may progress.
+Attempt per Bot holds capacity until confirmed stop or a complete-tool-result
+durable wait; four Attempts run at once by default, and other Bots may progress
+inside that limit.
 Execution and per-Run delivery progress independently. See
 [container execution](../container-runtime.md) for event and failure mapping.
 

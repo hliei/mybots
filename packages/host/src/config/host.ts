@@ -46,6 +46,14 @@ function modelConfiguration(value: unknown): ModelConfiguration {
   };
 }
 
+function admissionSettings(value: unknown): { activeExecutionLimit: number } {
+  const section = object(value);
+  const limit = section.activeExecutionLimit;
+  if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 64)
+    throw new Error("Active execution limit must be an integer from 1 to 64");
+  return { activeExecutionLimit: limit };
+}
+
 export function validateHostConfiguration(value: unknown): HostConfiguration {
   const source = object(value);
   const agent = object(source.agent);
@@ -108,6 +116,7 @@ export function validateHostConfiguration(value: unknown): HostConfiguration {
       model,
     },
     ...(approvedModels ? { approvedModels } : {}),
+    ...(source.admission === undefined ? {} : { admission: admissionSettings(source.admission) }),
     destinations,
   };
 }

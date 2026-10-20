@@ -103,6 +103,12 @@ are approved choices, not a live provider availability check. Keep approval
 entries consistent with any `.env` provider/endpoint overrides. Re-running setup
 may regenerate `host.json`; retain installation additions when doing so.
 
+`admission.activeExecutionLimit` is an optional integer from 1 to 64. Omission
+admits four actual Attempts at once, with at most one per Bot. The limit counts
+executing Attempts, not idle containers. A durable wait or confirmed stop frees
+a slot; an unconfirmed stop does not. Queued work stays persisted and is not
+started by preempting an Attempt that is already running.
+
 The client chooses only a `{ provider, id }` from that set. Credentials stay in
 the gateway, while endpoint/token limits stay in installation configuration and
 Host-owned runner context. Available tools include SDK built-ins and only web

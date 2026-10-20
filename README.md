@@ -137,7 +137,8 @@ for protocol, owner-local access, delivery and recovery details.
 ## Persistence and reliability
 
 The Host stores Bot configuration, Threads, original messages, Tasks, Runs, Attempts
-and input admissions in `data/host.db` (schema 8). Each Run has directional mailboxes
+and input admissions in `data/host.db` (schema 11), including the durable execution
+queue. Each Run has directional mailboxes
 and an independent SDK ledger under `data/sessions/<bot_id>/<run_id>/`; shared Bot
 files live under `groups/<folder>/`. Immutable runner context is mounted read-only.
 A saved `pi:` continuation selects only that Run's SDK history.

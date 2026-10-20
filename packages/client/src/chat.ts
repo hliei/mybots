@@ -16,6 +16,9 @@ interface Run {
   state: string;
   held?: boolean;
   stopError?: string | null;
+  admissionClass: "interactive" | "background" | null;
+  queuePosition: number | null;
+  waitReason: string | null;
   backgroundBoundary: number;
   references: { id: string; role: string; text: string }[];
   outcome: Outcome | null;
@@ -40,6 +43,7 @@ interface Task {
   runs: Run[];
 }
 interface Detail {
+  admission: { activeLimit: number; activeCount: number };
   thread: { id: string; botId: string; backgroundBoundary: number };
   tasks: Task[];
   messages: { id: string; runId: string; role: string; content: string }[];
@@ -65,6 +69,9 @@ function outcome(value: unknown): boolean {
 function isDetail(value: unknown): value is Detail {
   return (
     record(value) &&
+    record(value.admission) &&
+    typeof value.admission.activeLimit === "number" &&
+    typeof value.admission.activeCount === "number" &&
     record(value.thread) &&
     typeof value.thread.id === "string" &&
     typeof value.thread.backgroundBoundary === "number" &&
@@ -88,6 +95,11 @@ function isDetail(value: unknown): value is Detail {
             record(run) &&
             typeof run.id === "string" &&
             typeof run.state === "string" &&
+            (run.admissionClass === null ||
+              run.admissionClass === "interactive" ||
+              run.admissionClass === "background") &&
+            (run.queuePosition === null || typeof run.queuePosition === "number") &&
+            (run.waitReason === null || typeof run.waitReason === "string") &&
             typeof run.backgroundBoundary === "number" &&
             Array.isArray(run.references) &&
             run.references.every(
@@ -201,7 +213,7 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
     if (!isDetail(detail)) throw new Error();
     if (current !== version) return;
     setBackgroundBoundary(detail.thread.backgroundBoundary);
-    selected.textContent = `Thread ID: ${detail.thread.id} · Chat background boundary: ${detail.thread.backgroundBoundary}`;
+    selected.textContent = `Thread ID: ${detail.thread.id} · Chat background boundary: ${detail.thread.backgroundBoundary}. Host execution: ${detail.admission.activeCount} of ${detail.admission.activeLimit} active.`;
     const priorTarget = target.value;
     target.replaceChildren(
       Object.assign(document.createElement("option"), {
@@ -235,7 +247,11 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
         for (const run of task.runs) {
           article.append(
             paragraph(`Run ID: ${run.id}`),
-            paragraph(`Execution: ${run.state}`),
+            paragraph(
+              run.state === "queued" && run.admissionClass && run.queuePosition
+                ? `Execution: queued · ${run.admissionClass} · position ${run.queuePosition}`
+                : `Execution: ${run.state}`,
+            ),
             paragraph(`Captured background boundary: ${run.backgroundBoundary}`),
             paragraph(
               `Run background: ${run.references.length ? run.references.map((reference) => reference.text).join(" · ") : "none"}`,
@@ -248,6 +264,14 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
                 `Final: ${run.outcome.reply}${run.outcome.truncated ? " [Excerpt; inspect Run evidence for the original.]" : ""}`,
               ),
             );
+          if (run.state === "waiting")
+            article.append(
+              paragraph(
+                "Durable wait released this Bot's execution slot. Resumed work waits for the active Attempt to finish.",
+              ),
+            );
+          const executing = run.attempts.find((attempt) => attempt.endedAt === null);
+          if (executing) article.append(paragraph(`Attempt ${executing.id} is executing.`));
           if (run.state === "stopping")
             article.append(
               paragraph(
@@ -300,8 +324,7 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
           inspect.textContent = "Inspect Run evidence";
           inspect.addEventListener("click", () => void showRunHistory(run.id));
           article.append(inspect);
-          const runnable =
-            run.state === "queued" || run.state === "active" || run.state === "stopping";
+          const runnable = ["queued", "active", "stopping", "waiting"].includes(run.state);
           if (runnable) article.append(runButton("Stop run", "stop", task.id, run.id));
           if (run.state === "uncertain" || run.state === "closed")
             article.append(runButton("Retry run", "retry", task.id, run.id));
@@ -313,7 +336,9 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
     );
     if (
       current === version &&
-      detail.tasks.some((task) => task.runs.some((run) => run.state === "stopping"))
+      detail.tasks.some((task) =>
+        task.runs.some((run) => ["active", "queued", "stopping", "waiting"].includes(run.state)),
+      )
     )
       refreshTimer = window.setTimeout(() => {
         if (current === version && botId) void showChat(botId);

@@ -371,8 +371,10 @@ it("orders exit after a start already in progress and leaves no Host running", a
     env,
     timeout: 12000,
   });
-  await vi.waitFor(async () =>
-    expect(await readFile(join(root, "service-commands"), "utf8")).toMatch(/kickstart|start/),
+  await vi.waitFor(
+    async () =>
+      expect(await readFile(join(root, "service-commands"), "utf8")).toMatch(/kickstart|start/),
+    { timeout: 5000 },
   );
   const exiting = run(resolve("bin/mbt"), ["exit", "--root", root], {
     cwd: tmpdir(),

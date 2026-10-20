@@ -20,6 +20,8 @@ const driver = new MailboxDriver();
 const started = Promise.withResolvers();
 const release = Promise.withResolvers();
 const chatRelease = Promise.withResolvers();
+let releaseSlots = false;
+const slotWaiters = [];
 let releaseStop = () => {};
 let stopGate = process.env.MYBOTS_HOLD_STOP
   ? new Promise((resolve) => {
@@ -46,8 +48,16 @@ const execution = {
 };
 driver.respond = async (input, _material, signal) => {
   started.resolve();
+  const slot =
+    input.content === "Hold slot"
+      ? releaseSlots
+        ? Promise.resolve()
+        : new Promise((resolve) => {
+            slotWaiters.push(resolve);
+          })
+      : undefined;
   await Promise.race([
-    input.content === "Hold chat" ? chatRelease.promise : release.promise,
+    slot ?? (input.content === "Hold chat" ? chatRelease.promise : release.promise),
     new Promise((resolve) => {
       if (signal.aborted) resolve();
       else signal.addEventListener("abort", resolve, { once: true });
@@ -79,6 +89,10 @@ try {
     process.on("message", (message) => {
       if (message === "complete") release.resolve();
       if (message === "complete-chat") chatRelease.resolve();
+      if (message === "release-slots") {
+        releaseSlots = true;
+        for (const resolve of slotWaiters.splice(0)) resolve();
+      }
       if (message === "hold-stop")
         stopGate = new Promise((resolve) => {
           releaseStop = resolve;

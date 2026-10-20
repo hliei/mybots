@@ -1,7 +1,7 @@
 # Durable Runs and serial Bot execution
 
 Status: accepted
-Implementation: planned
+Implementation: partial. Serial Bot execution and fair admission are implemented. Question and child waits, budgets, and routines remain later work.
 
 A Task is the requested objective; a Run is one logical execution of that Task;
 an Attempt is a period of actual execution. A durable wait retains the Task and

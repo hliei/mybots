@@ -327,7 +327,10 @@ completion races, targeted active/queued additions, admission-before-publication
 recovery, Host loss with durable steering, uncertain outcomes, confirmed and
 failed stops, same-Task retry, late results, original-reply
 projection, authenticated ownership, fresh runtime setup, and actual same-Bot
-serialization with cross-Bot progress. Real Pi cases use the production mailbox
+serialization with cross-Bot progress. `tests/admission.test.ts` holds execution
+at the public thread API and proves the configurable global cap, non-preemption,
+interactive/background fairness, restart adoption, and durable-wait release.
+Real Pi cases use the production mailbox
 loop and a controlled streaming model service to check independent Run ledgers,
 quoted Thread originals, input consumption evidence and reopening across Attempts.
 
