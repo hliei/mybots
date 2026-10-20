@@ -1,13 +1,13 @@
 export const delegationSchema = `
 PRAGMA foreign_keys = OFF;
 BEGIN IMMEDIATE;
-CREATE TABLE tasks_v20 (
+CREATE TABLE tasks_v21 (
  id TEXT PRIMARY KEY, thread_id TEXT NOT NULL REFERENCES threads(id),
  origin TEXT NOT NULL CHECK (origin IN ('chat', 'routine', 'delegation')), created_at TEXT NOT NULL
 );
-INSERT INTO tasks_v20 SELECT * FROM tasks;
+INSERT INTO tasks_v21 SELECT * FROM tasks;
 DROP TABLE tasks;
-ALTER TABLE tasks_v20 RENAME TO tasks;
+ALTER TABLE tasks_v21 RENAME TO tasks;
 CREATE TABLE collaboration_grants (
  source_bot_id TEXT NOT NULL REFERENCES agent_groups(id),
  target_bot_id TEXT NOT NULL REFERENCES agent_groups(id),
@@ -34,7 +34,7 @@ CREATE TABLE delegations (
 );
 CREATE INDEX delegations_parent ON delegations(parent_run_id);
 CREATE INDEX delegations_child ON delegations(child_run_id);
-PRAGMA user_version = 20;
+PRAGMA user_version = 21;
 COMMIT;
 PRAGMA foreign_keys = ON;
 `;

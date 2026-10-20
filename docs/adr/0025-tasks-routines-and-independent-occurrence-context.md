@@ -1,7 +1,7 @@
 # Tasks, Routines, and independent occurrence context
 
 Status: accepted
-Implementation: partial. One-shot and cron Routines create independent occurrence Tasks and Runs. Routine lifecycle controls remain planned.
+Implementation: partial. One-shot and cron Routines create independent occurrence Tasks and Runs. Owners and the owning Bot can edit, pause, resume, run now and logically delete a Routine. Admitted occurrence definitions stay fixed.
 
 A Task represents requested work, whether it originates in the Bot's direct
 Thread, a scheduled occurrence, or a delegation. A Routine is the persistent

@@ -109,6 +109,20 @@ it("creates a durable one-shot and admits one independent occurrence after an ov
   await host.stop();
   await listen(new MailboxDriver());
   expect((await get("thread")).tasks).toHaveLength(2);
+  const edited = await post(`routines/${created.id}`, {
+    requestId: "edit-consumed-instant",
+    text: "Read shelf 3",
+    runAt: "2026-10-21T09:00:00Z",
+    timezone: "UTC",
+  });
+  expect(edited.status).toBe(200);
+  expect(await edited.json()).toMatchObject({
+    text: "Read shelf 3",
+    runAt: "2026-10-21T09:00:00.000Z",
+    timezone: "UTC",
+    nextOccurrence: null,
+  });
+  expect((await get("thread")).tasks[1].routine.text).toBe(definition.text);
 });
 
 it("creates an own-Bot Routine through the fenced runner, deduplicates lookup and survives source cancellation", async () => {
@@ -907,4 +921,558 @@ it("discards slots missed during an explicit occurrence retry", async () => {
   } finally {
     release.resolve();
   }
+});
+
+it("applies Routine edits only to newly admitted occurrences while Bot settings cut over at the Attempt boundary", async () => {
+  const driver = new MailboxDriver();
+  const release = Promise.withResolvers<void>();
+  driver.respond = async (_input, _material, signal) => {
+    await Promise.race([
+      release.promise,
+      new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      }),
+    ]);
+    return "Archive inspected";
+  };
+  try {
+    await start(driver);
+    const created = await (
+      await post("routines", {
+        requestId: "edit-cron",
+        text: "Read the archive",
+        cron: "0 * * * *",
+      })
+    ).json();
+    now += 3600000;
+    await host.reconcile();
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[0].runs[0].state).toBe("active"),
+    );
+    const admitted = (await get("thread")).tasks[0];
+    expect(admitted.routine).toMatchObject({ text: "Read the archive", cron: "0 * * * *" });
+    const version = admitted.runs[0].attempts[0].configurationVersion;
+    const edited = await post(`routines/${created.id}`, {
+      requestId: "edit-text",
+      text: "Read shelf 3",
+      cron: "30 * * * *",
+    });
+    expect(edited.status).toBe(200);
+    expect(await edited.json()).toMatchObject({
+      id: created.id,
+      text: "Read shelf 3",
+      cron: "30 * * * *",
+      replayed: false,
+    });
+    expect(
+      (
+        await post(`routines/${created.id}`, {
+          requestId: "edit-text",
+          text: "Read shelf 3",
+          cron: "30 * * * *",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await post(`routines/${created.id}`, {
+          requestId: "edit-text",
+          text: "Different",
+          cron: "30 * * * *",
+        })
+      ).status,
+    ).toBe(409);
+    expect((await get("thread")).tasks[0].routine.text).toBe("Read the archive");
+    expect((await get("routines")).routines[0]).toMatchObject({
+      text: "Read shelf 3",
+      cron: "30 * * * *",
+    });
+    const settings = await fetch(`${base}/api/bots/personal/settings`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        requestId: "settings-during-occurrence",
+        instructions: "Cite every source.",
+        model: {
+          provider: configuration.agent.model.provider,
+          id: configuration.agent.model.id,
+        },
+        tools: ["read"],
+      }),
+    });
+    expect(settings.status).toBe(201);
+    expect((await get("thread")).tasks[0].runs[0].attempts[0].configurationVersion).toBe(version);
+    release.resolve();
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[0].runs[0].state).toBe("succeeded"),
+    );
+    await vi.waitFor(async () =>
+      expect((await get("routines")).routines[0].nextOccurrence).not.toBeNull(),
+    );
+    const armed = (await get("routines")).routines[0].nextOccurrence as string;
+    now = Date.parse(armed);
+    await host.reconcile();
+    await vi.waitFor(async () => expect((await get("thread")).tasks).toHaveLength(2));
+    const next = (await get("thread")).tasks[1];
+    expect(next.routine.text).toBe("Read shelf 3");
+    expect(next.routine.cron).toBe("30 * * * *");
+    expect(next.runs[0].attempts[0].configurationVersion).toBe(version + 1);
+    expect((await get("thread")).tasks[0].routine.text).toBe("Read the archive");
+  } finally {
+    release.resolve();
+  }
+});
+
+it("pauses automatic starts without cancelling current work and resumes a future cron slot or one overdue one-shot", async () => {
+  const driver = new MailboxDriver();
+  const release = Promise.withResolvers<void>();
+  driver.respond = async (_input, _material, signal) => {
+    await Promise.race([
+      release.promise,
+      new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      }),
+    ]);
+    return "Paused work finished";
+  };
+  try {
+    await start(driver);
+    const cron = await (
+      await post("routines", { requestId: "pause-cron", text: "Archive hourly", cron: "0 * * * *" })
+    ).json();
+    const once = await (
+      await post("routines", {
+        requestId: "pause-once",
+        text: "Archive once",
+        runAt: "2026-10-20T04:00:00Z",
+        timezone: "UTC",
+      })
+    ).json();
+    now = Date.parse(cron.nextOccurrence);
+    await host.reconcile();
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[0].runs[0].state).toBe("active"),
+    );
+    const paused = await post(`routines/${cron.id}/pause`, { requestId: "pause-cron-now" });
+    expect(paused.status).toBe(200);
+    expect(await paused.json()).toMatchObject({ id: cron.id, paused: true });
+    expect((await post(`routines/${once.id}/pause`, { requestId: "pause-once-now" })).status).toBe(
+      200,
+    );
+    expect((await get("thread")).tasks[0].runs[0].state).toBe("active");
+    release.resolve();
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[0].runs[0].state).toBe("succeeded"),
+    );
+    now += 3 * 3600000;
+    await host.reconcile();
+    expect((await get("thread")).tasks).toHaveLength(1);
+    await host.reconcile();
+    expect(
+      (await get("routines")).routines.find((row: { id: string }) => row.id === cron.id),
+    ).toMatchObject({
+      paused: true,
+      nextOccurrence: null,
+    });
+    expect((await get("thread")).tasks).toHaveLength(1);
+    await channel.close();
+    await host.stop();
+    await listen(new MailboxDriver());
+    expect(
+      (await get("routines")).routines.find((row: { id: string }) => row.id === cron.id),
+    ).toMatchObject({
+      paused: true,
+      nextOccurrence: null,
+    });
+    expect((await get("thread")).tasks).toHaveLength(1);
+    expect(
+      await (await post(`routines/${cron.id}/pause`, { requestId: "pause-cron-now" })).json(),
+    ).toMatchObject({ paused: true, replayed: true });
+    const resumed = await post(`routines/${cron.id}/resume`, { requestId: "resume-cron" });
+    expect(resumed.status).toBe(200);
+    const resumedCron = await resumed.json();
+    expect(resumedCron.paused).toBe(false);
+    expect(Date.parse(resumedCron.nextOccurrence)).toBeGreaterThan(now);
+    expect((await post(`routines/${once.id}/resume`, { requestId: "resume-once" })).status).toBe(
+      200,
+    );
+    await vi.waitFor(async () => expect((await get("thread")).tasks).toHaveLength(2));
+    expect((await get("thread")).tasks[1].routine.text).toBe("Archive once");
+    expect((await get("thread")).tasks).toHaveLength(2);
+    now = Date.parse(resumedCron.nextOccurrence);
+    await host.reconcile();
+    await vi.waitFor(async () => expect((await get("thread")).tasks).toHaveLength(3));
+  } finally {
+    release.resolve();
+  }
+});
+
+it.each([false, true])(
+  "runs a Routine once without replaying busy slots (paused: %s)",
+  async (paused) => {
+    const driver = new MailboxDriver();
+    const release = Promise.withResolvers<void>();
+    driver.respond = async (_input, _material, signal) => {
+      await Promise.race([
+        release.promise,
+        new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else signal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+      ]);
+      return "Manual archive";
+    };
+    try {
+      await start(driver);
+      const cron = await (
+        await post("routines", {
+          requestId: "manual-cron",
+          text: "Archive manually",
+          cron: "* * * * *",
+        })
+      ).json();
+      if (paused)
+        expect(
+          (await post(`routines/${cron.id}/pause`, { requestId: "manual-pause" })).status,
+        ).toBe(200);
+      const started = await post(`routines/${cron.id}/run`, { requestId: "manual-run" });
+      expect(started.status).toBe(202);
+      expect(await started.json()).toMatchObject({ id: cron.id, paused, replayed: false });
+      expect((await post(`routines/${cron.id}/run`, { requestId: "manual-run" })).status).toBe(202);
+      await vi.waitFor(async () =>
+        expect((await get("thread")).tasks[0].runs[0].state).toBe("active"),
+      );
+      expect((await get("thread")).tasks[0].routine.text).toBe("Archive manually");
+      expect((await post(`routines/${cron.id}/run`, { requestId: "manual-again" })).status).toBe(
+        409,
+      );
+      now += 120000;
+      await host.reconcile();
+      expect((await get("thread")).tasks).toHaveLength(1);
+      expect((await get("routines")).routines[0]).toMatchObject({ paused });
+      release.resolve();
+      await vi.waitFor(async () =>
+        expect((await get("thread")).tasks[0].runs[0].state).toBe("succeeded"),
+      );
+      await host.reconcile();
+      expect((await get("thread")).tasks).toHaveLength(1);
+      expect((await get("routines")).routines[0].paused).toBe(paused);
+      if (!paused)
+        expect((await get("routines")).routines[0].nextOccurrence).toBe("2026-10-20T00:03:00.000Z");
+    } finally {
+      release.resolve();
+    }
+  },
+);
+
+it("keeps recurrence after an occurrence stop and retains a deleted Routine without future starts", async () => {
+  const driver = new MailboxDriver();
+  const release = Promise.withResolvers<void>();
+  let calls = 0;
+  driver.respond = async (_input, _material, signal) => {
+    const call = ++calls;
+    await new Promise<void>((resolve) => {
+      if (signal.aborted) resolve();
+      else signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    return call === 1 ? "Occurrence stopped" : "Deleted occurrence";
+  };
+  try {
+    await start(driver);
+    const cron = await (
+      await post("routines", {
+        requestId: "delete-cron",
+        text: "Archive until removed",
+        cron: "* * * * *",
+      })
+    ).json();
+    now += 60000;
+    await host.reconcile();
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[0].runs[0].state).toBe("active"),
+    );
+    expect(
+      (
+        await post(`runs/${(await get("thread")).tasks[0].runs[0].id}/stop`, {
+          requestId: "stop-occurrence",
+        })
+      ).status,
+    ).toBe(202);
+    await vi.waitFor(async () =>
+      expect(["succeeded", "failed", "closed"]).toContain(
+        (await get("thread")).tasks[0].runs[0].state,
+      ),
+    );
+    await vi.waitFor(async () =>
+      expect((await get("routines")).routines[0]).toMatchObject({
+        paused: false,
+        deletedAt: null,
+        nextOccurrence: expect.any(String),
+      }),
+    );
+    const armed = (await get("routines")).routines[0].nextOccurrence as string;
+    now = Date.parse(armed);
+    await host.reconcile();
+    await vi.waitFor(async () => expect((await get("thread")).tasks).toHaveLength(2));
+    const removed = await post(`routines/${cron.id}/delete`, { requestId: "delete-routine" });
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toMatchObject({
+      id: cron.id,
+      text: "Archive until removed",
+      paused: false,
+      deletedAt: armed,
+    });
+    await vi.waitFor(async () =>
+      expect(["succeeded", "failed", "closed"]).toContain(
+        (await get("thread")).tasks[1].runs[0].state,
+      ),
+    );
+    expect((await get("routines")).routines).toHaveLength(1);
+    expect((await get("thread")).tasks[0].routine.text).toBe("Archive until removed");
+    now += 5 * 60000;
+    await host.reconcile();
+    expect((await get("thread")).tasks).toHaveLength(2);
+    expect((await post(`routines/${cron.id}/run`, { requestId: "run-deleted" })).status).toBe(409);
+    expect((await post(`routines/${cron.id}/pause`, { requestId: "pause-deleted" })).status).toBe(
+      409,
+    );
+  } finally {
+    release.resolve();
+  }
+});
+
+it("retries an uncertain occurrence under the same Task with a new budget and keeps the old outcome", async () => {
+  const driver = new MailboxDriver();
+  const release = Promise.withResolvers<void>();
+  let calls = 0;
+  driver.respond = async (input, material, signal) => {
+    calls += 1;
+    if (calls === 1) {
+      new RunnerMailbox(material.directory).acknowledge(input.id, "completed");
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+      return "Missing final evidence";
+    }
+    await Promise.race([
+      release.promise,
+      new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      ),
+    ]);
+    return "Retried archive";
+  };
+  try {
+    await start(driver);
+    const created = await (
+      await post("routines", {
+        ...definition,
+        requestId: "retry-once",
+        runAt: "2026-10-20T00:00:00Z",
+      })
+    ).json();
+    await vi.waitFor(() => expect(calls).toBe(1));
+    const runId = (await get("thread")).tasks[0].runs[0].id as string;
+    expect((await post(`runs/${runId}/stop`, { requestId: "stop-uncertain" })).status).toBe(202);
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[0].runs[0]).toMatchObject({
+        state: "uncertain",
+        held: true,
+        outcome: { kind: "uncertain", reply: "Final evidence is missing." },
+      }),
+    );
+    now += 86400000;
+    await host.reconcile();
+    expect((await get("thread")).tasks[0].runs).toHaveLength(1);
+    const original = (await get("thread")).tasks[0].runs[0];
+    expect((await post(`routines/${created.id}/run`, { requestId: "overlap-run" })).status).toBe(
+      409,
+    );
+    expect(
+      (await post(`routines/${created.id}/delete`, { requestId: "delete-uncertain" })).status,
+    ).toBe(200);
+    expect((await get("thread")).tasks[0].runs[0]).toMatchObject({
+      state: "uncertain",
+      held: true,
+      outcome: original.outcome,
+    });
+    const retried = await post(`runs/${runId}/retry`, { requestId: "explicit-retry" });
+    expect(retried.status).toBe(202);
+    await vi.waitFor(() => expect(calls).toBe(2));
+    const task = (await get("thread")).tasks[0];
+    expect(task.runs).toHaveLength(2);
+    expect(task.runs[0]).toMatchObject({
+      id: runId,
+      state: "closed",
+      outcome: original.outcome,
+    });
+    expect(task.runs[1]).toMatchObject({
+      priorRunId: runId,
+      budget: { activeMs: 0, exhaustedAt: null },
+    });
+    expect((await post(`routines/${created.id}/run`, { requestId: "overlap-retry" })).status).toBe(
+      409,
+    );
+    expect((await get("thread")).tasks).toHaveLength(1);
+    expect((await get("thread")).tasks[0].runs).toHaveLength(2);
+    release.resolve();
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[0].runs[1].state).toBe("succeeded"),
+    );
+    expect((await get("thread")).tasks[0].runs[0].outcome).toEqual(original.outcome);
+  } finally {
+    release.resolve();
+  }
+});
+
+it("pauses and runs a Routine through the real SDK without enabling recurrence", async () => {
+  let routineId = "";
+  const service = await startPiService(async (request) => {
+    const body = JSON.stringify(request.messages);
+    if (!body.includes("Pause routine")) return { text: "Archive inspected" };
+    const tools = request.messages.filter((row) => row.role === "tool");
+    if (!tools.length)
+      return {
+        tool: "manage_routine",
+        arguments: { requestId: "sdk-pause", routineId, action: "pause" },
+      };
+    if (tools.length === 1)
+      return {
+        tool: "manage_routine",
+        arguments: { requestId: "sdk-run", routineId, action: "run" },
+      };
+    return { text: "Paused, and ran once." };
+  });
+  try {
+    await start(
+      piRunDriver(new PiProvider({ modelRuntime: service.runtime, model: service.model })),
+    );
+    const created = await (
+      await post("routines", { requestId: "sdk-cron", text: "Read the archive", cron: "0 * * * *" })
+    ).json();
+    routineId = created.id;
+    await post("thread/messages", {
+      requestId: "sdk-manage",
+      text: `Pause routine ${routineId} and run it once`,
+    });
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[0].runs[0].state).toBe("succeeded"),
+    );
+    expect(
+      service.requests[0]?.tools?.some((tool) => tool.function.name === "manage_routine"),
+    ).toBe(true);
+    expect((await get("routines")).routines[0]).toMatchObject({
+      paused: true,
+      text: "Read the archive",
+    });
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[1].runs[0].state).toBe("succeeded"),
+    );
+    const occurrence = (await get("thread")).tasks[1];
+    expect(occurrence.routine.text).toBe("Read the archive");
+    expect(occurrence.origin).toBe("routine");
+    now += 3 * 3600000;
+    await host.reconcile();
+    expect((await get("thread")).tasks).toHaveLength(2);
+    expect((await get("routines")).routines[0].paused).toBe(true);
+  } finally {
+    await service.close();
+  }
+});
+
+it("manages the current Bot's Routines through scoped commands", async () => {
+  const driver = new MailboxDriver();
+  const entered = Promise.withResolvers<void>();
+  driver.respond = async (_input, _material, signal) => {
+    entered.resolve();
+    await new Promise<void>((resolve) =>
+      signal.addEventListener("abort", () => resolve(), { once: true }),
+    );
+    return "Stopped";
+  };
+  await start(driver);
+  const created = await (
+    await post("routines", {
+      requestId: "scoped-cron",
+      text: "Archive from the owner",
+      cron: "0 9 * * *",
+    })
+  ).json();
+  await post("thread/messages", { requestId: "manager", text: "Pause the archive Routine" });
+  await entered.promise;
+  const mailbox = new RunnerMailbox(driver.launches[0]?.material.directory as string);
+  async function ask(id: string, input: Record<string, unknown>) {
+    mailbox.requestHistory({
+      id,
+      operation: "manage_routine",
+      input,
+      incarnation: mailbox.executionIncarnation(),
+    });
+    return vi.waitFor(() => {
+      const response = mailbox.historyResponse(id);
+      expect(response).toBeDefined();
+      return response as { result?: Record<string, unknown>; error?: string };
+    });
+  }
+  expect(
+    (await ask("pause-it", { requestId: "pause-it", routineId: created.id, action: "pause" }))
+      .result,
+  ).toMatchObject({ id: created.id, paused: true });
+  expect(
+    (
+      await ask("edit-it", {
+        requestId: "edit-it",
+        routineId: created.id,
+        action: "update",
+        text: "Archive shelf 3",
+        cron: "15 9 * * *",
+      })
+    ).result,
+  ).toMatchObject({ text: "Archive shelf 3", cron: "15 9 * * *", paused: true });
+  expect(
+    (await ask("run-it", { requestId: "run-it", routineId: created.id, action: "run" })).result,
+  ).toMatchObject({ paused: true, runId: expect.any(String) });
+  expect((await get("thread")).tasks[1].routine.text).toBe("Archive shelf 3");
+  expect((await get("routines")).routines[0].paused).toBe(true);
+  mailbox.requestHistory({
+    id: "lookup-edit",
+    operation: "read_operation",
+    input: { requestId: "edit-it" },
+    incarnation: mailbox.executionIncarnation(),
+  });
+  await vi.waitFor(() =>
+    expect(mailbox.historyResponse("lookup-edit")?.result).toMatchObject({
+      state: "recorded",
+      routine: { text: "Archive shelf 3" },
+    }),
+  );
+  expect(
+    (
+      await ask("forged", {
+        requestId: "forged",
+        routineId: created.id,
+        action: "pause",
+        botId: "writer",
+      })
+    ).error,
+  ).toContain("Forged execution identity");
+  mailbox.requestHistory({
+    id: "cross",
+    operation: "administer_routine",
+    input: { requestId: "cross", routineId: created.id },
+    incarnation: mailbox.executionIncarnation(),
+  });
+  await vi.waitFor(() => expect(mailbox.historyResponse("cross")?.error).toContain("Cross-Bot"));
+  expect(
+    (await ask("delete-it", { requestId: "delete-it", routineId: created.id, action: "delete" }))
+      .result,
+  ).toMatchObject({ deletedAt: expect.any(String), text: "Archive shelf 3" });
+  await vi.waitFor(async () =>
+    expect(["closed", "failed", "succeeded"]).toContain(
+      (await get("thread")).tasks[1].runs[0].state,
+    ),
+  );
+  expect((await get("routines")).routines[0].deletedAt).toEqual(expect.any(String));
 });

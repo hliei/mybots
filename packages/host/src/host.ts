@@ -1204,6 +1204,95 @@ export class Host {
     return routine;
   }
 
+  updateRoutine(botId: string, routineId: string, value: unknown) {
+    this.store.threads.thread(botId);
+    if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
+    const selectedProvided =
+      !!value && typeof value === "object" && "selectedMessageIds" in (value as object);
+    const routine = this.store.routines.update(
+      botId,
+      routineId,
+      {
+        ...routineInput(value, this.timestamp(), this.store.routines.timezone(botId)),
+        selectedProvided,
+      },
+      this.timestamp(),
+    );
+    this.admitDueRoutines();
+    this.schedule();
+    return routine;
+  }
+
+  setRoutinePaused(botId: string, routineId: string, value: unknown, paused: boolean) {
+    this.store.threads.thread(botId);
+    if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
+    const input = chatInput(value, []);
+    const routine = this.store.routines.setPaused(
+      botId,
+      routineId,
+      input.requestId as string,
+      paused,
+      this.timestamp(),
+    );
+    this.admitDueRoutines();
+    this.schedule();
+    return routine;
+  }
+
+  runRoutine(botId: string, routineId: string, value: unknown) {
+    this.store.threads.thread(botId);
+    if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
+    const input = chatInput(value, []);
+    const routine = this.store.routines.list(botId).find((row) => row.id === routineId);
+    if (!routine) throw new ChatRequestError("Routine not found.", 404);
+    if (routine.deletedAt) throw new ChatRequestError("Routine is deleted.", 409);
+    const now = this.timestamp();
+    const admitted = this.store.threads.runNow(botId, routine, input.requestId as string, now);
+    this.schedule();
+    const saved = this.store.routines.list(botId).find((row) => row.id === routineId);
+    if (!saved) throw new ChatRequestError("Routine not found.", 404);
+    return { ...saved, runId: admitted.runId, replayed: admitted.replayed };
+  }
+
+  async deleteRoutine(botId: string, routineId: string, value: unknown) {
+    this.store.threads.thread(botId);
+    if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
+    const input = chatInput(value, []);
+    // Commit deletion before stop so a crash cannot admit another occurrence.
+    // Each stop stays stopping until the driver confirms it. A failed or partial
+    // stop leaves those Runs unfinished; replaying this requestId stops whatever
+    // remains. Uncertain Runs stay held for explicit retry or closure.
+    const marked = this.store.routines.markDeleted(
+      botId,
+      routineId,
+      input.requestId as string,
+      this.timestamp(),
+    );
+    for (const run of this.store.routines.unfinished(routineId)) {
+      if (run.state === "uncertain") continue;
+      await this.stopRun(botId, run.id, { requestId: `${input.requestId}-stop` });
+    }
+    this.admitDueRoutines();
+    this.schedule();
+    const saved = this.store.routines.list(botId).find((row) => row.id === routineId);
+    return { ...saved, replayed: marked.replayed };
+  }
+
+  private manageRoutine(botId: string, routineId: string, input: Record<string, unknown>) {
+    const request = { requestId: input.requestId };
+    if (input.action === "pause" || input.action === "resume")
+      return this.setRoutinePaused(botId, routineId, request, input.action === "pause");
+    if (input.action === "run") return this.runRoutine(botId, routineId, request);
+    if (input.action === "delete") return this.deleteRoutine(botId, routineId, request);
+    if (input.action === "update") {
+      const fields: Record<string, unknown> = { requestId: input.requestId };
+      for (const key of ["text", "cron", "runAt", "timezone", "selectedMessageIds"] as const)
+        if (key in input) fields[key] = input[key];
+      return this.updateRoutine(botId, routineId, fields);
+    }
+    throw new ChatRequestError("Unknown Routine action.");
+  }
+
   private admitDueRoutines(): void {
     if (this.stopped) return;
     this.store.routines.rearm(this.timestamp());
@@ -1321,6 +1410,17 @@ export class Host {
       return routine;
     }
     if (request.operation === "delegate") return this.delegate(execution, request, input);
+    if (request.operation === "manage_routine") {
+      const run = this.store.threads.run(execution.route.session.id);
+      const attempt = this.store.threads.executingAttempt(run.id);
+      if (run.state !== "active" || !attempt || attempt.incarnation !== request.incarnation)
+        throw new ChatRequestError("Execution scope is no longer active.", 403);
+      if (input.requestId !== request.id)
+        throw new ChatRequestError("A stable requestId is required.");
+      if (typeof input.routineId !== "string" || typeof input.action !== "string")
+        throw new ChatRequestError("A Routine id and action are required.");
+      return this.manageRoutine(botId, input.routineId, input);
+    }
     if (request.operation === "ask_question") return this.askQuestion(execution, request, input);
     if (request.operation === "read_operation") return this.readPublication(execution, input);
     if (request.operation === "publish_progress" || request.operation === "publish_result")
@@ -1466,12 +1566,17 @@ export class Host {
           row.source.kind === "run" &&
           row.source.runId === run.id,
       );
+    const command = this.store.routines.findCommand(
+      execution.route.session.agent_group_id,
+      input.requestId,
+    );
     if (routine) return { state: "recorded" as const, routine };
     const delegation = this.store.threads.delegation(
       typeof input.requestId === "string" ? input.requestId : "",
     );
     if (delegation && delegation.parentRunId === run.id)
       return { state: "recorded" as const, delegation };
+    if (command) return { state: "recorded" as const, routine: command };
     if (question) return { state: "recorded" as const, question };
     return publication ? { state: "recorded" as const, publication } : { state: "absent" as const };
   }

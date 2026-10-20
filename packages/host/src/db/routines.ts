@@ -17,6 +17,8 @@ export interface Routine {
   source: { kind: "owner" } | { kind: "run"; taskId: string; runId: string; attemptId: string };
   createdAt: string;
   taskId: string | null;
+  paused: boolean;
+  deletedAt: string | null;
 }
 
 /** Durable schedule definitions; occurrence execution belongs to ThreadStore. */
@@ -101,6 +103,8 @@ export class RoutineStore {
           : { kind: "owner" as const },
         createdAt: row.created_at as string,
         taskId: row.task_id as string | null,
+        paused: row.paused === 1,
+        deletedAt: (row.deleted_at as string | null) ?? null,
       }));
   }
 
@@ -147,7 +151,12 @@ export class RoutineStore {
     }
     const id = randomUUID();
     this.db
-      .prepare(`INSERT INTO routines VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .prepare(
+        `INSERT INTO routines (
+ id, request_id, bot_id, text, run_at, timezone, next_occurrence,
+ selected_message_ids, source_run_id, source_attempt_id, created_at, cron
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
       .run(
         id,
         input.requestId,
@@ -165,10 +174,197 @@ export class RoutineStore {
     return this.list(botId).find((row) => row.id === id) as Routine;
   }
 
+  /** Future admissions use the saved definition. Admitted occurrence snapshots stay fixed. */
+  update(
+    botId: string,
+    routineId: string,
+    input: ReturnType<typeof routineInput> & { selectedProvided: boolean },
+    now: string,
+  ): Routine & { replayed: boolean } {
+    let replayed = false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.require(botId, routineId);
+      const selected = input.selectedProvided
+        ? input.selectedMessageIds
+        : current.selectedMessageIds;
+      const fingerprint = JSON.stringify({
+        text: input.text,
+        cron: input.cron,
+        runAt: input.cron ? null : input.runAt,
+        timezone: input.cron ? null : input.timezone,
+        selectedMessageIds: selected,
+      });
+      replayed = this.claim(botId, routineId, input.requestId, "update", fingerprint);
+      if (!replayed) {
+        if (current.deletedAt) throw new ChatRequestError("Routine is deleted.", 409);
+        if (Boolean(current.cron) !== Boolean(input.cron))
+          throw new ChatRequestError("Routine schedule kind cannot change.", 409);
+        for (const id of selected) {
+          if (
+            !this.db
+              .prepare(
+                `SELECT m.id FROM thread_messages m JOIN threads t ON t.id = m.thread_id WHERE m.id = ? AND t.bot_id = ?`,
+              )
+              .get(id, botId)
+          )
+            throw new ChatRequestError("Selected message was not found on this Thread.", 404);
+        }
+        const armed = current.nextOccurrence !== null;
+        const next = !armed
+          ? null
+          : input.cron
+            ? nextCron(input.cron, input.timezone, now)
+            : input.runAt;
+        const keepResolvedInstant = Boolean(input.cron) && current.occurrences.length > 0;
+        const runAt = input.cron
+          ? keepResolvedInstant || !armed
+            ? current.runAt
+            : next
+          : input.runAt;
+        const timezone = input.cron ? current.timezone : input.timezone;
+        this.db
+          .prepare(
+            `UPDATE routines SET text = ?, cron = ?, run_at = ?, timezone = ?, next_occurrence = ?,
+ selected_message_ids = ? WHERE id = ?`,
+          )
+          .run(input.text, input.cron, runAt, timezone, next, JSON.stringify(selected), routineId);
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return { ...(this.list(botId).find((row) => row.id === routineId) as Routine), replayed };
+  }
+
+  /** Pause blocks automatic admission. Resume recomputes only a missed cron slot. */
+  setPaused(
+    botId: string,
+    routineId: string,
+    requestId: string,
+    paused: boolean,
+    now: string,
+  ): Routine & { replayed: boolean } {
+    let replayed = false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.require(botId, routineId);
+      replayed = this.claim(botId, routineId, requestId, paused ? "pause" : "resume", "");
+      if (!replayed) {
+        if (current.deletedAt) throw new ChatRequestError("Routine is deleted.", 409);
+        let next = current.nextOccurrence;
+        if (!paused && current.cron && !routineBusy(this.db, routineId)) {
+          if (next === null || next <= now) next = nextCron(current.cron, current.timezone, now);
+        }
+        this.db
+          .prepare("UPDATE routines SET paused = ?, next_occurrence = ? WHERE id = ?")
+          .run(paused ? 1 : 0, next, routineId);
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return { ...(this.list(botId).find((row) => row.id === routineId) as Routine), replayed };
+  }
+
+  /** Logical deletion keeps the definition and cancels future automatic admission. */
+  markDeleted(
+    botId: string,
+    routineId: string,
+    requestId: string,
+    now: string,
+  ): Routine & { replayed: boolean } {
+    let replayed = false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.require(botId, routineId);
+      replayed = this.claim(botId, routineId, requestId, "delete", "");
+      if (!replayed)
+        this.db
+          .prepare(
+            "UPDATE routines SET deleted_at = COALESCE(deleted_at, ?), next_occurrence = NULL WHERE id = ?",
+          )
+          .run(now, routineId);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return { ...(this.list(botId).find((row) => row.id === routineId) as Routine), replayed };
+  }
+
+  findCommand(botId: string, requestId: string): Routine | undefined {
+    const row = this.db
+      .prepare("SELECT routine_id FROM routine_commands WHERE request_id = ? AND bot_id = ?")
+      .get(requestId, botId) as { routine_id: string } | undefined;
+    return row ? this.list(botId).find((routine) => routine.id === row.routine_id) : undefined;
+  }
+
+  unfinished(routineId: string): { id: string; state: string }[] {
+    return this.db
+      .prepare(
+        `SELECT w.id AS id, w.state AS state FROM routine_occurrences o
+ JOIN runs w ON w.task_id = o.task_id
+ WHERE o.routine_id = ? AND w.state IN ('queued', 'active', 'waiting', 'stopping', 'uncertain')`,
+      )
+      .all(routineId) as { id: string; state: string }[];
+  }
+
+  private require(botId: string, routineId: string): Routine {
+    const routine = this.list(botId).find((row) => row.id === routineId);
+    if (!routine) throw new ChatRequestError("Routine not found.", 404);
+    return routine;
+  }
+
+  /** Record one owner or scoped command. A matching retry does not apply it again. */
+  private claim(
+    botId: string,
+    routineId: string,
+    requestId: string,
+    action: string,
+    fingerprint: string,
+  ): boolean {
+    const prior = this.db
+      .prepare("SELECT * FROM routine_commands WHERE request_id = ?")
+      .get(requestId) as
+      | { routine_id: string; bot_id: string; action: string; fingerprint: string }
+      | undefined;
+    if (prior) {
+      if (
+        prior.routine_id !== routineId ||
+        prior.bot_id !== botId ||
+        prior.action !== action ||
+        prior.fingerprint !== fingerprint
+      )
+        throw new ChatRequestError("This requestId belongs to another operation.", 409);
+      return true;
+    }
+    if (
+      this.db.prepare("SELECT id FROM routines WHERE request_id = ?").get(requestId) ||
+      this.db
+        .prepare("SELECT request_id FROM timezone_updates WHERE request_id = ?")
+        .get(requestId) ||
+      this.db
+        .prepare(
+          "SELECT id FROM agent_publications WHERE id = ? UNION SELECT id FROM owner_questions WHERE id = ? UNION SELECT id FROM delegations WHERE id = ?",
+        )
+        .get(requestId, requestId, requestId)
+    )
+      throw new ChatRequestError("This requestId belongs to another operation.", 409);
+    this.db
+      .prepare("INSERT INTO routine_commands VALUES (?, ?, ?, ?, ?)")
+      .run(requestId, routineId, botId, action, fingerprint);
+    return false;
+  }
+
   /** Arm only after known terminal outcomes and confirmed execution stop. */
   rearm(now: string): void {
     const rows = this.db
-      .prepare("SELECT * FROM routines WHERE cron IS NOT NULL AND next_occurrence IS NULL")
+      .prepare(
+        "SELECT * FROM routines WHERE cron IS NOT NULL AND next_occurrence IS NULL AND paused = 0 AND deleted_at IS NULL",
+      )
       .all();
     for (const row of rows) {
       if (routineBusy(this.db, row.id as string)) continue;
@@ -186,7 +382,11 @@ export class RoutineStore {
       .flatMap((row) => this.list(row.bot_id as string))
       .filter(
         (row) =>
-          row.nextOccurrence !== null && row.nextOccurrence <= now && !routineBusy(this.db, row.id),
+          row.nextOccurrence !== null &&
+          row.nextOccurrence <= now &&
+          !row.paused &&
+          !row.deletedAt &&
+          !routineBusy(this.db, row.id),
       );
   }
 }

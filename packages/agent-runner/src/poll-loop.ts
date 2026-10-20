@@ -67,6 +67,7 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
             const supplied = typeof fields?.requestId === "string" ? fields.requestId : undefined;
             const id =
               operation === "create_routine" ||
+              operation === "manage_routine" ||
               operation === "ask_question" ||
               operation === "delegate" ||
               operation === "publish_progress" ||

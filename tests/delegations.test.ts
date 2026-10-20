@@ -79,6 +79,67 @@ async function writer() {
   return created.bot.id as string;
 }
 
+it.each([false, true])(
+  "keeps Routine commands and delegation identities distinct (command first: %s)",
+  async (commandFirst) => {
+    const driver = new MailboxDriver();
+    driver.respond = async (_input, _material, signal) => {
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return "Stopped";
+    };
+    await start(driver);
+    const targetId = await writer();
+    await post(`/api/bots/personal/collaboration/${targetId}`, {
+      requestId: "identity-grant",
+      mode: "allow",
+    });
+    const routine = await (
+      await post("/api/bots/personal/routines", {
+        requestId: "identity-routine",
+        text: "Archive later",
+        cron: "0 * * * *",
+      })
+    ).json();
+    const source = await (
+      await post("/api/bots/personal/thread/messages", {
+        requestId: "identity-source",
+        text: "Plan the archive",
+      })
+    ).json();
+    await vi.waitFor(() => expect(driver.launches).toHaveLength(1));
+    const mailbox = new RunnerMailbox(driver.launches[0]?.material.directory as string);
+    const command = () =>
+      post(`/api/bots/personal/routines/${routine.id}/pause`, {
+        requestId: "same-operation",
+      });
+    const delegate = () =>
+      ask(mailbox, "same-operation", "delegate", {
+        requestId: "same-operation",
+        targetBotId: targetId,
+        text: "Selected archive text",
+      });
+    if (commandFirst) {
+      expect((await command()).status).toBe(200);
+      expect((await delegate()).error).toMatch(/(requestId|identity) belongs to another operation/);
+    } else {
+      expect((await delegate()).result?.state).toBe("pending");
+      expect((await command()).status).toBe(409);
+    }
+    const lookup = await ask(mailbox, "identity-lookup", "read_operation", {
+      requestId: "same-operation",
+    });
+    expect(lookup.result).toMatchObject(
+      commandFirst
+        ? { state: "recorded", routine: { id: routine.id, paused: true } }
+        : { state: "recorded", delegation: { id: "same-operation", parentRunId: source.runId } },
+    );
+    expect((await get(`/api/bots/${targetId}/thread`)).tasks).toHaveLength(commandFirst ? 0 : 1);
+  },
+);
+
 it("delegates one allowed child and continues the same parent Run", async () => {
   const releaseChild = Promise.withResolvers<void>();
   const driver = new MailboxDriver();
@@ -691,28 +752,31 @@ it("resumes the original parent Run after restart", async () => {
 it("records a real SDK delegation and resumes that Run with current Memory", async () => {
   const releaseChild = Promise.withResolvers<void>();
   let childRequests = 0;
-  const service = await startPiService(async (request) => {
-    const body = JSON.stringify(request);
-    if (body.includes("Summarize only this sentence")) {
-      childRequests += 1;
-      if (childRequests === 1) {
-        await releaseChild.promise;
-        return { tool: "bash", arguments: { command: "printf child > child-note.txt" } };
+  const service = await startPiService(
+    async (request) => {
+      const body = JSON.stringify(request);
+      if (body.includes("Summarize only this sentence")) {
+        childRequests += 1;
+        if (childRequests === 1) {
+          await releaseChild.promise;
+          return { tool: "bash", arguments: { command: "printf child > child-note.txt" } };
+        }
+        return { text: "Child summary" };
       }
-      return { text: "Child summary" };
-    }
-    if (body.includes("Delegate this summary") && !body.includes("Delegated work"))
-      return {
-        tool: "delegate",
-        arguments: {
-          requestId: "sdk-child",
-          targetBotId: body.match(/ag-[0-9a-f-]+/)?.[0],
-          text: "Summarize only this sentence",
-        },
-      };
-    if (body.includes("Child summary")) return { text: "Parent continued" };
-    return { text: "done" };
-  });
+      if (body.includes("Delegate this summary") && !body.includes("Delegated work"))
+        return {
+          tool: "delegate",
+          arguments: {
+            requestId: "sdk-child",
+            targetBotId: body.match(/ag-[0-9a-f-]+/)?.[0],
+            text: "Summarize only this sentence",
+          },
+        };
+      if (body.includes("Child summary")) return { text: "Parent continued" };
+      return { text: "done" };
+    },
+    { contextWindow: 65536 },
+  );
   try {
     const driver = piRunDriver(
       new PiProvider({ modelRuntime: service.runtime, model: service.model }),
@@ -771,7 +835,7 @@ it("records a real SDK delegation and resumes that Run with current Memory", asy
     releaseChild.resolve();
     await vi.waitFor(async () => {
       const run = (await get("/api/bots/personal/thread")).tasks[0].runs[0];
-      expect(run.state).toBe("succeeded");
+      expect(run.state, JSON.stringify(run.outcome)).toBe("succeeded");
     });
     const parent = (await get("/api/bots/personal/thread")).tasks[0].runs[0];
     expect(parent.id).toBe(sent.runId);

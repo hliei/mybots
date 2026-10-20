@@ -131,6 +131,7 @@
             <button id="bot-timezone-retry" type="button" hidden>Retry Bot timezone</button>
             <p>Cron uses this Bot timezone (default Asia/Shanghai). Changes apply immediately to future scheduling. Admitted work and one-shot instants stay fixed. Missed slots create no backlog; one unfinished occurrence blocks the next.</p>
             <p>Work runs while the Host is available, even after you disconnect. Each occurrence gets its own Task and independent Run context. Include any selected prior inputs in the instructions.</p>
+            <p>Pause blocks automatic starts and lets current work finish. Resume skips cron slots missed while paused; an overdue one-shot runs once. Run now works while paused and does not turn recurrence back on. Deleting a Routine cancels unfinished occurrences and future starts, and keeps the definition and results. Stopping one occurrence does not pause or delete the Routine. An explicit retry keeps the Task and the earlier Run outcome.</p>
             <form id="routine-form">
               <label for="routine-text">Routine instructions</label>
               <textarea id="routine-text" required maxlength="32000" rows="3"></textarea>
@@ -157,6 +158,7 @@
             </form>
             <p id="routine-notice" aria-live="polite"></p>
             <button id="routine-retry" type="button" hidden>Retry Routine creation</button>
+            <button id="routine-command-retry" type="button" hidden>Retry Routine command</button>
             <div id="routine-list" aria-label="Routines"></div>
           </section>
           <section id="attachments">

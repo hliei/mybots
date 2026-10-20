@@ -447,6 +447,12 @@ Cron coverage in the same public suite verifies fallback/Bot timezone edits,
 unchanged admitted snapshots and one-shot instants, parser validation and DST,
 one overdue restart occurrence, busy-slot omission, recurrence after failure,
 question waits across restart, uncertainty and old-occurrence retry exclusion.
+Lifecycle coverage verifies that edits and Bot-setting cutover leave admitted
+definitions fixed, pause and resume skip missed cron slots while an overdue
+one-shot runs once, run-now works while paused without overlap, deletion cancels
+unfinished work and future starts without erasing evidence, and explicit retry
+keeps the old outcome under the same Task with a new budget. Scoped
+`manage_routine` commands and a real SDK pause/run cover the same owner rules.
 The real Pi case creates cron through the actual tool and runs two occurrences,
 proving selected steering and source chat do not enter the next SDK ledger.
 The built-client journey saves a Bot timezone, selects a common cron choice,

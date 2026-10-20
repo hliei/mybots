@@ -1,7 +1,7 @@
 # Work cancellation, Routine pause, and Bot disablement
 
 Status: accepted
-Implementation: planned
+Implementation: partial. Routine pause, resume, run-now and logical deletion are implemented. Bot disablement and deletion remain planned.
 
 Stopping selected work cancels that work, its owned delegated descendants and
 pending user decisions. Preserve history and existing results; stopping one

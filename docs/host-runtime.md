@@ -488,7 +488,7 @@ historical seed references, hidden reasoning, system prompts and provider-only
 payloads. Original tool calls/results remain separate from Thread conversation
 and survive SDK compaction. Reads never execute or mutably reopen an SDK session.
 
-Production `search_history`, `read_history`, `create_routine`, `ask_question`, `publish_progress`, `publish_result`
+Production `search_history`, `read_history`, `create_routine`, `manage_routine`, `ask_question`, `publish_progress`, `publish_result`
 and `read_operation` tools use the same correlated directional mailbox requests.
 The Host derives Bot/Task/Run/Attempt scope from the owned execution mailbox and
 its open Attempt, and checks the actual executor incarnation. Payload identity
@@ -816,7 +816,27 @@ reading, while default Thread history excludes them. Ordinary Thread input selec
 work; explicit Task additions target the occurrence through the same durable
 queued/active/waiting input path and never edit the Routine. Known failures are
 retained, and acknowledged unknown effects are held for inspection rather than
-automatically replayed. Routine lifecycle controls remain separate work.
+automatically replayed. Pausing a Routine blocks later automatic starts and lets
+the current occurrence finish. Resume selects the next future cron slot and does
+not replay slots missed while paused. An overdue paused one-shot runs once on
+resume. Run now admits one occurrence with the current definition while paused
+and does not enable recurrence. It is refused while that Routine has unfinished
+work. Editing text or schedule changes only occurrences admitted afterward;
+queued and active Tasks keep the definition captured at admission. Bot settings
+still change at the next Attempt boundary. Stopping one occurrence does not
+pause or delete its Routine.
+
+`POST /api/bots/:botId/routines/:routineId` edits with `requestId`, `text`, and
+either `cron` or `runAt` plus `timezone`. `POST .../pause`, `.../resume`,
+`.../run` and `.../delete` take `{ requestId }`. Run returns 202; the others
+return 200. A reused request does not apply the command again. A different payload for
+that request returns 409. Logical deletion sets `deletedAt`, stops queued, active,
+waiting and stopping owned Runs, leaves uncertain Runs held, clears future starts,
+and keeps the definition, occurrence links and results in the list. Further edit, pause, resume and run requests are rejected.
+The same operations are available to the owning Bot as `manage_routine`. The
+Host derives the Bot from the fenced execution and rejects forged identity and
+cross-Bot administration. `read_operation` returns a recorded lifecycle command
+by its request id.
 
 Cron creation replaces `runAt`/`timezone` with `cron`; supplying both schedules or
 an override timezone is rejected. The Web form offers hourly, daily at 09:00,

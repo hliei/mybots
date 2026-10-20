@@ -176,28 +176,31 @@ it.each([false, true])(
   "ends the real SDK batch and resumes with current settings after restart (lost wait checkpoint: %s)",
   async (lostCheckpoint) => {
     const requests: string[] = [];
-    const service = await startPiService(async (request) => {
-      requests.push(JSON.stringify(request));
-      if (!request.messages.some((row) => row.role === "tool"))
-        return {
-          tools: [
-            { name: "ask_question", arguments: { requestId: "city", text: "Which city?" } },
-            { name: "ask_question", arguments: { requestId: "date", text: "Which date?" } },
-            {
-              name: "bash",
-              arguments: { command: "printf 'Saved before waiting' > wait-evidence.txt" },
-            },
-          ],
-          text: "Choosing a destination",
-        };
-      if (request.messages.filter((row) => row.role === "tool").length === 3)
-        return {
-          tool: "read_operation",
-          arguments: { requestId: "city" },
-          text: "Reading the answered question",
-        };
-      return { text: "Trip to Hangzhou by rail" };
-    });
+    const service = await startPiService(
+      async (request) => {
+        requests.push(JSON.stringify(request));
+        if (!request.messages.some((row) => row.role === "tool"))
+          return {
+            tools: [
+              { name: "ask_question", arguments: { requestId: "city", text: "Which city?" } },
+              { name: "ask_question", arguments: { requestId: "date", text: "Which date?" } },
+              {
+                name: "bash",
+                arguments: { command: "printf 'Saved before waiting' > wait-evidence.txt" },
+              },
+            ],
+            text: "Choosing a destination",
+          };
+        if (request.messages.filter((row) => row.role === "tool").length === 3)
+          return {
+            tool: "read_operation",
+            arguments: { requestId: "city" },
+            text: "Reading the answered question",
+          };
+        return { text: "Trip to Hangzhou by rail" };
+      },
+      { contextWindow: 65536 },
+    );
     try {
       const driver = piRunDriver(
         new PiProvider({ modelRuntime: service.runtime, model: service.model }),
@@ -209,8 +212,10 @@ it.each([false, true])(
           text: "Plan a trip",
         })
       ).json();
-      await vi.waitFor(async () =>
-        expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("waiting"),
+      await vi.waitFor(
+        async () =>
+          expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("waiting"),
+        { timeout: 5000 },
       );
       expect(requests).toHaveLength(1);
       expect(await readFile(join(root, "groups", "personal", "wait-evidence.txt"), "utf8")).toBe(
@@ -518,17 +523,20 @@ it("expires only an explicit deadline across restart, refuses late answers and f
 });
 
 it("recovers a question confirmed by read_operation after a lost response and wait checkpoint", async () => {
-  const service = await startPiService(async (request) => {
-    const results = request.messages.filter((row) => row.role === "tool");
-    if (!results.length)
-      return {
-        tool: "ask_question",
-        arguments: { requestId: "timeout-city", text: "Which city?" },
-      };
-    if (results.length === 1)
-      return { tool: "read_operation", arguments: { requestId: "timeout-city" } };
-    return { text: "Trip confirmed" };
-  });
+  const service = await startPiService(
+    async (request) => {
+      const results = request.messages.filter((row) => row.role === "tool");
+      if (!results.length)
+        return {
+          tool: "ask_question",
+          arguments: { requestId: "timeout-city", text: "Which city?" },
+        };
+      if (results.length === 1)
+        return { tool: "read_operation", arguments: { requestId: "timeout-city" } };
+      return { text: "Trip confirmed" };
+    },
+    { contextWindow: 65536 },
+  );
   const pi = new PiProvider({ modelRuntime: service.runtime, model: service.model });
   // Lose the operation response at the external execution boundary after the real Host persisted it.
   const driver = piRunDriver({

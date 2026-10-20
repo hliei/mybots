@@ -225,3 +225,89 @@ test("cron choices inherit Bot timezone and show separate occurrences without a 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("owner can edit, pause, run and delete a Routine without losing its evidence", async ({
+  page,
+}) => {
+  const root = await mkdtemp(join(tmpdir(), "mybots-routine-lifecycle-"));
+  let child: ChildProcess | undefined;
+  let exit: Promise<number | null> | undefined;
+  async function start(port = 0, now = "2026-10-20T00:00:00Z") {
+    const process = fork(
+      fileURLToPath(new URL("../../scripts/client-routines-host.mjs", import.meta.url)),
+      [root, String(port), now],
+      { silent: true },
+    );
+    child = process;
+    let errors = "";
+    process.stderr?.on("data", (chunk) => {
+      errors += chunk;
+    });
+    exit = new Promise((resolve, reject) => {
+      process.once("exit", resolve);
+      process.once("error", reject);
+    });
+    return Promise.race([
+      new Promise<{ url: string; credential: string }>((resolve) =>
+        process.once("message", (message) =>
+          resolve(message as { url: string; credential: string }),
+        ),
+      ),
+      exit.then(() => {
+        throw new Error(errors);
+      }),
+    ]);
+  }
+  async function stop() {
+    child?.kill("SIGTERM");
+    expect(await exit).toBe(0);
+    child = undefined;
+  }
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  try {
+    const ready = await start();
+    await page.goto(ready.url);
+    await page.getByLabel("Connection credential").fill(ready.credential);
+    await page.getByRole("button", { name: "Pair with Host" }).click();
+    await page.getByRole("button", { name: "Select Personal", exact: true }).click();
+    await page.getByLabel("Routine instructions", { exact: true }).fill("Read the archive");
+    await page
+      .getByLabel("Run at (ISO instant with offset)", { exact: true })
+      .fill("2026-10-21T09:00:00+08:00");
+    await page.getByLabel("Schedule timezone", { exact: true }).fill("Asia/Shanghai");
+    await page.getByRole("button", { name: "Create one-shot Routine", exact: true }).click();
+    const routines = page.locator("#routine-list article");
+    await expect(routines).toHaveCount(1);
+    const id = ((await routines.innerText()).match(/Routine ID: ([0-9a-f-]+)/) ?? [])[1] as string;
+    await routines.getByRole("button", { name: "Pause routine" }).click();
+    await expect(routines).toContainText("Paused. Automatic starts are blocked.");
+    await page.reload();
+    await expect(routines).toContainText("Paused. Automatic starts are blocked.");
+    await routines.getByRole("button", { name: "Run now" }).click();
+    const work = page.locator("#chat-works article");
+    await expect(work).toHaveCount(1);
+    await expect(work).toContainText("Read the archive");
+    await expect(work).toContainText("Execution: active");
+    await routines.getByLabel(`Edit instructions for ${id}`).fill("Shelf 3 only");
+    await routines.getByRole("button", { name: "Save Routine edit" }).click();
+    await expect(routines).toContainText("Shelf 3 only");
+    await expect(work).toContainText("Read the archive");
+    await expect(routines).toContainText("Paused. Automatic starts are blocked.");
+    await routines.getByRole("button", { name: "Resume routine" }).click();
+    await expect(routines).toContainText("Automatic starts are on.");
+    await routines.getByRole("button", { name: "Delete routine" }).click();
+    await expect(routines).toContainText("Definition and results are retained.");
+    await expect(routines).toContainText("Shelf 3 only");
+    await stop();
+    await start(Number(new URL(ready.url).port), "2026-10-22T02:00:00Z");
+    await page.reload();
+    await expect(work).toHaveCount(1);
+    await expect(routines).toContainText("Definition and results are retained.");
+    await expect(routines.getByRole("button", { name: "Run now" })).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    if (child) await stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});

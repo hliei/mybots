@@ -145,6 +145,7 @@ export class PiProvider implements AgentProvider {
                   "search_history",
                   "read_history",
                   "create_routine",
+                  "manage_routine",
                   "ask_question",
                   "delegate",
                   "publish_progress",
