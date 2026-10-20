@@ -293,6 +293,17 @@ is retained for these contracts.
 
 ## Local client API and browser
 
+`tests/task-attachments.test.ts` uploads through the authenticated Host API. It checks
+selected-Task bytes across restart, an empty list for another Task, a deliberate
+workspace copy that another Bot does not receive, escaped and symlink paths, and
+rejection above the 25 MiB default or a smaller installation limit.
+`tests/container-driver.test.ts` checks that a Run mounts that Task directory
+read-only and refuses a path outside it. `tests/browser/local-client.spec.ts`
+uploads, downloads, saves, and shows the 25 MiB limit without rendering file
+contents. `tests/browser/task-attachments.spec.ts` checks Task targeting,
+deliberate same-Bot reuse, another Bot's empty workspace, an escaped path, and
+a smaller installation limit.
+
 `tests/local-client.test.ts` exercises HTTP and WebSocket credential/Host/Origin
 checks, idempotent browser pairing and reads after a fresh Host starts over the
 same state. These tests use real SQLite and mailboxes with the existing controlled

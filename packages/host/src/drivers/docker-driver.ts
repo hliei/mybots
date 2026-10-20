@@ -89,14 +89,19 @@ export class DockerDriver implements ObservingSessionDriver {
         "--label",
         `mybots-session=${material.key.sessionId}`,
       ];
-      for (const [hostPath, containerPath, readOnly] of [
+      const mounts: [string, string, boolean][] = [
         [material.directory, "/session", false],
         [join(material.directory, "inbound.db"), "/session/inbound.db", true],
         [material.workspace, "/workspace/group", false],
+      ];
+      if (material.taskAttachments)
+        mounts.push([material.taskAttachments, "/workspace/group/.task-attachments", true]);
+      mounts.push(
         [material.skillsDirectory, "/session/skills", true],
         [material.contextFile, "/run/mybots/context.json", true],
         [trust, "/run/gateway/ca.pem", true],
-      ] as const) {
+      );
+      for (const [hostPath, containerPath, readOnly] of mounts) {
         if (hostPath.includes(",")) throw new Error();
         args.push(
           "--mount",
@@ -229,6 +234,16 @@ export class DockerDriver implements ObservingSessionDriver {
       ],
     ]) {
       if (actual !== expected || (await realpath(actual)) !== expected) throw new Error();
+    }
+    if (material.taskAttachments) {
+      const prefix = join(material.root, "data", "task-attachments", material.key.agentGroupId);
+      const taskId = material.taskAttachments.slice(prefix.length + 1);
+      if (
+        !legalName(taskId) ||
+        material.taskAttachments !== join(prefix, taskId) ||
+        (await realpath(material.taskAttachments)) !== material.taskAttachments
+      )
+        throw new Error();
     }
   }
 

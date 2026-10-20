@@ -1,3 +1,4 @@
+import { showAttachments } from "./attachments.ts";
 import {
   clearBackgroundSelection,
   selectedBackgroundIds,
@@ -198,6 +199,7 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
   panel.hidden = !botId;
   if (!botId) {
     await showHistory(undefined, []);
+    await showAttachments(undefined, []);
     return;
   }
   const current = ++version;
@@ -236,6 +238,11 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
       detail.tasks.flatMap((task) =>
         task.runs.filter((run) => run.state === "active").map((run) => run.id),
       ),
+    );
+    if (current !== version) return;
+    await showAttachments(
+      botId,
+      detail.tasks.map((task) => task.id),
     );
     if (current !== version) return;
     works.replaceChildren(
