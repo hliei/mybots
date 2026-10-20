@@ -105,16 +105,38 @@
             <button id="reset-background" type="button">Reset chat background</button>
           </form>
           <section id="routines">
-            <h3>One-shot Routines</h3>
+            <h3>Routines</h3>
+            <form id="bot-timezone-form">
+              <label for="bot-timezone">Bot timezone</label>
+              <input id="bot-timezone" required placeholder="Asia/Shanghai">
+              <button type="submit">Save Bot timezone</button>
+            </form>
+            <p id="bot-timezone-notice" aria-live="polite"></p>
+            <p>Cron uses this Bot timezone (default Asia/Shanghai). Changes apply immediately to future scheduling. Admitted work and one-shot instants stay fixed. Missed slots create no backlog; one unfinished occurrence blocks the next.</p>
             <p>Work runs while the Host is available, even after you disconnect. Each occurrence gets its own Task and independent Run context. Include any selected prior inputs in the instructions.</p>
             <form id="routine-form">
               <label for="routine-text">Routine instructions</label>
               <textarea id="routine-text" required maxlength="32000" rows="3"></textarea>
+              <label for="routine-schedule">Routine schedule</label>
+              <select id="routine-schedule">
+                <option value="once">One-shot</option>
+                <option value="hourly">Every hour (0 * * * *)</option>
+                <option value="daily">Daily at 09:00 (0 9 * * *)</option>
+                <option value="weekdays">Weekdays at 09:00 (0 9 * * 1-5)</option>
+                <option value="custom">Custom cron</option>
+              </select>
+              <div id="routine-once-fields">
               <label for="routine-instant">Run at (ISO instant with offset)</label>
               <input id="routine-instant" required placeholder="2026-10-21T09:00:00+08:00">
               <label for="routine-timezone">Schedule timezone</label>
               <input id="routine-timezone" required placeholder="Asia/Shanghai">
-              <button type="submit">Create one-shot Routine</button>
+              </div>
+              <div id="routine-cron-fields" hidden>
+                <label for="routine-cron">Cron expression</label>
+                <input id="routine-cron" placeholder="0 9 * * *" disabled>
+                <p>Five numeric fields: minute, hour, day of month, month, weekday. Cron follows local wall time. At a spring-forward gap a fixed hour shifts forward; during a repeated fall-back hour the parser can select the second instance. Results follow cron-parser 5.10.2.</p>
+              </div>
+              <button id="routine-create" type="submit">Create one-shot Routine</button>
             </form>
             <p id="routine-notice" aria-live="polite"></p>
             <button id="routine-retry" type="button" hidden>Retry Routine creation</button>

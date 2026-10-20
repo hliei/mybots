@@ -49,4 +49,5 @@ or uncertain admission and confirming the previous execution stopped. Ordinary
 provider errors do not automatically rerun the whole task beyond SDK request
 retries and accepted unfinished-claim recovery. Clients expose these operations;
 Agents manage tasks only within their Bot's scope, including logical deletion.
-Daylight-saving edge cases remain to specify.
+The implemented parser and daylight-saving policy are documented in
+[Host Routines](../host-runtime.md#cron-parser-and-daylight-saving).

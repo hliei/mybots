@@ -50,7 +50,7 @@ import {
   recoverAbandonedClaims,
   recoverUnclaimedInput,
 } from "./reconcile-session.ts";
-import { routineInput } from "./routines.ts";
+import { routineInput, validTimezone } from "./routines.ts";
 import { LocalSkills } from "./skills.ts";
 
 /** Total platform-delivery attempts for one outbound reply, including the first. */
@@ -1171,13 +1171,34 @@ export class Host {
 
   listRoutines(botId: string) {
     this.store.threads.thread(botId);
-    return { routines: this.store.routines.list(botId) };
+    return {
+      timezone: this.store.routines.timezone(botId),
+      routines: this.store.routines.list(botId),
+    };
+  }
+
+  updateTimezone(botId: string, value: unknown) {
+    this.store.threads.thread(botId);
+    if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
+    const input = chatInput(value, ["timezone"]);
+    validTimezone(input.timezone as string);
+    this.store.routines.setTimezone(
+      botId,
+      input.requestId as string,
+      input.timezone as string,
+      this.timestamp(),
+    );
+    return { requestId: input.requestId, ...this.listRoutines(botId) };
   }
 
   createRoutine(botId: string, value: unknown) {
     this.store.threads.thread(botId);
     if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
-    const routine = this.store.routines.create(botId, routineInput(value), this.timestamp());
+    const routine = this.store.routines.create(
+      botId,
+      routineInput(value, this.timestamp(), this.store.routines.timezone(botId)),
+      this.timestamp(),
+    );
     this.admitDueRoutines();
     this.schedule();
     return routine;
@@ -1185,10 +1206,11 @@ export class Host {
 
   private admitDueRoutines(): void {
     if (this.stopped) return;
+    this.store.routines.rearm(this.timestamp());
     for (const routine of this.store.routines.due(this.timestamp())) {
       this.store.threads.send(
         {
-          requestId: `occurrence-${routine.id}`,
+          requestId: `occurrence-${routine.id}-${routine.nextOccurrence}`,
           botId: routine.botId,
           text: routine.text,
           newTask: true,
@@ -1285,10 +1307,15 @@ export class Host {
         throw new ChatRequestError("Execution scope is no longer active.", 403);
       if (input.requestId !== request.id)
         throw new ChatRequestError("A stable requestId is required.");
-      const routine = this.store.routines.create(botId, routineInput(input), this.timestamp(), {
-        runId: run.id,
-        attemptId: attempt.id,
-      });
+      const routine = this.store.routines.create(
+        botId,
+        routineInput(input, this.timestamp(), this.store.routines.timezone(botId)),
+        this.timestamp(),
+        {
+          runId: run.id,
+          attemptId: attempt.id,
+        },
+      );
       this.admitDueRoutines();
       this.schedule();
       return routine;
@@ -1783,6 +1810,7 @@ export class Host {
   /** Fill free execution slots from the durable queue without interrupting an active Attempt. */
   private schedule(): void {
     if (this.stopped || this.storeClosed) return;
+    this.admitDueRoutines();
     const limit = this.store.threads.activeLimit();
     for (;;) {
       const runId = this.store.threads.reserveNext(limit, this.timestamp());

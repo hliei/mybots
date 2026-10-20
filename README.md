@@ -114,12 +114,13 @@ approved model, tools and workspace; settings persist across Host restart. The
 page refreshes status while visible. The Host must stay running, and desktop localhost is not
 reachable from a phone. See [local client access](docs/host-runtime.md#local-client-access).
 
-The selected Bot page also creates one-shot Routines using an absolute instant
-with offset and an IANA timezone. Resolved schedule and occurrence Task links
+The selected Bot page creates one-shot Routines from an absolute instant with offset
+and an IANA timezone, or recurring Routines from common cron choices or a custom
+five-field expression. Cron inherits the Bot timezone, defaulting to Asia/Shanghai. Resolved schedule and occurrence Task links
 remain inspectable after disconnect or Host restart. Each due occurrence has an
 independent Run context; choose its Task in Input target to add instructions.
 Bots can resolve a natural-language schedule through their scoped `create_routine`
-tool. See [one-shot Routines](docs/host-runtime.md#one-shot-routines).
+tool. See [Routines](docs/host-runtime.md#routines).
 
 The Thread includes local original-history search and paginated reading. Inspect
 Run evidence to page through complete inputs, Attempts and recorded model/tool

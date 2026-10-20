@@ -178,12 +178,13 @@ export async function serveClient(
     }
     return;
   }
-  const routineRoute = /^\/api\/bots\/([^/]+)\/routines$/.exec(path);
+  const routineRoute = /^\/api\/bots\/([^/]+)\/(routines|timezone)$/.exec(path);
   if (routineRoute) {
     try {
       const botId = decodeURIComponent(routineRoute[1] as string);
       let result: object;
-      if (request.method === "GET") result = host.listRoutines(botId);
+      if (request.method === "GET" && routineRoute[2] === "routines")
+        result = host.listRoutines(botId);
       else if (request.method === "POST") {
         let input: unknown;
         try {
@@ -192,13 +193,16 @@ export async function serveClient(
           if (error instanceof ChatRequestError) throw error;
           throw new ChatRequestError("Routine creation requires valid JSON.");
         }
-        result = host.createRoutine(botId, input);
+        result =
+          routineRoute[2] === "timezone"
+            ? host.updateTimezone(botId, input)
+            : host.createRoutine(botId, input);
       } else {
         response.writeHead(405, { Allow: "GET, POST" });
         response.end();
         return;
       }
-      response.writeHead(request.method === "POST" ? 201 : 200, {
+      response.writeHead(request.method === "POST" && routineRoute[2] === "routines" ? 201 : 200, {
         "Content-Type": "application/json",
       });
       response.end(JSON.stringify(result));

@@ -575,6 +575,40 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
       ]);
       await boundedHost.reconcile();
       expect((await boundedHost.threadDetail("personal")).tasks).toHaveLength(5);
+      await boundedHost.sendThread(
+        "personal",
+        { requestId: "cron-source", text: "Create hourly archive Routine" },
+        "new-task",
+      );
+      while (!signal.aborted) {
+        if (
+          (await boundedHost.threadDetail("personal")).tasks[5]?.runs[0]?.state === "succeeded" &&
+          (await boundedDriver.list(signal)).length === 0
+        )
+          break;
+        await setTimeout(100, undefined, { signal });
+      }
+      const cron = boundedHost.listRoutines("personal").routines[1];
+      expect(cron).toMatchObject({ cron: "0 * * * *", timezone: "Asia/Shanghai", occurrences: [] });
+      now = Date.parse(cron?.nextOccurrence as string);
+      await boundedHost.reconcile();
+      while (!signal.aborted) {
+        if (
+          (await boundedHost.threadDetail("personal")).tasks[6]?.runs[0]?.state === "succeeded" &&
+          (await boundedDriver.list(signal)).length === 0
+        )
+          break;
+        await setTimeout(100, undefined, { signal });
+      }
+      expect((await boundedHost.threadDetail("personal")).tasks[6]).toMatchObject({
+        origin: "routine",
+        runs: [
+          { references: [], state: "succeeded", outcome: { reply: "Shared material visible." } },
+        ],
+      });
+      expect(boundedHost.listRoutines("personal").routines[1]?.nextOccurrence).toBe(
+        new Date(now + 3600000).toISOString(),
+      );
     } finally {
       await boundedHost.stop();
     }

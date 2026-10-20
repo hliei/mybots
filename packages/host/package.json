@@ -11,8 +11,9 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@mybots/mailbox": "0.0.0",
     "@onecli-sh/sdk": "2.2.1",
-    "ws": "8.22.0",
-    "@mybots/mailbox": "0.0.0"
+    "cron-parser": "5.10.2",
+    "ws": "8.22.0"
   }
 }
