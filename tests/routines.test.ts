@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RunnerMailbox } from "@mybots/mailbox/node";
@@ -285,72 +285,103 @@ it("keeps occurrence bodies out of ordinary Thread background and exposes linked
   ).toBe(true);
 });
 
-it("resolves natural-language creation through real Pi and steers the active independent occurrence", async () => {
-  const modelEntered = Promise.withResolvers<void>();
-  const release = Promise.withResolvers<void>();
-  const service = await startPiService(async (request) => {
-    const body = JSON.stringify(request.messages);
-    if (body.includes("Private source request")) {
-      const tools = request.messages.filter((row) => row.role === "tool");
-      if (!tools.length) return { tool: "create_routine", arguments: definition };
-      if (tools.length === 1)
-        return { tool: "read_operation", arguments: { requestId: definition.requestId } };
-      return { text: "Scheduled for 09:00 Asia/Shanghai" };
-    }
-    modelEntered.resolve();
-    await release.promise;
-    return {
-      text: body.includes("Only shelf 3") ? "Archive limited to shelf 3" : "Archive inspected",
-    };
-  });
-  try {
-    await start(
-      piRunDriver(new PiProvider({ modelRuntime: service.runtime, model: service.model })),
-    );
-    await post("thread/messages", {
-      requestId: "source-sdk",
-      text: "Private source request: tomorrow at nine inspect the archive",
+it.each(["one-shot", "cron"])(
+  "resolves natural-language %s creation through real Pi and steers only the selected occurrence",
+  async (mode) => {
+    const modelEntered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const service = await startPiService(async (request) => {
+      const body = JSON.stringify(request.messages);
+      if (body.includes("Private source request")) {
+        const tools = request.messages.filter((row) => row.role === "tool");
+        if (!tools.length)
+          return {
+            tool: "create_routine",
+            arguments:
+              mode === "cron"
+                ? { requestId: definition.requestId, text: definition.text, cron: "0 * * * *" }
+                : definition,
+          };
+        if (tools.length === 1)
+          return { tool: "read_operation", arguments: { requestId: definition.requestId } };
+        return { text: "Scheduled for 09:00 Asia/Shanghai" };
+      }
+      modelEntered.resolve();
+      await release.promise;
+      return {
+        text: body.includes("Only shelf 3") ? "Archive limited to shelf 3" : "Archive inspected",
+      };
     });
-    await vi.waitFor(async () =>
-      expect((await get("thread")).tasks[0].runs[0].state).toBe("succeeded"),
-    );
-    expect(
-      service.requests[0]?.tools?.some((tool) => tool.function.name === "create_routine"),
-    ).toBe(true);
-    expect((await get("routines")).routines).toHaveLength(1);
-    now += 2 * 3600000;
-    await host.reconcile();
-    await modelEntered.promise;
-    const occurrence = (await get("thread")).tasks[1];
-    expect(occurrence.runs[0].references).toEqual([]);
-    expect(JSON.stringify(service.requests.at(-1)?.messages)).not.toContain(
-      "Private source request",
-    );
-    expect(
-      (
-        await post(`tasks/${occurrence.id}/inputs`, {
-          requestId: "active-steering",
-          text: "Only shelf 3",
-        })
-      ).status,
-    ).toBe(202);
-    release.resolve();
-    await vi.waitFor(async () =>
-      expect((await get("thread")).tasks[1].runs[0].state).toBe("succeeded"),
-    );
-    const completed = (await get("thread")).tasks[1].runs[0];
-    expect(completed.inputs).toHaveLength(2);
-    expect(
-      completed.inputs.every((row: { recordedAt: string | null }) => row.recordedAt !== null),
-    ).toBe(true);
-    expect(completed.outcome.reply).toBe("Archive limited to shelf 3");
-    expect((await get("routines")).routines[0].text).toBe(definition.text);
-  } finally {
-    release.resolve();
-    await host?.stop();
-    await service.close();
-  }
-}, 20000);
+    try {
+      await start(
+        piRunDriver(new PiProvider({ modelRuntime: service.runtime, model: service.model })),
+      );
+      await post("thread/messages", {
+        requestId: "source-sdk",
+        text: "Private source request: tomorrow at nine inspect the archive",
+      });
+      await vi.waitFor(async () =>
+        expect((await get("thread")).tasks[0].runs[0].state).toBe("succeeded"),
+      );
+      expect(
+        service.requests[0]?.tools?.some((tool) => tool.function.name === "create_routine"),
+      ).toBe(true);
+      expect((await get("routines")).routines).toHaveLength(1);
+      now += 2 * 3600000;
+      await host.reconcile();
+      await modelEntered.promise;
+      const occurrence = (await get("thread")).tasks[1];
+      expect(occurrence.runs[0].references).toEqual([]);
+      expect(JSON.stringify(service.requests.at(-1)?.messages)).not.toContain(
+        "Private source request",
+      );
+      expect(
+        (
+          await post(`tasks/${occurrence.id}/inputs`, {
+            requestId: "active-steering",
+            text: "Only shelf 3",
+          })
+        ).status,
+      ).toBe(202);
+      release.resolve();
+      await vi.waitFor(async () =>
+        expect((await get("thread")).tasks[1].runs[0].state).toBe("succeeded"),
+      );
+      const completed = (await get("thread")).tasks[1].runs[0];
+      expect(completed.inputs).toHaveLength(2);
+      expect(
+        completed.inputs.every((row: { recordedAt: string | null }) => row.recordedAt !== null),
+      ).toBe(true);
+      expect(completed.outcome.reply).toBe("Archive limited to shelf 3");
+      expect((await get("routines")).routines[0].text).toBe(definition.text);
+      if (mode === "cron") {
+        await vi.waitFor(async () =>
+          expect((await get("routines")).routines[0].nextOccurrence).toBe(
+            "2026-10-20T03:00:00.000Z",
+          ),
+        );
+        now += 3600000;
+        await host.reconcile();
+        await vi.waitFor(async () =>
+          expect((await get("thread")).tasks[2].runs[0].state).toBe("succeeded"),
+        );
+        const second = (await get("thread")).tasks[2];
+        expect(second.id).not.toBe(occurrence.id);
+        expect(second.runs[0].outcome.reply).toBe("Archive inspected");
+        expect(JSON.stringify(service.requests.at(-1)?.messages)).not.toContain("Only shelf 3");
+        expect(JSON.stringify(service.requests.at(-1)?.messages)).not.toContain(
+          "Private source request",
+        );
+        expect(second.runs[0].references).toEqual([]);
+      }
+    } finally {
+      release.resolve();
+      await host?.stop();
+      await service.close();
+    }
+  },
+  20000,
+);
 
 it("retains failure and cancellation without replaying an occurrence", async () => {
   const external = new MailboxDriver();
@@ -413,48 +444,60 @@ it("retains failure and cancellation without replaying an occurrence", async () 
   }
 });
 
-it("holds an acknowledged uncertain occurrence across restart and permits unrelated chat after confirmed stop", async () => {
-  const driver = new MailboxDriver();
-  let effects = 0;
-  driver.respond = async (input, material, signal) => {
-    if (input.content === definition.text) {
-      effects += 1;
-      new RunnerMailbox(material.directory).acknowledge(input.id, "completed");
-      await new Promise<void>((resolve) =>
-        signal.addEventListener("abort", () => resolve(), { once: true }),
-      );
+it.each(["one-shot", "cron"])(
+  "holds an acknowledged uncertain %s occurrence across restart and permits unrelated chat after confirmed stop",
+  async (mode) => {
+    const driver = new MailboxDriver();
+    let effects = 0;
+    driver.respond = async (input, material, signal) => {
+      if (input.content === definition.text) {
+        effects += 1;
+        new RunnerMailbox(material.directory).acknowledge(input.id, "completed");
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+      }
+      return "Chat result";
+    };
+    await start(driver);
+    await post(
+      "routines",
+      mode === "cron"
+        ? { requestId: "uncertain-cron", text: definition.text, cron: "* * * * *" }
+        : { ...definition, runAt: "2026-10-20T00:00:00Z" },
+    );
+    if (mode === "cron") {
+      now += 60000;
+      await host.reconcile();
     }
-    return "Chat result";
-  };
-  await start(driver);
-  await post("routines", { ...definition, runAt: "2026-10-20T00:00:00Z" });
-  await vi.waitFor(() => expect(effects).toBe(1));
-  const occurrence = (await get("thread")).tasks[0];
-  const ordinary = await (
-    await post("thread/messages", { requestId: "unrelated", text: "Unrelated conversation" })
-  ).json();
-  expect(ordinary.taskId).not.toBe(occurrence.id);
-  expect((await get("thread")).tasks[1].runs[0].state).toBe("queued");
-  expect((await get("thread")).tasks[0].runs[0].inputs).toHaveLength(1);
-  await post(`runs/${occurrence.runs[0].id}/stop`, { requestId: "stop-gap" });
-  await vi.waitFor(async () =>
-    expect((await get("thread")).tasks[0].runs[0]).toMatchObject({
-      state: "uncertain",
-      held: true,
-    }),
-  );
-  await vi.waitFor(async () =>
-    expect((await get("thread")).tasks[1].runs[0].state).toBe("succeeded"),
-  );
-  await channel.close();
-  await host.stop();
-  await listen(driver);
-  now += 86400000;
-  await host.reconcile();
-  expect((await get("thread")).tasks).toHaveLength(2);
-  expect((await get("thread")).tasks[0].runs[0].state).toBe("uncertain");
-  expect(effects).toBe(1);
-});
+    await vi.waitFor(() => expect(effects).toBe(1));
+    const occurrence = (await get("thread")).tasks[0];
+    const ordinary = await (
+      await post("thread/messages", { requestId: "unrelated", text: "Unrelated conversation" })
+    ).json();
+    expect(ordinary.taskId).not.toBe(occurrence.id);
+    expect((await get("thread")).tasks[1].runs[0].state).toBe("queued");
+    expect((await get("thread")).tasks[0].runs[0].inputs).toHaveLength(1);
+    await post(`runs/${occurrence.runs[0].id}/stop`, { requestId: "stop-gap" });
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[0].runs[0]).toMatchObject({
+        state: "uncertain",
+        held: true,
+      }),
+    );
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[1].runs[0].state).toBe("succeeded"),
+    );
+    await channel.close();
+    await host.stop();
+    await listen(driver);
+    now += 86400000;
+    await host.reconcile();
+    expect((await get("thread")).tasks).toHaveLength(2);
+    expect((await get("thread")).tasks[0].runs[0].state).toBe("uncertain");
+    expect(effects).toBe(1);
+  },
+);
 
 it("retains only explicitly selected inputs in distinct occurrence contexts", async () => {
   await start();
@@ -531,4 +574,337 @@ it("lets a Run reread an explicitly selected Routine result without exposing it 
   );
   expect((await get("thread")).tasks[1].runs[0].outcome.reply).toBe("Recovered selected original");
   expect((await get("thread/history")).messages).toEqual([]);
+});
+
+it("creates a validated cron Routine using the Bot timezone fallback and retains request identity", async () => {
+  await start();
+  const input = { requestId: "daily", text: "Morning archive", cron: "0 9 * * *" };
+  const response = await post("routines", input);
+  expect(response.status).toBe(201);
+  expect(await response.json()).toMatchObject({
+    cron: "0 9 * * *",
+    timezone: "Asia/Shanghai",
+    runAt: "2026-10-20T01:00:00.000Z",
+    nextOccurrence: "2026-10-20T01:00:00.000Z",
+    occurrences: [],
+  });
+  expect((await post("routines", input)).status).toBe(201);
+  expect((await post("routines", { ...input, cron: "0 10 * * *" })).status).toBe(409);
+  for (const cron of ["tomorrow", "0 0 9 * * *", "60 * * * *", "0 0 30 2 *", "@daily", "H * * * *"])
+    expect((await post("routines", { ...input, requestId: "invalid", cron })).status).toBe(400);
+  expect((await post("routines", { ...input, timezone: "UTC" })).status).toBe(400);
+  expect((await post("routines", { ...input, runAt: definition.runAt })).status).toBe(400);
+  expect((await get("routines")).routines).toHaveLength(1);
+});
+
+it("runs one overdue cron occurrence after restart, skips busy slots and continues after failure", async () => {
+  const driver = new MailboxDriver();
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  driver.respond = async (_input, _material, signal) => {
+    entered.resolve();
+    await Promise.race([
+      release.promise,
+      new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      }),
+    ]);
+    return { error: "Archive unavailable" };
+  };
+  try {
+    await start();
+    const created = await (
+      await post("routines", { requestId: "hourly", text: "Archive hourly", cron: "* * * * *" })
+    ).json();
+    await channel.close();
+    await host.stop();
+    now = Date.parse("2026-10-23T03:30:00Z");
+    await listen(driver);
+    await entered.promise;
+    let tasks = (await get("thread")).tasks;
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].routine).toMatchObject({
+      id: created.id,
+      nextOccurrence: "2026-10-20T00:01:00.000Z",
+    });
+    now = Date.parse("2026-10-23T03:31:00Z");
+    new RunnerMailbox(driver.launches[0]?.material.directory as string).touch();
+    const heartbeat = join(driver.launches[0]?.material.directory as string, ".heartbeat");
+    await utimes(heartbeat, new Date(now), new Date(now));
+    await host.reconcile();
+    expect((await get("thread")).tasks).toHaveLength(1);
+    release.resolve();
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[0].runs[0].state).toBe("failed"),
+    );
+    await vi.waitFor(async () =>
+      expect((await get("routines")).routines[0].nextOccurrence).toBe("2026-10-23T03:32:00.000Z"),
+    );
+    now = Date.parse("2026-10-23T03:32:00Z");
+    await host.reconcile();
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[1].runs[0].state).toBe("failed"),
+    );
+    tasks = (await get("thread")).tasks;
+    expect(tasks).toHaveLength(2);
+    expect(tasks[1].id).not.toBe(tasks[0].id);
+    expect(tasks[1].runs[0].id).not.toBe(tasks[0].runs[0].id);
+    expect(tasks[1].runs[0].references).toEqual([]);
+    expect((await get("routines")).routines[0].occurrences).toEqual([
+      { taskId: tasks[0].id, dueAt: "2026-10-20T00:01:00.000Z" },
+      { taskId: tasks[1].id, dueAt: "2026-10-23T03:32:00.000Z" },
+    ]);
+    await channel.close();
+    await host.stop();
+    await listen(new MailboxDriver());
+    expect((await get("thread")).tasks).toHaveLength(2);
+  } finally {
+    release.resolve();
+  }
+});
+
+it("applies Bot timezone edits immediately to future cron scheduling while admitted definitions and one-shots stay fixed", async () => {
+  const driver = new MailboxDriver();
+  const release = Promise.withResolvers<void>();
+  driver.respond = async (_input, _material, signal) => {
+    await Promise.race([
+      release.promise,
+      new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      }),
+    ]);
+    return "Archive done";
+  };
+  try {
+    await start(driver);
+    await post("routines", { requestId: "daily", text: "Daily archive", cron: "0 9 * * *" });
+    await post("routines", { ...definition, requestId: "one-shot" });
+    expect((await post("timezone", { requestId: "utc", timezone: "UTC" })).status).toBe(200);
+    expect(await get("routines")).toMatchObject({
+      timezone: "UTC",
+      routines: [
+        { nextOccurrence: "2026-10-20T09:00:00.000Z", timezone: "UTC" },
+        { nextOccurrence: "2026-10-20T01:00:00.000Z", timezone: "Asia/Shanghai" },
+      ],
+    });
+    expect((await post("timezone", { requestId: "utc", timezone: "UTC" })).status).toBe(200);
+    expect((await post("timezone", { requestId: "utc", timezone: "Asia/Tokyo" })).status).toBe(409);
+    expect((await post("timezone", { requestId: "bad", timezone: "+08:00" })).status).toBe(400);
+    now = Date.parse("2026-10-20T09:00:00Z");
+    await host.reconcile();
+    await vi.waitFor(() => expect(driver.launches).toHaveLength(1));
+    const before = (await get("thread")).tasks;
+    await post("timezone", { requestId: "ny", timezone: "America/New_York" });
+    expect((await get("thread")).tasks).toEqual(before);
+    expect((await get("routines")).routines[0]).toMatchObject({
+      timezone: "America/New_York",
+      nextOccurrence: null,
+    });
+    release.resolve();
+    await vi.waitFor(async () =>
+      expect(
+        (await get("thread")).tasks.every(
+          (t: { runs: { state: string }[] }) => t.runs[0]?.state === "succeeded",
+        ),
+      ).toBe(true),
+    );
+    await vi.waitFor(async () =>
+      expect((await get("routines")).routines[0].nextOccurrence).toBe("2026-10-20T13:00:00.000Z"),
+    );
+    await channel.close();
+    await host.stop();
+    await listen(new MailboxDriver());
+    expect((await get("routines")).timezone).toBe("America/New_York");
+  } finally {
+    release.resolve();
+  }
+});
+
+it.each([
+  ["2026-03-08T00:00:00Z", "30 2 * * *", "2026-03-08T07:30:00.000Z"],
+  ["2026-03-08T07:30:00Z", "30 2 * * *", "2026-03-09T06:30:00.000Z"],
+  ["2026-11-01T00:00:00Z", "30 1 * * *", "2026-11-01T05:30:00.000Z"],
+  ["2026-11-01T05:30:00Z", "30 1 * * *", "2026-11-02T06:30:00.000Z"],
+  ["2026-11-01T06:10:00Z", "30 1 * * *", "2026-11-01T06:30:00.000Z"],
+])("resolves DST using the pinned parser policy from %s", async (date, cron, expected) => {
+  await start();
+  now = Date.parse(date);
+  await post("timezone", { requestId: "dst-zone", timezone: "America/New_York" });
+  const response = await post("routines", { requestId: "dst", text: "DST archive", cron });
+  expect(response.status).toBe(201);
+  expect(await response.json()).toMatchObject({
+    timezone: "America/New_York",
+    nextOccurrence: expected,
+  });
+});
+
+it("holds a cron Routine through queue, question wait and restart while owner additions stay on the selected Task", async () => {
+  const driver = new MailboxDriver();
+  const release = Promise.withResolvers<void>();
+  driver.respond = async (_input, _material, signal) => {
+    await Promise.race([
+      release.promise,
+      new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      }),
+    ]);
+    return "Done";
+  };
+  try {
+    await start(driver);
+    await post("thread/messages", { requestId: "hold-chat", text: "Hold chat" });
+    await vi.waitFor(() => expect(driver.launches).toHaveLength(1));
+    await post("routines", {
+      requestId: "wait-cron",
+      text: "Archive with question",
+      cron: "* * * * *",
+    });
+    now += 60000;
+    await host.reconcile();
+    expect((await get("thread")).tasks[1].runs[0].state).toBe("queued");
+    now += 60000;
+    new RunnerMailbox(driver.launches[0]?.material.directory as string).touch();
+    const heartbeat = join(driver.launches[0]?.material.directory as string, ".heartbeat");
+    await utimes(heartbeat, new Date(now), new Date(now));
+    await host.reconcile();
+    expect((await get("thread")).tasks).toHaveLength(2);
+    release.resolve();
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[1].runs[0].state).toBe("succeeded"),
+    );
+    // The following occurrence requests a durable question through the production mailbox.
+    driver.respond = async (_input, material, signal) => {
+      const mailbox = new RunnerMailbox(material.directory);
+      mailbox.requestHistory({
+        id: "archive-question",
+        operation: "ask_question",
+        input: { requestId: "archive-question", text: "Which shelf?" },
+        incarnation: mailbox.executionIncarnation(),
+      });
+      await vi.waitFor(() => expect(mailbox.historyResponse("archive-question")).toBeDefined());
+      mailbox.requestDurableWait("owner-question");
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return "Waiting";
+    };
+    now += 60000;
+    await host.reconcile();
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[2].runs[0].state).toBe("waiting"),
+    );
+    const waiting = (await get("thread")).tasks[2];
+    await channel.close();
+    await host.stop();
+    now += 86400000;
+    await listen(new MailboxDriver());
+    expect((await get("thread")).tasks).toHaveLength(3);
+    expect(
+      (
+        await post(`tasks/${waiting.id}/inputs`, {
+          requestId: "waiting-extra",
+          text: "Only shelf 3",
+        })
+      ).status,
+    ).toBe(202);
+    expect((await get("thread")).tasks[2].runs[0]).toMatchObject({
+      state: "waiting",
+      inputs: [expect.anything(), expect.objectContaining({ text: "Only shelf 3" })],
+    });
+    expect((await get("routines")).routines[0]).toMatchObject({
+      text: "Archive with question",
+      nextOccurrence: null,
+    });
+  } finally {
+    release.resolve();
+  }
+});
+
+it("rejects retry of an older occurrence while the same Routine has another unfinished Task", async () => {
+  const driver = new MailboxDriver();
+  const release = Promise.withResolvers<void>();
+  let calls = 0;
+  driver.respond = async (_input, _material, signal) => {
+    if (++calls === 1) return { error: "First failure" };
+    await Promise.race([
+      release.promise,
+      new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      }),
+    ]);
+    return "Second done";
+  };
+  try {
+    await start(driver);
+    await post("routines", { requestId: "retry-cron", text: "Archive", cron: "* * * * *" });
+    now += 60000;
+    await host.reconcile();
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[0].runs[0].state).toBe("failed"),
+    );
+    await vi.waitFor(async () =>
+      expect((await get("routines")).routines[0].nextOccurrence).not.toBeNull(),
+    );
+    now += 60000;
+    await host.reconcile();
+    await vi.waitFor(() => expect(calls).toBe(2));
+    const tasks = (await get("thread")).tasks;
+    expect(
+      (await post(`runs/${tasks[0].runs[0].id}/retry`, { requestId: "old-retry" })).status,
+    ).toBe(409);
+    expect((await get("thread")).tasks[0].runs).toHaveLength(1);
+  } finally {
+    release.resolve();
+  }
+});
+
+it("discards slots missed during an explicit occurrence retry", async () => {
+  const driver = new MailboxDriver();
+  const release = Promise.withResolvers<void>();
+  let calls = 0;
+  driver.respond = async (_input, _material, signal) => {
+    if (++calls === 1) return { error: "First failure" };
+    await Promise.race([
+      release.promise,
+      new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      }),
+    ]);
+    return "Retried archive";
+  };
+  try {
+    await start(driver);
+    await post("routines", { requestId: "retry-gap-cron", text: "Archive", cron: "* * * * *" });
+    now += 60000;
+    await host.reconcile();
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[0].runs[0].state).toBe("failed"),
+    );
+    await vi.waitFor(async () =>
+      expect((await get("routines")).routines[0].nextOccurrence).toBe("2026-10-20T00:02:00.000Z"),
+    );
+    const run = (await get("thread")).tasks[0].runs[0];
+    expect((await post(`runs/${run.id}/retry`, { requestId: "retry-before-next" })).status).toBe(
+      202,
+    );
+    await vi.waitFor(() => expect(calls).toBe(2));
+    now += 120000;
+    await host.reconcile();
+    release.resolve();
+    await vi.waitFor(async () =>
+      expect((await get("thread")).tasks[0].runs[1].state).toBe("succeeded"),
+    );
+    await vi.waitFor(async () =>
+      expect((await get("routines")).routines[0].nextOccurrence).toBe("2026-10-20T00:04:00.000Z"),
+    );
+    expect((await get("thread")).tasks).toHaveLength(1);
+  } finally {
+    release.resolve();
+  }
 });

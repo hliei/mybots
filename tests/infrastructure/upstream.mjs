@@ -50,8 +50,11 @@ createServer({ key: readFileSync("/tls/key.pem"), cert: readFileSync("/tls/cert.
   const inspectMaterials = JSON.stringify(latest?.content).includes("Inspect Bot materials");
   const questionAnswer = JSON.stringify(latest?.content).includes("Owner answer to question container-city");
   const question = JSON.stringify(latest?.content).includes("Ask owner for a city");
+  const createCron = JSON.stringify(latest?.content).includes("Create hourly archive Routine");
   const createRoutine = JSON.stringify(latest?.content).includes("Create one-shot archive Routine");
-  const reply = createRoutine
+  const reply = createCron
+    ? tools.length ? { text: "Created the independent cron Routine." } : { tool: "create_routine", arguments: { requestId: "container-cron", text: "Inspect Bot materials", cron: "0 * * * *" } }
+    : createRoutine
     ? tools.length ? { text: "Created the independent Routine." } : { tool: "create_routine", arguments: { requestId: "container-routine", text: "Inspect Bot materials", runAt: "2020-01-01T00:00:00Z", timezone: "Asia/Shanghai" } }
     : questionAnswer
     ? { text: "Continued the original Run for Hangzhou." }

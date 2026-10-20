@@ -741,9 +741,9 @@ an attachment and rejects a different Bot or Run. No Host storage path is expose
 Workspace replacement and Host restart do not change a delivered version.
 
 
-## One-shot Routines
+## Routines
 
-The selected Bot's Web page creates one-shot Routines from work instructions,
+The selected Bot's Web page creates one-shot or cron Routines. One-shot creation uses work instructions,
 an absolute ISO 8601 instant with offset, and a supported IANA timezone. The
 resolved UTC instant, timezone, next occurrence and source are visible before
 execution. An unresolved phrase or invalid calendar date is rejected. An instant
@@ -751,7 +751,8 @@ already in the past is due immediately; timezone is retained as the resolution
 and display context and never shifts that instant.
 
 Authenticated `GET /api/bots/:botId/routines` lists definitions and occurrence
-Task links. `POST` accepts `requestId`, `text`, `runAt`, `timezone`, and optional
+Task links, including each occurrence's admitted due time. The list also returns the
+current Bot timezone. `POST` accepts `requestId`, `text`, `runAt`, `timezone`, and optional
 `selectedMessageIds` (up to seven authorized originals). Reusing the owner
 request with different instructions or schedule returns a conflict. A lost
 response can be recovered with the same saved request, including after browser
@@ -782,4 +783,51 @@ reading, while default Thread history excludes them. Ordinary Thread input selec
 work; explicit Task additions target the occurrence through the same durable
 queued/active/waiting input path and never edit the Routine. Known failures are
 retained, and acknowledged unknown effects are held for inspection rather than
-automatically replayed. Cron and Routine lifecycle controls are separate work.
+automatically replayed. Routine lifecycle controls remain separate work.
+
+Cron creation replaces `runAt`/`timezone` with `cron`; supplying both schedules or
+an override timezone is rejected. The Web form offers hourly, daily at 09:00,
+weekdays at 09:00, and custom cron. Every occurrence creates a separate Task/Run
+and captures the definition and due time admitted, including the resolved timezone.
+`runAt` on a cron definition is its first resolved instant; `nextOccurrence` is
+its currently armed future slot, or null while an occurrence is unfinished.
+Each occurrence link leads to its own results. Failure and cancellation preserve
+the definition and re-arm it after confirmed stop. Queued, active, waiting,
+stopping, uncertain and retried work all share the same Routine exclusion;
+retrying an older occurrence conflicts while a newer occurrence is unfinished.
+
+The Host arms the next cron slot strictly after its current clock when the prior
+occurrence is known terminal and its execution reservation has been released.
+Slots missed while unfinished never accumulate. Restart admits one already
+armed overdue occurrence, regardless of how many slots passed. It does not
+replay each historical slot, nor silently replay an uncertain occurrence.
+
+`POST /api/bots/:botId/timezone` accepts `requestId` and `timezone`, validates a
+supported IANA zone and saves the Host scheduling setting independently of
+runner configuration. The fallback is Asia/Shanghai. Saving recomputes armed
+future cron slots immediately; an unfinished occurrence remains held and uses
+the new zone only when it ends. Admitted definitions/inputs, one-shot instants,
+SDK context and configuration versions stay fixed. Retries of the same timezone
+request do not recalculate the schedule again. This operation is owner-only and
+uses the same credential/Host/Origin checks as other management operations.
+
+### Cron parser and daylight saving
+
+The Host pins `cron-parser` 5.10.2. Expressions have five fields (minute, hour,
+day of month, month, weekday), with implicit second zero. Numeric values,
+wildcards, ranges, lists, steps, names and the parser's day selectors use its
+standard non-strict semantics: restricting both day of month and weekday matches
+either. Seconds fields, `@` macros, `?` and randomized `H` are rejected. Invalid
+or impossible calendars fail creation. There are no interval or other schedule
+types. Parsing always uses an explicit clock instant and the Bot timezone.
+
+DST follows the pinned parser, without an extra wall-clock deduplication layer.
+For `30 2 * * *` in America/New_York, the March 8, 2026 gap resolves to 03:30 EDT
+(07:30Z); the next day returns to 02:30 EDT (06:30Z). For `30 1 * * *`, calculating
+before the November 1 fold selects the first 01:30 (05:30Z). Recalculating at
+05:30Z or 05:40Z skips to November 2 at 06:30Z. Recalculating during the second
+fold, such as November 1 at 06:10Z, can select the second 01:30 (06:30Z).
+Consequently a long occurrence that finishes inside that second fold can be
+followed by the repeated local slot; it still cannot overlap or build a backlog.
+Timezone database rules come from the runtime's Intl support and the parser's
+Luxon dependency. Controlled-clock public tests lock these concrete cases.

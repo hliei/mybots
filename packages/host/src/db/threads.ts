@@ -4,7 +4,7 @@ import type { InboundMessage, OutboundMessage, ProcessingAck } from "@mybots/mai
 import { ChatRequestError } from "../chat.ts";
 import { history } from "./history.ts";
 import type { SavedSession } from "./index.ts";
-import type { Routine } from "./routines.ts";
+import { type Routine, routineBusy } from "./routines.ts";
 
 const RUN_ACTIVE_BUDGET_MS = 60 * 60 * 1000;
 
@@ -181,6 +181,8 @@ export class ThreadStore {
           .prepare("INSERT INTO tasks VALUES (?, ?, ?, ?)")
           .run(taskId, thread.id, input.routine ? "routine" : "chat", now);
         if (input.routine) {
+          if (routineBusy(this.db, input.routine.id))
+            throw new ChatRequestError("Routine already has an unfinished occurrence.", 409);
           const updated = this.db
             .prepare(
               "UPDATE routines SET next_occurrence = NULL WHERE id = ? AND next_occurrence IS NOT NULL",
@@ -190,7 +192,12 @@ export class ThreadStore {
             throw new ChatRequestError("Routine occurrence already admitted.", 409);
           this.db
             .prepare("INSERT INTO routine_occurrences VALUES (?, ?, ?, ?)")
-            .run(taskId, input.routine.id, JSON.stringify(input.routine), input.routine.runAt);
+            .run(
+              taskId,
+              input.routine.id,
+              JSON.stringify(input.routine),
+              input.routine.nextOccurrence,
+            );
         }
         this.db
           .prepare(`INSERT INTO messaging_groups (id, channel_type, platform_id, instance, created_at)
@@ -360,6 +367,15 @@ export class ThreadStore {
         )
         .get(run.task_id, run.id);
       if (open) throw new ChatRequestError("Task already has an unfinished Run.", 409);
+      const occurrence = this.db
+        .prepare("SELECT routine_id FROM routine_occurrences WHERE task_id = ?")
+        .get(run.task_id);
+      if (occurrence && routineBusy(this.db, occurrence.routine_id as string, run.task_id))
+        throw new ChatRequestError("Routine already has an unfinished occurrence.", 409);
+      if (occurrence)
+        this.db
+          .prepare("UPDATE routines SET next_occurrence = NULL WHERE id = ? AND cron IS NOT NULL")
+          .run(occurrence.routine_id as string);
       const outcome =
         run.outcome ?? JSON.stringify({ kind: "uncertain", reply: "Final evidence is missing." });
       this.db

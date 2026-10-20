@@ -30,6 +30,7 @@ import { agentPublicationSchema } from "./migrations/015-agent-publications.ts";
 import { deliveredArtifactSchema } from "./migrations/016-delivered-artifacts.ts";
 import { ownerQuestionSchema } from "./migrations/017-owner-questions.ts";
 import { oneShotRoutineSchema } from "./migrations/018-one-shot-routines.ts";
+import { cronRoutineSchema } from "./migrations/019-cron-routines.ts";
 import { RoutineStore } from "./routines.ts";
 import { ThreadStore } from "./threads.ts";
 
@@ -101,7 +102,7 @@ export class HostStore {
       const { user_version } = this.db.prepare("PRAGMA user_version").get() as {
         user_version: number;
       };
-      if (user_version > 18) throw new Error("Unsupported host schema version");
+      if (user_version > 19) throw new Error("Unsupported host schema version");
       if (
         user_version > 0 &&
         user_version < 8 &&
@@ -128,6 +129,7 @@ export class HostStore {
       if (user_version <= 15) this.db.exec(deliveredArtifactSchema);
       if (user_version <= 16) this.db.exec(ownerQuestionSchema);
       if (user_version <= 17) this.db.exec(oneShotRoutineSchema);
+      if (user_version <= 18) this.db.exec(cronRoutineSchema);
       this.routines = new RoutineStore(this.db);
       this.seed(configuration, dirname(dirname(file)));
       this.threads = new ThreadStore(this.db);

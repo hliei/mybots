@@ -99,3 +99,129 @@ test("one-shot Routine survives overdue restart and accepts targeted occurrence 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("cron choices inherit Bot timezone and show separate occurrences without a missed-slot backlog", async ({
+  page,
+}) => {
+  const root = await mkdtemp(join(tmpdir(), "mybots-cron-browser-"));
+  let child: ChildProcess | undefined;
+  let exit: Promise<number | null> | undefined;
+  async function start(port = 0, now = "2026-10-20T00:00:00Z") {
+    child = fork(
+      fileURLToPath(new URL("../../scripts/client-routines-host.mjs", import.meta.url)),
+      [root, String(port), now],
+      { silent: true },
+    );
+    const process = child;
+    let errors = "";
+    process.stderr?.on("data", (chunk) => {
+      errors += chunk;
+    });
+    exit = new Promise((resolve, reject) => {
+      process.once("exit", resolve);
+      process.once("error", reject);
+    });
+    return Promise.race([
+      new Promise<{ url: string; credential: string }>((resolve) =>
+        process.once("message", (message) =>
+          resolve(message as { url: string; credential: string }),
+        ),
+      ),
+      exit.then(() => {
+        throw new Error(errors);
+      }),
+    ]);
+  }
+  async function stop() {
+    child?.kill("SIGTERM");
+    expect(await exit).toBe(0);
+    child = undefined;
+  }
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  try {
+    const ready = await start();
+    await page.goto(ready.url);
+    await page.getByLabel("Connection credential").fill(ready.credential);
+    await page.getByRole("button", { name: "Pair with Host" }).click();
+    await page.getByRole("button", { name: "Select Personal", exact: true }).click();
+    const writerResponse = await page.request.post(`${ready.url}/api/bots`, {
+      data: {
+        requestId: "writer",
+        name: "Writer",
+        instructions: "Write reports",
+        model: { provider: "deepseek", id: "deepseek-chat" },
+        tools: [],
+      },
+    });
+    expect(writerResponse.status()).toBe(201);
+    const writer = (await writerResponse.json()).bot;
+    await page.route(
+      "**/api/bots/personal/timezone",
+      async (route) => {
+        await route.fetch();
+        await route.abort();
+      },
+      { times: 1 },
+    );
+    await page.getByLabel("Bot timezone", { exact: true }).fill("UTC");
+    await page.getByRole("button", { name: "Save Bot timezone", exact: true }).click();
+    await expect(page.locator("#bot-timezone-notice")).toContainText("unconfirmed");
+    await page.reload();
+    await expect(page.locator("#bot-timezone-notice")).toContainText("personal");
+    await page.getByRole("button", { name: "Select Writer", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Save Bot timezone", exact: true }),
+    ).toBeDisabled();
+    await expect(page.locator("#bot-timezone-notice")).toContainText("personal");
+    await page.getByRole("button", { name: "Retry Bot timezone", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Save Bot timezone", exact: true }),
+    ).toBeEnabled();
+    expect(
+      (await (await page.request.get(`${ready.url}/api/bots/${writer.id}/routines`)).json())
+        .timezone,
+    ).toBe("Asia/Shanghai");
+    await page.getByRole("button", { name: "Select Personal", exact: true }).click();
+    await expect(page.getByLabel("Bot timezone", { exact: true })).toHaveValue("UTC");
+    await page.getByLabel("Routine instructions", { exact: true }).fill("Hourly archive");
+    await page.getByLabel("Routine schedule", { exact: true }).selectOption("hourly");
+    await page.getByRole("button", { name: "Create cron Routine", exact: true }).click();
+    const routines = page.locator("#routine-list article");
+    const work = page.locator("#chat-works article");
+    await expect(routines).toHaveCount(1);
+    await expect(routines).toContainText("Cron: 0 * * * *");
+    await expect(routines).toContainText("Timezone: UTC");
+    await expect(routines).toContainText("2026-10-20T01:00:00.000Z");
+    await page.reload();
+    await expect(routines).toHaveCount(1);
+    await stop();
+    await start(Number(new URL(ready.url).port), "2026-10-22T02:30:00Z");
+    await page.reload();
+    await expect(work).toHaveCount(1);
+    await expect(work).toContainText("Execution: active");
+    child?.send("complete");
+    await expect(work).toContainText("Outcome: succeeded");
+    await expect(routines).toContainText("2026-10-22T03:00:00.000Z");
+    await stop();
+    await start(Number(new URL(ready.url).port), "2026-10-22T05:30:00Z");
+    await page.reload();
+    await expect(work).toHaveCount(2);
+    await expect(work.nth(1)).toContainText("Execution: active");
+    child?.send("complete");
+    await expect(work.nth(1)).toContainText("Outcome: succeeded");
+    await expect(routines.getByRole("link", { name: /Inspect occurrence Task/ })).toHaveCount(2);
+    await expect(routines).toContainText("2026-10-22T06:00:00.000Z");
+    await page.screenshot({ path: join(root, "cron-desktop.png"), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.locator("#routines").scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(root, "cron-mobile.png") });
+    expect(errors).toEqual([]);
+  } finally {
+    if (child) await stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});

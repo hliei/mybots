@@ -411,7 +411,7 @@ same-Run continuation through an owner answer. These checks use controlled
 upstreams and do not establish actual-service acceptance.
 
 
-## One-shot Routines
+## Routines
 
 `tests/routines.test.ts` uses authenticated HTTP, real SQLite and directional
 mailboxes with a controlled Host clock/executor. It verifies due/overdue restart,
@@ -427,3 +427,14 @@ the built client. The opt-in mailbox/gateway fixture creates a Routine through
 the actual container's Pi tool and observes independent execution, shared Bot
 materials and terminal container removal. All use controlled model responses;
 actual-service acceptance remains separate.
+
+Cron coverage in the same public suite verifies fallback/Bot timezone edits,
+unchanged admitted snapshots and one-shot instants, parser validation and DST,
+one overdue restart occurrence, busy-slot omission, recurrence after failure,
+question waits across restart, uncertainty and old-occurrence retry exclusion.
+The real Pi case creates cron through the actual tool and runs two occurrences,
+proving selected steering and source chat do not enter the next SDK ledger.
+The built-client journey saves a Bot timezone, selects a common cron choice,
+restarts across missed slots twice and inspects distinct occurrence links.
+The opt-in container case creates cron through production Pi and observes an
+independent successful occurrence, future re-arming and actual container removal.
