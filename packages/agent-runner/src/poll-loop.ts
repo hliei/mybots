@@ -22,6 +22,7 @@ export interface PollLoopOptions {
   runContext?: RunContext;
   signal: AbortSignal;
   pollMs?: number;
+  operationTimeoutMs?: number;
 }
 
 export async function runMailbox(options: PollLoopOptions): Promise<void> {
@@ -59,21 +60,38 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
       prompt: input.content,
       history: options.runContext
         ? async (operation, input, toolSignal) => {
-            const id = randomUUID();
+            const fields =
+              input && typeof input === "object" && !Array.isArray(input)
+                ? (input as Record<string, unknown>)
+                : undefined;
+            const supplied = typeof fields?.requestId === "string" ? fields.requestId : undefined;
+            const id =
+              operation === "publish_progress" || operation === "publish_result"
+                ? supplied
+                : randomUUID();
+            if (!id) throw new Error("A stable requestId is required.");
             const requestSignal = AbortSignal.any([
               signal,
               ...(toolSignal ? [toolSignal] : []),
-              AbortSignal.timeout(30000),
+              AbortSignal.timeout(options.operationTimeoutMs ?? 30000),
             ]);
             mailbox.requestHistory({ id, incarnation, operation, input });
-            for (;;) {
-              requestSignal.throwIfAborted();
-              const response = mailbox.historyResponse(id);
-              if (response) {
-                if (response.error) throw new Error(response.error);
-                return response.result;
+            try {
+              for (;;) {
+                requestSignal.throwIfAborted();
+                const response = mailbox.historyResponse(id);
+                if (response) {
+                  if (response.error) throw new Error(response.error);
+                  return response.result;
+                }
+                await setTimeout(options.pollMs ?? 100, undefined, { signal: requestSignal });
               }
-              await setTimeout(options.pollMs ?? 100, undefined, { signal: requestSignal });
+            } catch (error) {
+              if (supplied && requestSignal.aborted && !signal.aborted)
+                throw new Error(
+                  `Host operation ${supplied} is not confirmed. Call read_operation with the same requestId and do not publish again.`,
+                );
+              throw error;
             }
           }
         : undefined,

@@ -12,6 +12,7 @@ import {
 import { resolveWebTools, validateAgentResources } from "@mybots/mailbox";
 import { currentMemoryPrompt } from "../memory.ts";
 import { createHistoryTools, HISTORY_INSTRUCTIONS } from "../tools/history.ts";
+import { createProgressTools, PROGRESS_INSTRUCTIONS } from "../tools/progress.ts";
 import { createWebTools } from "../tools/web.ts";
 import type { AgentProvider, AgentQuery, ProviderEvent, QueryInput } from "./types.ts";
 
@@ -119,7 +120,7 @@ export class PiProvider implements AgentProvider {
           noContextFiles: true,
           appendSystemPrompt: [
             ...(input.systemContext?.instructions ? [input.systemContext.instructions] : []),
-            ...(input.history ? [HISTORY_INSTRUCTIONS] : []),
+            ...(input.history ? [HISTORY_INSTRUCTIONS, PROGRESS_INSTRUCTIONS] : []),
           ],
         });
         await resourceLoader.reload();
@@ -134,8 +135,24 @@ export class PiProvider implements AgentProvider {
           modelRuntime: this.options.modelRuntime,
           model: this.options.model,
           thinkingLevel: "off",
-          tools: [...selectedTools, ...(input.history ? ["search_history", "read_history"] : [])],
-          customTools: [...webTools, ...(input.history ? createHistoryTools(input.history) : [])],
+          tools: [
+            ...selectedTools,
+            ...(input.history
+              ? [
+                  "search_history",
+                  "read_history",
+                  "publish_progress",
+                  "publish_result",
+                  "read_operation",
+                ]
+              : []),
+          ],
+          customTools: [
+            ...webTools,
+            ...(input.history
+              ? [...createHistoryTools(input.history), ...createProgressTools(input.history)]
+              : []),
+          ],
           sessionManager: manager,
           settingsManager,
           resourceLoader,

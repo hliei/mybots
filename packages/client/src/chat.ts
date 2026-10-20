@@ -12,6 +12,13 @@ interface Outcome {
   reply: string;
   truncated?: boolean;
 }
+interface Publication {
+  id: string;
+  attemptId: string;
+  text: string;
+  truncated: boolean;
+  createdAt: string;
+}
 interface Run {
   id: string;
   state: string;
@@ -24,6 +31,8 @@ interface Run {
   backgroundBoundary: number;
   references: { id: string; role: string; text: string }[];
   outcome: Outcome | null;
+  progress: Publication[];
+  selectedResults: Publication[];
   lateEvidence?: { text: string }[];
   inputs: {
     id: string;
@@ -61,6 +70,15 @@ interface Pending {
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function publication(value: unknown): value is Publication {
+  return (
+    record(value) &&
+    [value.id, value.attemptId, value.text, value.createdAt].every(
+      (item) => typeof item === "string",
+    ) &&
+    typeof value.truncated === "boolean"
+  );
 }
 function outcome(value: unknown): boolean {
   return (
@@ -116,6 +134,10 @@ function isDetail(value: unknown): value is Detail {
                 ),
             ) &&
             outcome(run.outcome) &&
+            Array.isArray(run.progress) &&
+            run.progress.every(publication) &&
+            Array.isArray(run.selectedResults) &&
+            run.selectedResults.every(publication) &&
             Array.isArray(run.inputs) &&
             run.inputs.every(
               (input: unknown) =>
@@ -270,6 +292,16 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
             paragraph(`Captured background boundary: ${run.backgroundBoundary}`),
             paragraph(
               `Run background: ${run.references.length ? run.references.map((reference) => reference.text).join(" · ") : "none"}`,
+            ),
+            ...run.progress.map((note) =>
+              paragraph(
+                `Progress · Attempt ${note.attemptId}: ${note.text}${note.truncated ? " [Excerpt]" : ""}`,
+              ),
+            ),
+            ...run.selectedResults.map((result) =>
+              paragraph(
+                `Selected result · Attempt ${result.attemptId}: ${result.text}${result.truncated ? " [Excerpt]" : ""}`,
+              ),
             ),
             paragraph(`Outcome: ${run.outcome?.kind ?? "unresolved"}`),
           );

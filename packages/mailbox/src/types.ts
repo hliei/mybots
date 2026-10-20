@@ -102,11 +102,16 @@ export interface ExecutionSnapshot {
 export interface HistoryRequest {
   id: string;
   incarnation: number;
-  operation: "search_history" | "read_history";
+  operation: string;
   input: unknown;
 }
 export type HistoryOperation = (
-  operation: HistoryRequest["operation"],
+  operation:
+    | "search_history"
+    | "read_history"
+    | "publish_progress"
+    | "publish_result"
+    | "read_operation",
   input: unknown,
   signal?: AbortSignal,
 ) => Promise<unknown>;

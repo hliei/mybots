@@ -240,16 +240,19 @@ Automatic Run compaction and context restoration remain owned by Pi.
 
 ## Original-history mailbox operations
 
-The Host writes the current executor incarnation and correlated history responses
+The Host writes the current executor incarnation and correlated operation responses
 to `host_operation_state` in runner-read-only `inbound.db`. The runner captures
 that incarnation at startup and writes `request:<id>` entries to its own
-`outbound.db` session state for `search_history`/`read_history`. The Host checks
-current ownership and the actual executor generation before deriving history
-scope from that mailbox. Adoption preserves the running executor token; a newly
+`outbound.db` session state for `search_history`, `read_history`,
+`publish_progress`, `publish_result` and `read_operation`. Progress and selected
+results use the caller-supplied request id so a timeout can query that same id.
+The Host checks current ownership and the actual executor generation before
+deriving scope from that mailbox. Adoption preserves the running executor token; a newly
 started executor receives a new incarnation only after prior stop is confirmed.
 Requests have a bounded, abortable thirty-second wait and responses retain the
-same correlation ID. This read-only operation bridge grants no Host database,
-Docker, source-path or cross-Bot access.
+same correlation ID. This operation bridge grants no Host database, Docker, source-path or cross-Bot
+access. History reads remain read-only. Progress and selected-result publication
+write only those Host records for the fenced Attempt.
 
 `evidence:<SDK-entry/block-id>` records contain product input, assistant text and
 complete tool calls/results, independently of SDK compaction. `live:current`

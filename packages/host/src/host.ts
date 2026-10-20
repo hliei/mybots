@@ -8,6 +8,7 @@ import type {
   AgentResources,
   ExecutionRecord,
   ExecutionSnapshot,
+  HistoryRequest,
   OutboundMessage,
   WebConfiguration,
 } from "@mybots/mailbox";
@@ -48,6 +49,33 @@ import { LocalSkills } from "./skills.ts";
 
 /** Total platform-delivery attempts for one outbound reply, including the first. */
 const MAX_DELIVERY_ATTEMPTS = 3;
+const REQUEST_ID = /^[a-zA-Z0-9_-]{1,128}$/;
+const IDENTITY_FIELDS = [
+  "botId",
+  "taskId",
+  "runId",
+  "attemptId",
+  "sessionId",
+  "threadId",
+  "ownerId",
+];
+const GRANT_FIELDS = ["grant", "privileges"];
+const ADMIN_FIELDS = ["role", "tools", "policy", "instructions", "model"];
+const GRANT_OPERATIONS = new Set(["grant", "self_grant", "grant_privilege"]);
+const ADMIN_OPERATIONS = new Set([
+  "configure_bot",
+  "update_bot",
+  "update_role",
+  "update_model",
+  "update_tools",
+  "update_skills",
+  "disable_bot",
+  "delete_bot",
+  "create_bot",
+  "set_policy",
+]);
+const CROSS_BOT_OPERATIONS = new Set(["administer_bot", "administer_routine"]);
+const TERMINAL_RUNS = new Set(["stopping", "succeeded", "failed", "uncertain", "closed"]);
 
 /** Bounded, credential-free text persisted for an in-flight delivery failure. */
 /** A wait is complete when no tool is current and every tool call has its result. */
@@ -1151,20 +1179,7 @@ export class Host {
           request.incarnation === 0
         )
           throw new ChatRequestError("Execution scope is no longer active.", 403);
-        if (!request.input || typeof request.input !== "object" || Array.isArray(request.input))
-          throw new ChatRequestError("Invalid history arguments.");
-        const input = request.input as Record<string, unknown>;
-        if (
-          request.operation === "search_history"
-            ? typeof input.query !== "string" || input.messageId !== undefined
-            : request.operation === "read_history"
-              ? typeof input.messageId !== "string" || input.query !== undefined
-              : true
-        )
-          throw new ChatRequestError("Invalid history operation.");
-        mailbox.respondOperation(request.id, {
-          result: this.store.threads.history(route.session.agent_group_id, input, route.session.id),
-        });
+        mailbox.respondOperation(request.id, { result: this.scopedOperation(execution, request) });
       } catch (error) {
         mailbox.respondOperation(request.id, {
           error: error instanceof ChatRequestError ? error.message : "History unavailable.",
@@ -1183,6 +1198,101 @@ export class Host {
       taskId: this.store.threads.run(route.session.id).task_id,
       runId: route.session.id,
       snapshot,
+    });
+  }
+
+  private scopedOperation(execution: SessionExecution, request: HistoryRequest): unknown {
+    if (!request.input || typeof request.input !== "object" || Array.isArray(request.input))
+      throw new ChatRequestError("Invalid history arguments.");
+    const input = request.input as Record<string, unknown>;
+    const botId = execution.route.session.agent_group_id;
+    if (request.operation === "search_history" || request.operation === "read_history") {
+      if (
+        request.operation === "search_history"
+          ? typeof input.query !== "string" || input.messageId !== undefined
+          : typeof input.messageId !== "string" || input.query !== undefined
+      )
+        throw new ChatRequestError("Invalid history operation.");
+      return this.store.threads.history(botId, input, execution.route.session.id);
+    }
+    if (GRANT_OPERATIONS.has(request.operation))
+      throw new ChatRequestError("Privilege grants are owner-only.", 403);
+    if (ADMIN_OPERATIONS.has(request.operation))
+      throw new ChatRequestError("Bot administration is owner-only.", 403);
+    if (CROSS_BOT_OPERATIONS.has(request.operation))
+      throw new ChatRequestError("Cross-Bot administration is rejected.", 403);
+    if (IDENTITY_FIELDS.some((key) => key in input))
+      throw new ChatRequestError("Forged execution identity is rejected.", 403);
+    if (GRANT_FIELDS.some((key) => key in input))
+      throw new ChatRequestError("Privilege grants are owner-only.", 403);
+    if (ADMIN_FIELDS.some((key) => key in input))
+      throw new ChatRequestError("Bot administration is owner-only.", 403);
+    if (request.operation === "read_operation") return this.readPublication(execution, input);
+    if (request.operation === "publish_progress" || request.operation === "publish_result")
+      return this.publishExecution(execution, request, input);
+    throw new ChatRequestError("Invalid history operation.");
+  }
+
+  private readPublication(execution: SessionExecution, input: Record<string, unknown>) {
+    if (Object.keys(input).some((key) => key !== "requestId"))
+      throw new ChatRequestError("Unknown history field.");
+    const run = this.store.threads.run(execution.route.session.id);
+    const attempt = this.store.threads.executingAttempt(run.id);
+    if (!attempt || attempt.incarnation !== execution.mailbox.executionIncarnation())
+      throw new ChatRequestError("Execution scope is no longer active.", 403);
+    if (typeof input.requestId !== "string" || !REQUEST_ID.test(input.requestId))
+      throw new ChatRequestError(
+        "A stable requestId is required (up to 128 letters, digits, underscores or hyphens).",
+      );
+    const publication = this.store.threads.publication(
+      execution.route.session.agent_group_id,
+      run.id,
+      input.requestId,
+    );
+    return publication ? { state: "recorded" as const, publication } : { state: "absent" as const };
+  }
+
+  private publishExecution(
+    execution: SessionExecution,
+    request: HistoryRequest,
+    input: Record<string, unknown>,
+  ) {
+    if (Object.keys(input).some((key) => !["requestId", "text"].includes(key)))
+      throw new ChatRequestError("Unknown history field.");
+    const run = this.store.threads.run(execution.route.session.id);
+    const attempt = this.store.threads.executingAttempt(run.id);
+    if (!attempt || attempt.incarnation !== request.incarnation)
+      throw new ChatRequestError("Execution scope is no longer active.", 403);
+    if (run.state !== "active")
+      throw new ChatRequestError(
+        TERMINAL_RUNS.has(run.state)
+          ? "Cancelled work cannot be revived."
+          : "Execution scope is no longer active.",
+        409,
+      );
+    if (
+      typeof input.requestId !== "string" ||
+      input.requestId !== request.id ||
+      !REQUEST_ID.test(input.requestId)
+    )
+      throw new ChatRequestError(
+        "A stable requestId is required (up to 128 letters, digits, underscores or hyphens).",
+      );
+    if (
+      typeof input.text !== "string" ||
+      Array.from(input.text).length < 1 ||
+      Array.from(input.text).length > 2000
+    )
+      throw new ChatRequestError("Progress and selected results must be 1 to 2000 characters.");
+    return this.store.threads.recordPublication({
+      id: request.id,
+      kind: request.operation === "publish_progress" ? "progress" : "result",
+      botId: execution.route.session.agent_group_id,
+      taskId: run.task_id,
+      runId: run.id,
+      attemptId: attempt.id,
+      text: input.text,
+      now: this.timestamp(),
     });
   }
 
