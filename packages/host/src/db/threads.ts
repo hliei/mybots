@@ -457,6 +457,8 @@ export class ThreadStore {
       if (this.openDelegations(run.id))
         throw new ChatRequestError("Resolve owned child work before retrying the parent.", 409);
       let ownership = this.delegationForChild(run.id);
+      if (ownership && !["failed", "cancelled", "uncertain"].includes(ownership.state))
+        throw new ChatRequestError("Owned child work has no retryable outcome.", 409);
       while (ownership) {
         const parent = this.run(ownership.parentRunId);
         if (!["active", "queued", "waiting"].includes(parent.state))

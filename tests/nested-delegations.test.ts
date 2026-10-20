@@ -887,3 +887,57 @@ it("rejects new nested work as soon as an ancestor starts stopping", async () =>
     blocked = false;
   }
 });
+
+it("rejects retrying an older child Run after a later Run has succeeded", async () => {
+  const driver = new MailboxDriver();
+  const fail = Promise.withResolvers<void>();
+  const entered = new Set<string>();
+  let leafCalls = 0;
+  driver.respond = async (input, material, signal) => {
+    if (input.content === "Leaf") {
+      if (++leafCalls === 1) {
+        await Promise.race([fail.promise, untilAbort(signal)]);
+        return { error: "Original review failed" };
+      }
+      return "Retried review succeeded";
+    }
+    if (!entered.has(material.key.sessionId)) {
+      entered.add(material.key.sessionId);
+      await untilAbort(signal);
+    }
+    return "Parent handled the review";
+  };
+  const chain = await nested(driver, "Which review should I use?");
+  fail.resolve();
+  await vi.waitFor(async () =>
+    expect((await run(chain.reviewer, chain.leaf?.childRunId as string)).state).toBe("failed"),
+  );
+  const retry = await post(`/api/bots/${chain.reviewer}/runs/${chain.leaf?.childRunId}/retry`, {
+    requestId: "successful-child-retry",
+  });
+  expect(retry.status).toBe(202);
+  const retried = await retry.json();
+  await vi.waitFor(async () =>
+    expect((await run(chain.reviewer, retried.runId)).state).toBe("succeeded"),
+  );
+  expect((await run(chain.specialist, chain.middle?.childRunId as string)).state).toBe("waiting");
+  const stale = await post(`/api/bots/${chain.reviewer}/runs/${chain.leaf?.childRunId}/retry`, {
+    requestId: "stale-successful-retry",
+  });
+  expect(stale.status).toBe(409);
+  const task = (await get(`/api/bots/${chain.reviewer}/thread`)).tasks.find(
+    (task: { id: string }) => task.id === chain.leaf?.childTaskId,
+  );
+  expect(task.runs).toHaveLength(2);
+  expect(
+    (
+      await post(
+        `/api/bots/${chain.specialist}/runs/${chain.middle?.childRunId}/questions/nested-question/answer`,
+        { requestId: "answer-successful-review", text: "Use the successful retry" },
+      )
+    ).status,
+  ).toBe(202);
+  await vi.waitFor(async () =>
+    expect((await run("personal", chain.source.runId)).state).toBe("succeeded"),
+  );
+});
