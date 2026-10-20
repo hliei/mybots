@@ -383,3 +383,14 @@ browser journey checks visible exhaustion, confirmed stop and explicit retry.
 The opt-in infrastructure suite holds a real model request through the gateway,
 exhausts its Host budget and observes actual container removal; normal completion
 also removes its container and retains workspace effects.
+
+## Delivered artifacts
+
+`tests/delivered-artifacts.test.ts` publishes selected workspace files through
+the production mailbox and downloads through authenticated HTTP with real SQLite.
+It checks preserved bytes after workspace replacement and Host restart, request
+replay, Bot/Run scope, path and symlink rejection, the 25 MiB and smaller
+installation limits, and a real Pi SDK write/publish tool round without owner
+upload. `tests/browser/delivered-artifacts.spec.ts` downloads through the built
+client before and after a fresh Host starts, retaining the original bytes. These
+offline tests do not establish actual-container or live-provider evidence.

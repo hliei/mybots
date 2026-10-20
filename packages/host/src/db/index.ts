@@ -27,6 +27,7 @@ import { fairAdmissionSchema } from "./migrations/012-fair-admission.ts";
 import { runBudgetSchema } from "./migrations/013-run-budgets.ts";
 import { taskAttachmentSchema } from "./migrations/014-task-attachments.ts";
 import { agentPublicationSchema } from "./migrations/015-agent-publications.ts";
+import { deliveredArtifactSchema } from "./migrations/016-delivered-artifacts.ts";
 import { ThreadStore } from "./threads.ts";
 
 export interface HostInstance {
@@ -96,7 +97,7 @@ export class HostStore {
       const { user_version } = this.db.prepare("PRAGMA user_version").get() as {
         user_version: number;
       };
-      if (user_version > 15) throw new Error("Unsupported host schema version");
+      if (user_version > 16) throw new Error("Unsupported host schema version");
       if (
         user_version > 0 &&
         user_version < 8 &&
@@ -120,6 +121,7 @@ export class HostStore {
       if (user_version <= 12) this.db.exec(runBudgetSchema);
       if (user_version <= 13) this.db.exec(taskAttachmentSchema);
       if (user_version <= 14) this.db.exec(agentPublicationSchema);
+      if (user_version <= 15) this.db.exec(deliveredArtifactSchema);
       this.seed(configuration, dirname(dirname(file)));
       this.threads = new ThreadStore(this.db);
       this.threads.ensureThreads(new Date().toISOString());

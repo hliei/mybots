@@ -316,7 +316,7 @@ it.each([true, false])(
       if (survives) {
         // Recreate the preceding schema to verify that adoption also starts budget accounting on upgrade.
         db.exec(
-          "DROP TABLE agent_publications; DROP TABLE task_attachments; ALTER TABLE runs DROP COLUMN active_ms; ALTER TABLE runs DROP COLUMN active_since; ALTER TABLE runs DROP COLUMN budget_exhausted_at; PRAGMA user_version = 12;",
+          "DROP TABLE delivered_artifacts; DROP TABLE agent_publications; DROP TABLE task_attachments; ALTER TABLE runs DROP COLUMN active_ms; ALTER TABLE runs DROP COLUMN active_since; ALTER TABLE runs DROP COLUMN budget_exhausted_at; PRAGMA user_version = 12;",
         );
       }
     } finally {

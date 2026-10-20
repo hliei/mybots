@@ -19,6 +19,13 @@ interface Publication {
   truncated: boolean;
   createdAt: string;
 }
+interface SelectedResult extends Publication {
+  botId: string;
+  taskId: string;
+  runId: string;
+  delegationId: string | null;
+  artifacts: { id: string; name: string; bytes: number }[];
+}
 interface Run {
   id: string;
   state: string;
@@ -32,7 +39,7 @@ interface Run {
   references: { id: string; role: string; text: string }[];
   outcome: Outcome | null;
   progress: Publication[];
-  selectedResults: Publication[];
+  selectedResults: SelectedResult[];
   lateEvidence?: { text: string }[];
   inputs: {
     id: string;
@@ -137,7 +144,21 @@ function isDetail(value: unknown): value is Detail {
             Array.isArray(run.progress) &&
             run.progress.every(publication) &&
             Array.isArray(run.selectedResults) &&
-            run.selectedResults.every(publication) &&
+            run.selectedResults.every(
+              (result: unknown) =>
+                publication(result) &&
+                record(result) &&
+                [result.botId, result.taskId, result.runId].every((id) => typeof id === "string") &&
+                (result.delegationId === null || typeof result.delegationId === "string") &&
+                Array.isArray(result.artifacts) &&
+                result.artifacts.every(
+                  (file: unknown) =>
+                    record(file) &&
+                    typeof file.id === "string" &&
+                    typeof file.name === "string" &&
+                    typeof file.bytes === "number",
+                ),
+            ) &&
             Array.isArray(run.inputs) &&
             run.inputs.every(
               (input: unknown) =>
@@ -298,11 +319,27 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
                 `Progress · Attempt ${note.attemptId}: ${note.text}${note.truncated ? " [Excerpt]" : ""}`,
               ),
             ),
-            ...run.selectedResults.map((result) =>
-              paragraph(
-                `Selected result · Attempt ${result.attemptId}: ${result.text}${result.truncated ? " [Excerpt]" : ""}`,
-              ),
-            ),
+            ...run.selectedResults.map((result) => {
+              const section = document.createElement("section");
+              section.append(
+                paragraph(
+                  `Selected result · Attempt ${result.attemptId}: ${result.text}${result.truncated ? " [Excerpt]" : ""}`,
+                ),
+                paragraph(
+                  `Bot: ${result.botId} · Task: ${result.taskId} · Run: ${result.runId}${result.delegationId ? ` · Delegation: ${result.delegationId}` : ""}`,
+                ),
+              );
+              for (const file of result.artifacts) {
+                const download = document.createElement("a");
+                download.href = `/api/bots/${encodeURIComponent(result.botId)}/runs/${encodeURIComponent(result.runId)}/artifacts/${encodeURIComponent(file.id)}`;
+                download.download = file.name.split("/").at(-1) as string;
+                download.textContent = `Download ${file.name} (${file.bytes} bytes)`;
+                const row = document.createElement("p");
+                row.append(download);
+                section.append(row);
+              }
+              return section;
+            }),
             paragraph(`Outcome: ${run.outcome?.kind ?? "unresolved"}`),
           );
           if (run.outcome)

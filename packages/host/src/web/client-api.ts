@@ -62,6 +62,38 @@ export async function serveClient(
     response.end(JSON.stringify({ bots: host.managedBots() }));
     return;
   }
+  const artifactRoute = /^\/api\/bots\/([^/]+)\/runs\/([^/]+)\/artifacts\/([^/]+)$/.exec(path);
+  if (artifactRoute) {
+    try {
+      if (request.method !== "GET") {
+        response.writeHead(405, { Allow: "GET" });
+        response.end();
+        return;
+      }
+      const result = await host.downloadArtifact(
+        decodeURIComponent(artifactRoute[1] as string),
+        decodeURIComponent(artifactRoute[2] as string),
+        decodeURIComponent(artifactRoute[3] as string),
+      );
+      response.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        "Content-Disposition": contentDisposition(result.filename),
+        "Content-Length": result.bytes.length,
+      });
+      response.end(result.bytes);
+    } catch (error) {
+      response.writeHead(error instanceof ChatRequestError ? error.status : 503, {
+        "Content-Type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error:
+            error instanceof ChatRequestError ? error.message : "Delivered artifact unavailable.",
+        }),
+      );
+    }
+    return;
+  }
   const runHistoryRoute = /^\/api\/bots\/([^/]+)\/runs\/([^/]+)\/history$/.exec(path);
   const historyRoute = /^\/api\/bots\/([^/]+)\/thread\/history$/.exec(path);
   if ((historyRoute || runHistoryRoute) && request.method === "GET") {

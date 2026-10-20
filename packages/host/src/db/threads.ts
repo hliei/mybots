@@ -1076,6 +1076,7 @@ export class ThreadStore {
     attemptId: string;
     text: string;
     now: string;
+    artifacts?: { id: string; name: string; bytes: number }[];
   }) {
     const existing = this.publicationRow(input.id);
     if (existing) {
@@ -1083,32 +1084,48 @@ export class ThreadStore {
         throw new ChatRequestError("Request identity is outside this execution.", 403);
       return existing;
     }
-    this.db
-      .prepare(
-        `INSERT INTO agent_publications
-       (id, kind, bot_id, task_id, run_id, attempt_id, text, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        input.id,
-        input.kind,
-        input.botId,
-        input.taskId,
-        input.runId,
-        input.attemptId,
-        input.text,
-        input.now,
+    const artifacts = input.kind === "result" ? (input.artifacts ?? []) : [];
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO agent_publications
+         (id, kind, bot_id, task_id, run_id, attempt_id, text, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.id,
+          input.kind,
+          input.botId,
+          input.taskId,
+          input.runId,
+          input.attemptId,
+          input.text,
+          input.now,
+        );
+      const insert = this.db.prepare(
+        `INSERT INTO delivered_artifacts
+         (id, publication_id, bot_id, task_id, run_id, name, byte_size, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       );
-    return {
-      id: input.id,
-      kind: input.kind,
-      botId: input.botId,
-      taskId: input.taskId,
-      runId: input.runId,
-      attemptId: input.attemptId,
-      text: input.text,
-      createdAt: input.now,
-    };
+      for (const artifact of artifacts) {
+        insert.run(
+          artifact.id,
+          input.id,
+          input.botId,
+          input.taskId,
+          input.runId,
+          artifact.name,
+          artifact.bytes,
+          input.now,
+        );
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return this.publicationRow(input.id) as NonNullable<ReturnType<ThreadStore["publicationRow"]>>;
   }
 
   publication(botId: string, runId: string, id: string) {
@@ -1117,7 +1134,7 @@ export class ThreadStore {
   }
 
   private publicationRow(id: string) {
-    return this.db
+    const row = this.db
       .prepare(
         `SELECT id, kind, bot_id AS botId, task_id AS taskId, run_id AS runId,
             attempt_id AS attemptId, text, created_at AS createdAt
@@ -1135,17 +1152,46 @@ export class ThreadStore {
           createdAt: string;
         }
       | undefined;
+    if (!row) return undefined;
+    if (row.kind !== "result") return row;
+    return {
+      ...row,
+      delegationId: null,
+      artifacts: this.artifactRows(row.id),
+    };
+  }
+
+  private artifactRows(publicationId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, name, byte_size AS bytes
+     FROM delivered_artifacts WHERE publication_id = ? ORDER BY rowid`,
+      )
+      .all(publicationId) as { id: string; name: string; bytes: number }[];
+  }
+
+  artifact(botId: string, runId: string, artifactId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, name, byte_size AS bytes
+     FROM delivered_artifacts WHERE id = ? AND bot_id = ? AND run_id = ?`,
+      )
+      .get(artifactId, botId, runId) as { id: string; name: string; bytes: number } | undefined;
   }
 
   private runPublications(runId: string) {
     return this.db
       .prepare(
-        `SELECT id, kind, attempt_id AS attemptId, text, created_at AS createdAt
+        `SELECT id, kind, bot_id AS botId, task_id AS taskId, run_id AS runId,
+            attempt_id AS attemptId, text, created_at AS createdAt
      FROM agent_publications WHERE run_id = ? ORDER BY rowid`,
       )
       .all(runId) as unknown as {
       id: string;
       kind: "progress" | "result";
+      botId: string;
+      taskId: string;
+      runId: string;
       attemptId: string;
       text: string;
       createdAt: string;
@@ -1201,7 +1247,14 @@ export class ThreadStore {
             .map((row) => publicationPreview(row)),
           selectedResults: this.runPublications(run.id)
             .filter((row) => row.kind === "result")
-            .map((row) => publicationPreview(row)),
+            .map((row) => ({
+              ...publicationPreview(row),
+              botId: row.botId,
+              taskId: row.taskId,
+              runId: row.runId,
+              delegationId: null,
+              artifacts: this.artifactRows(row.id),
+            })),
           inputs: this.inputs(run.id)
             .slice(0, 5)
             .map((input) => ({

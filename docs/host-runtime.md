@@ -494,7 +494,7 @@ and `read_operation` tools use the same correlated directional mailbox requests.
 The Host derives Bot/Task/Run/Attempt scope from the owned execution mailbox and
 its open Attempt, and checks the actual executor incarnation. Payload identity
 fields, privilege grants, Bot administration and cross-Bot administration are
-rejected. Progress and a selected text result keep their request identity:
+rejected. Progress and a selected result keep their request identity:
 repeating that identity, or calling `read_operation` after a timeout, returns the
 stored record and does not publish another copy. A late or cancelled request
 cannot change the Run outcome or make cancelled work active again. Progress and
@@ -505,7 +505,7 @@ its source message and all later messages; anchor reading may include later
 corrections in the same authorized range. Unknown/cross-Bot anchors and stale
 executors cannot widen that scope. Historical text is untrusted reference data,
 not instructions or approval. Outcome anchors use the same original-reading
-boundary; delivered artifacts extend that boundary when available.
+boundary.
 
 ## Local WebSocket interface
 
@@ -693,3 +693,18 @@ idle cache. This keeps retained idle containers at zero, within the maximum of
 four and the five-minute idle lifetime. Complete durable waits also stop their
 executor before releasing capacity. A failed stop retains the reservation and
 reports unconfirmed termination; it is not counted as an idle cached container.
+
+## Delivered artifacts
+
+`publish_result` accepts a summary and optional `files`, an array of up to sixteen
+Bot-workspace-relative paths. The Host rejects absolute, escaping, attachment-mount
+and symbolic-link paths and applies `files.maxBytes` (25 MiB by default) to each
+file. It copies the chosen bytes outside the workspace and commits their metadata
+with the selected result. These results remain separate from the Run outcome.
+
+Thread details include each result's Bot, Task, Run, delegation (currently null),
+and artifact IDs, relative names and byte sizes. The browser shows the summary
+and download links. Authenticated
+`GET /api/bots/:botId/runs/:runId/artifacts/:artifactId` returns the saved bytes as
+an attachment and rejects a different Bot or Run. No Host storage path is exposed.
+Workspace replacement and Host restart do not change a delivered version.

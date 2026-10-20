@@ -285,7 +285,11 @@ it("derives history scope from the running mailbox, rejects widening and stale e
 it("retains complete original evidence across real SDK compaction and reads without changing the ledger", async () => {
   const long = "Original 火星😀 ".repeat(16000);
   const service = await startPiService((request) => {
-    if (JSON.stringify(request.messages[0]?.content).includes("summar"))
+    if (
+      JSON.stringify(request.messages[0]?.content).includes(
+        "You are a context summarization assistant.",
+      )
+    )
       return { text: "Retained original topic: 火星." };
     return { text: long };
   });
