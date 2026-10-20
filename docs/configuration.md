@@ -103,6 +103,10 @@ are approved choices, not a live provider availability check. Keep approval
 entries consistent with any `.env` provider/endpoint overrides. Re-running setup
 may regenerate `host.json`; retain installation additions when doing so.
 
+`files.maxBytes` is an optional per-file transfer limit from 1 byte to 256 MiB.
+Omission uses 25 MiB. Uploads and workspace reads above the limit are rejected.
+The limit does not add format interpretation, preview, or editing.
+
 `admission.activeExecutionLimit` is an optional integer from 1 to 64. Omission
 admits four actual Attempts at once, with at most one per Bot. The limit counts
 executing Attempts, not idle containers. A durable wait or confirmed stop frees

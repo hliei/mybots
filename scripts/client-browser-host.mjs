@@ -16,6 +16,9 @@ configuration.approvedModels = [
   configuration.agent.model,
   { ...configuration.agent.model, id: "deepseek-reasoner" },
 ];
+if (process.env.MYBOTS_MAX_ATTACHMENT_BYTES) {
+  configuration.files = { maxBytes: Number(process.env.MYBOTS_MAX_ATTACHMENT_BYTES) };
+}
 const driver = new MailboxDriver();
 const started = Promise.withResolvers();
 const release = Promise.withResolvers();

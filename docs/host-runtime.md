@@ -75,7 +75,7 @@ the owner Skill panel to import and activate updates. `agent.resources.tools` se
 tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
 Selecting a web tool requires matching `agent.web` configuration. The execution
 harness is Pi; the model backend is specified separately by `model.provider` and
-`model.id`. The central store uses schema version 11 for host routing, Bot configuration,
+`model.id`. The central store uses schema version 13 for host routing, Bot configuration,
 Threads, original messages, Tasks, Runs, Attempts and stable input admissions.
 An older store containing sessions requires fresh runtime records; see the
 [replacement instructions](../README.md#persistence-and-reliability). The central store saves the model
@@ -183,7 +183,13 @@ response is lost or completion races admission.
 
 Internal executor sessions use Run IDs. Directional mailboxes and SDK state live
 at `data/sessions/<bot_id>/<run_id>/`; shared workspace files remain at
-`groups/<folder>/`. One actual Attempt per Bot holds an execution slot from
+`groups/<folder>/`. Task attachments live at
+`data/task-attachments/<bot_id>/<task_id>/`, under the uploaded file name, and are mounted read-only at
+`/workspace/group/.task-attachments` only for Runs of that Task. They are not
+copied into another Task, another Bot, or the model prompt. The owner can save
+one attachment into a relative path in that Bot's workspace; that copy is then
+available to the Bot's other Tasks. The reserved workspace path
+`.task-attachments` is not a shared save destination. A workspace listing returns at most 1000 regular files, and a workspace-save request must stay within 64 KiB. One actual Attempt per Bot holds an execution slot from
 admission until that Attempt ends. Unconfirmed stop keeps the slot. A durable
 wait releases it only after every recorded tool call has a result and no tool is
 still current; an idle container is not execution. Excess runnable work stays in

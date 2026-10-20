@@ -46,6 +46,20 @@ function modelConfiguration(value: unknown): ModelConfiguration {
   };
 }
 
+function fileSettings(value: unknown): { maxBytes: number } {
+  const section = object(value);
+  const maxBytes = section.maxBytes;
+  const ceiling = 256 * 1024 * 1024;
+  if (
+    typeof maxBytes !== "number" ||
+    !Number.isInteger(maxBytes) ||
+    maxBytes < 1 ||
+    maxBytes > ceiling
+  )
+    throw new Error("File limit must be an integer from 1 byte to 256 MiB");
+  return { maxBytes };
+}
+
 function admissionSettings(value: unknown): { activeExecutionLimit: number } {
   const section = object(value);
   const limit = section.activeExecutionLimit;
@@ -117,6 +131,7 @@ export function validateHostConfiguration(value: unknown): HostConfiguration {
     },
     ...(approvedModels ? { approvedModels } : {}),
     ...(source.admission === undefined ? {} : { admission: admissionSettings(source.admission) }),
+    ...(source.files === undefined ? {} : { files: fileSettings(source.files) }),
     destinations,
   };
 }

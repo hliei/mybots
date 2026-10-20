@@ -67,7 +67,7 @@ Run every new or modified test file and iterate until it passes. Use focused
 runs during development, then follow the delivery checks in
 [Development](development.md#validation-and-completion).
 
-Ordinary tests use at most two workers to limit contention among Host processes,
+Ordinary tests use one worker to limit contention among Host processes,
 SDK fixtures, and SQLite operations during local and CI verification.
 
 Run live-service checks only when explicitly requested. Keep credentials out of
@@ -302,6 +302,17 @@ hidden-content removal and relative-link resolution. No embedded Agent fixture
 is retained for these contracts.
 
 ## Local client API and browser
+
+`tests/task-attachments.test.ts` uploads through the authenticated Host API. It checks
+selected-Task bytes across restart, an empty list for another Task, a deliberate
+workspace copy that another Bot does not receive, escaped and symlink paths, and
+rejection above the 25 MiB default or a smaller installation limit.
+`tests/container-driver.test.ts` checks that a Run mounts that Task directory
+read-only and refuses a path outside it. `tests/browser/local-client.spec.ts`
+uploads, downloads, saves, and shows the 25 MiB limit without rendering file
+contents. `tests/browser/task-attachments.spec.ts` checks Task targeting,
+deliberate same-Bot reuse, another Bot's empty workspace, an escaped path, and
+a smaller installation limit.
 
 `tests/local-client.test.ts` exercises HTTP and WebSocket credential/Host/Origin
 checks, idempotent browser pairing and reads after a fresh Host starts over the

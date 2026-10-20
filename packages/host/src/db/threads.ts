@@ -1127,4 +1127,52 @@ export class ThreadStore {
         })),
     };
   }
+
+  requireTask(botId: string, taskId: string): void {
+    const thread = this.thread(botId);
+    const row = this.db
+      .prepare("SELECT id FROM tasks WHERE id = ? AND thread_id = ?")
+      .get(taskId, thread.id);
+    if (!row) throw new ChatRequestError("Task not found.", 404);
+  }
+
+  insertAttachment(input: {
+    id: string;
+    taskId: string;
+    botId: string;
+    filename: string;
+    bytes: number;
+    createdAt: string;
+  }): void {
+    this.requireTask(input.botId, input.taskId);
+    this.db
+      .prepare(
+        `INSERT INTO task_attachments (id, task_id, bot_id, filename, byte_size, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(input.id, input.taskId, input.botId, input.filename, input.bytes, input.createdAt);
+  }
+
+  attachments(
+    botId: string,
+    taskId: string,
+  ): { id: string; filename: string; bytes: number; createdAt: string }[] {
+    this.requireTask(botId, taskId);
+    return this.db
+      .prepare(
+        `SELECT id, filename, byte_size AS bytes, created_at AS createdAt
+         FROM task_attachments WHERE task_id = ? AND bot_id = ? ORDER BY rowid`,
+      )
+      .all(taskId, botId) as { id: string; filename: string; bytes: number; createdAt: string }[];
+  }
+
+  attachment(
+    botId: string,
+    taskId: string,
+    attachmentId: string,
+  ): { id: string; filename: string; bytes: number; createdAt: string } {
+    const row = this.attachments(botId, taskId).find((item) => item.id === attachmentId);
+    if (!row) throw new ChatRequestError("Attachment not found.", 404);
+    return row;
+  }
 }

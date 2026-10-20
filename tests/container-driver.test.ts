@@ -5,6 +5,81 @@ import { expect, test, vi } from "vitest";
 import { provisionSession } from "../packages/host/src/container-runner.ts";
 import { DockerDriver } from "../packages/host/src/drivers/docker-driver.ts";
 
+test("a Run mounts only that Task's attachments read-only inside its workspace", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mybots-driver-attachments-"));
+  try {
+    const material = await provisionSession({
+      root,
+      key: { agentGroupId: "personal", sessionId: "run-1" },
+      folder: "personal",
+      model: {
+        provider: "deepseek",
+        id: "deepseek-chat",
+        baseUrl: "https://api.deepseek.com",
+        contextWindow: 65536,
+        maxTokens: 8192,
+      },
+    });
+    const taskId = "taskone";
+    const attachments = join(material.root, "data", "task-attachments", "personal", taskId);
+    await mkdir(attachments, { recursive: true });
+    await writeFile(join(attachments, "file-1"), "task bytes");
+    material.taskAttachments = attachments;
+    const trustFile = join(root, "data", "gateway-trust", "ca.pem");
+    await mkdir(join(root, "data", "gateway-trust"));
+    await writeFile(trustFile, "public trust fixture");
+    const argsFile = join(root, "docker-args.json");
+    const bin = join(root, "bin");
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "docker"),
+      `#!${process.execPath}
+import { writeFileSync } from "node:fs";
+const args = process.argv.slice(2);
+if (args[0] === "info") console.log("29");
+if (args[0] === "network" && args[1] === "inspect") console.log("true");
+if (args[0] === "run") {
+  writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(args));
+  console.log("mybots-personal-run-1");
+}
+`,
+      { mode: 0o700 },
+    );
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+    const driver = new DockerDriver({
+      gateway: {
+        ensure: async () => ({
+          env: {
+            HTTP_PROXY: "http://x:fixture@proxy:10255",
+            HTTPS_PROXY: "http://x:fixture@proxy:10255",
+            NODE_EXTRA_CA_CERTS: "/run/gateway/ca.pem",
+          },
+          trustFile,
+        }),
+      },
+      image: "mybots-agent",
+      network: "session-network",
+    });
+    const handle = await driver.start(material, new AbortController().signal);
+    const args = JSON.parse(await readFile(argsFile, "utf8")) as string[];
+    const mount = args.find(
+      (arg) => typeof arg === "string" && arg.includes("/workspace/group/.task-attachments"),
+    );
+    expect(mount).toBe(
+      `type=bind,source=${attachments},target=/workspace/group/.task-attachments,readonly`,
+    );
+    expect(args.filter((arg) => arg.includes("task-attachments"))).toEqual([mount]);
+    await handle.stop();
+    material.taskAttachments = join(material.root, "groups", "personal");
+    await expect(driver.start(material, new AbortController().signal)).rejects.toThrow(
+      "Docker session unavailable",
+    );
+  } finally {
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("an unavailable gateway fails before any session runtime is launched", async () => {
   const root = await mkdtemp(join(tmpdir(), "mybots-driver-"));
   try {

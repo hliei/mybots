@@ -107,6 +107,7 @@ publishing does not protect listeners from same-network containers.
 | `data/sessions/<agent_group_id>/<session_id>/` | `/session` | Current session material; runner writes output and Pi state |
 | The session's `inbound.db` | `/session/inbound.db` | Host writes; overlaid read-only for runner |
 | `groups/<folder>/` | `/workspace/group` | Shared writable Agent working materials |
+| `data/task-attachments/<bot_id>/<task_id>/` | `/workspace/group/.task-attachments` | Read-only inputs for Runs of that Task. Omitted when the session is not a Run. Other Tasks do not receive this mount. |
 | `data/sessions/<agent_group_id>/.context/<session_id>.json` | `/run/mybots/context.json` | Immutable host-owned context, read-only |
 | `data/gateway-trust/<digest>.pem` | `/run/gateway/ca.pem` | Public trust certificate, read-only |
 

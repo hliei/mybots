@@ -1,5 +1,5 @@
 import { type ChildProcess, fork } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -119,6 +119,60 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await expect(page.locator("#chat-works article").nth(2)).toContainText("Execution: queued");
     await expect(page.locator("#chat-works article").nth(2)).toContainText("interactive");
     await expect(page.locator("#chat-works article").nth(2)).toContainText("position 1");
+    const attachmentTask = await page
+      .locator("#chat-works article")
+      .nth(2)
+      .getAttribute("data-task-id");
+    const otherTask = await page.locator("#chat-works article").nth(1).getAttribute("data-task-id");
+    await page
+      .getByLabel("Attachment Task", { exact: true })
+      .selectOption(attachmentTask as string);
+    await page.getByLabel("File", { exact: true }).setInputFiles({
+      name: "kept.txt",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.from("kept-bytes"),
+    });
+    await page.getByRole("button", { name: "Upload attachment", exact: true }).click();
+    await expect(page.locator("#attachment-message")).toContainText(
+      "Uploaded kept.txt (10 bytes) to the selected Task.",
+    );
+    await expect(page.locator("#attachment-list")).toContainText("kept.txt · 10 bytes");
+    await expect(page.locator("#attachment-list")).not.toContainText("kept-bytes");
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByRole("link", { name: "Download kept.txt", exact: true }).click(),
+    ]);
+    const downloaded = join(root, "downloaded-kept.txt");
+    await download.saveAs(downloaded);
+    expect(await readFile(downloaded)).toEqual(Buffer.from("kept-bytes"));
+    await page.getByLabel("Attachment Task", { exact: true }).selectOption(otherTask as string);
+    await expect(page.locator("#attachment-list")).toContainText("This Task has no attachments.");
+    await page
+      .getByLabel("Attachment Task", { exact: true })
+      .selectOption(attachmentTask as string);
+    await expect(page.locator("#attachment-list")).toContainText("kept.txt · 10 bytes");
+    await page.getByLabel("Workspace path for kept.txt", { exact: true }).fill("shared/kept.txt");
+    await page.getByRole("button", { name: "Save to Bot workspace", exact: true }).click();
+    await expect(page.locator("#attachment-message")).toContainText(
+      "Saved kept.txt to the Bot workspace at shared/kept.txt.",
+    );
+    await page.getByLabel("Workspace path for kept.txt", { exact: true }).fill("../secret.txt");
+    await page.getByRole("button", { name: "Save to Bot workspace", exact: true }).click();
+    await expect(page.locator("#attachment-message")).toContainText("Workspace path must stay");
+    await page.evaluate(() => {
+      const input = document.querySelector<HTMLInputElement>("#attachment-file");
+      if (!input) return;
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array(25 * 1024 * 1024 + 1)], "big.bin"));
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change"));
+    });
+    await page.getByRole("button", { name: "Upload attachment", exact: true }).click();
+    await expect(page.locator("#attachment-message")).toContainText(
+      "File exceeds the 25 MiB limit.",
+    );
+    await expect(page.locator("#attachment-list")).toContainText("kept.txt · 10 bytes");
+    await expect(page.locator("#attachment-list")).not.toContainText("big.bin");
     await expect(page.locator("#selected-chat")).toContainText("1 of 4 active");
     const executing = await page
       .locator("#chat-works article")
@@ -288,7 +342,14 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await expect(page.locator("#selected-chat")).toContainText("Thread ID:");
     await expect(page.locator("#chat-works")).toContainText("Final: Research first");
     await expect(page.locator("#chat-works article")).toHaveCount(3);
+    await page
+      .getByLabel("Attachment Task", { exact: true })
+      .selectOption(attachmentTask as string);
+    await expect(page.locator("#attachment-list")).toContainText("kept.txt · 10 bytes");
+    await page.getByLabel("Attachment Task", { exact: true }).selectOption(otherTask as string);
+    await expect(page.locator("#attachment-list")).toContainText("This Task has no attachments.");
     await page.getByRole("button", { name: "Select Writer", exact: true }).click();
+    await expect(page.locator("#attachment-list")).not.toContainText("kept.txt");
     await expect(page.locator("#selected-bot")).toContainText("Edited writer role.");
     await expect(page.locator("#selected-bot")).toContainText(`Saved Skills: brief@${revision}`);
     await expect(page.getByLabel("Skill brief", { exact: true })).toHaveValue(revision as string);

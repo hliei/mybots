@@ -16,6 +16,8 @@ export interface SessionMaterial {
   workspace: string;
   contextFile: string;
   skillsDirectory: string;
+  /** Read-only Task inputs for this Run. Absent for sessions that are not a Run. */
+  taskAttachments?: string;
 }
 
 export interface SessionHandle {

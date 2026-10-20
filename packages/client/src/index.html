@@ -104,6 +104,22 @@
             <button id="new-task" type="submit">New task</button>
             <button id="reset-background" type="button">Reset chat background</button>
           </form>
+          <section id="attachments">
+            <h3>Task attachments</h3>
+            <p>An upload belongs to the selected Task and is not given to every Task in this Thread. Save a file into the Bot workspace when other Tasks of this Bot should reuse it. The Host stores and downloads the bytes; it does not interpret, preview, or edit the file format.</p>
+            <form id="attachment-form">
+              <label for="attachment-task">Attachment Task</label>
+              <select id="attachment-task" required></select>
+              <label for="attachment-file">File</label>
+              <input id="attachment-file" type="file" required>
+              <button type="submit">Upload attachment</button>
+            </form>
+            <p id="attachment-message" aria-live="polite"></p>
+            <div id="attachment-list" aria-label="Selected Task attachments"></div>
+            <h3>Bot workspace</h3>
+            <p>These are regular files in this Bot workspace, including a file saved from a Task attachment. Another Bot does not receive them.</p>
+            <ul id="workspace-files"></ul>
+          </section>
           <div id="chat-works" aria-label="Tasks and Runs"></div>
           <section id="run-history" aria-label="Recorded Run evidence"></section>
           <p id="chat-message" aria-live="polite"></p>

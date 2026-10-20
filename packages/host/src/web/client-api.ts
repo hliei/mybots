@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { fileLimitMessage } from "../attachments.ts";
 import { BotRequestError } from "../bots.ts";
 import { ChatRequestError } from "../chat.ts";
 import type { Host } from "../host.ts";
@@ -11,6 +12,7 @@ const ASSETS = new Map([
   ["/main.js", ["main.js", "text/javascript; charset=utf-8"]],
   ["/history.js", ["history.js", "text/javascript; charset=utf-8"]],
   ["/chat.js", ["chat.js", "text/javascript; charset=utf-8"]],
+  ["/attachments.js", ["attachments.js", "text/javascript; charset=utf-8"]],
   ["/skills.js", ["skills.js", "text/javascript; charset=utf-8"]],
   ["/memory.js", ["memory.js", "text/javascript; charset=utf-8"]],
   ["/style.css", ["style.css", "text/css; charset=utf-8"]],
@@ -200,6 +202,121 @@ export async function serveClient(
             error instanceof ChatRequestError
               ? error.message
               : "Thread operation unavailable. Retry with the same requestId.",
+        }),
+      );
+    }
+    return;
+  }
+  const workspaceRoute = /^\/api\/bots\/([^/]+)\/workspace\/files$/.exec(path);
+  if (workspaceRoute && request.method === "GET") {
+    try {
+      const botId = decodeURIComponent(workspaceRoute[1] as string);
+      const filePath = new URL(request.url ?? "/", "http://localhost").searchParams.get("path");
+      if (filePath === null) {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify(await host.listWorkspace(botId)));
+      } else {
+        const result = await host.readWorkspace(botId, filePath);
+        response.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": result.bytes.length,
+        });
+        response.end(result.bytes);
+      }
+    } catch (error) {
+      response.writeHead(error instanceof ChatRequestError ? error.status : 503, {
+        "Content-Type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error: error instanceof ChatRequestError ? error.message : "Workspace file unavailable.",
+        }),
+      );
+    }
+    return;
+  }
+  const attachmentRoute =
+    /^\/api\/bots\/([^/]+)\/tasks\/([^/]+)\/attachments(?:\/([^/]+)(?:\/(workspace))?)?$/.exec(
+      path,
+    );
+  if (attachmentRoute) {
+    try {
+      const botId = decodeURIComponent(attachmentRoute[1] as string);
+      const taskId = decodeURIComponent(attachmentRoute[2] as string);
+      const attachmentId = attachmentRoute[3] ? decodeURIComponent(attachmentRoute[3]) : undefined;
+      const workspace = attachmentRoute[4] === "workspace";
+      if (request.method === "GET" && !attachmentId) {
+        const result = await host.listAttachments(botId, taskId);
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify(result));
+        return;
+      }
+      if (request.method === "GET" && attachmentId && !workspace) {
+        const result = await host.downloadAttachment(botId, taskId, attachmentId);
+        response.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": contentDisposition(result.filename),
+          "Content-Length": result.bytes.length,
+        });
+        response.end(result.bytes);
+        return;
+      }
+      if (request.method === "POST" && !attachmentId) {
+        const header = request.headers["x-filename"];
+        if (typeof header !== "string" || !header)
+          throw new ChatRequestError("A file name is required.");
+        let filename: string;
+        try {
+          filename = decodeURIComponent(header);
+        } catch {
+          throw new ChatRequestError("A file name is required.");
+        }
+        const bytes = await readLimited(request, host.maxFileBytes());
+        const result = await host.uploadAttachment(botId, taskId, filename, bytes);
+        response.writeHead(201, { "Content-Type": "application/json" });
+        response.end(JSON.stringify(result));
+        return;
+      }
+      if (request.method === "POST" && attachmentId && workspace) {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+          size += chunk.length;
+          if (size > 65536) {
+            request.resume();
+            throw new ChatRequestError("Workspace save exceeds 64 KiB.", 413);
+          }
+          chunks.push(chunk);
+        }
+        let input: unknown;
+        try {
+          input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        } catch {
+          throw new ChatRequestError("Workspace save requires valid JSON.");
+        }
+        if (!input || typeof input !== "object" || Array.isArray(input) || !("path" in input))
+          throw new ChatRequestError("Workspace save requires a path.");
+        const result = await host.saveAttachmentToWorkspace(
+          botId,
+          taskId,
+          attachmentId,
+          (input as { path: unknown }).path,
+        );
+        response.writeHead(201, { "Content-Type": "application/json" });
+        response.end(JSON.stringify(result));
+        return;
+      }
+      response.writeHead(405, {
+        Allow: attachmentId ? (workspace ? "POST" : "GET") : "GET, POST",
+      });
+      response.end();
+    } catch (error) {
+      response.writeHead(error instanceof ChatRequestError ? error.status : 503, {
+        "Content-Type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error: error instanceof ChatRequestError ? error.message : "Task attachment unavailable.",
         }),
       );
     }
@@ -425,4 +542,33 @@ export async function serveClient(
     response.writeHead(path === socketPath ? 426 : 404);
   }
   response.end();
+}
+
+function contentDisposition(filename: string): string {
+  const ascii = [...filename]
+    .map((character) => {
+      const code = character.charCodeAt(0);
+      return code >= 32 && code <= 126 && character !== '"' && character !== "\\" ? character : "_";
+    })
+    .join("");
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
+
+async function readLimited(request: IncomingMessage, maxBytes: number): Promise<Buffer> {
+  const declared = request.headers["content-length"];
+  if (declared !== undefined && (!/^\d+$/u.test(declared) || Number(declared) > maxBytes)) {
+    request.resume();
+    throw new ChatRequestError(fileLimitMessage(maxBytes), 413);
+  }
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+    bytes += chunk.length;
+    if (bytes > maxBytes) {
+      request.resume();
+      throw new ChatRequestError(fileLimitMessage(maxBytes), 413);
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
 }
