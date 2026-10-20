@@ -54,9 +54,10 @@ export function history(db: DatabaseSync, scope: HistoryScope, value: unknown) {
   const select =
     "SELECT id, seq, run_id AS runId, role, CAST(content AS BLOB) AS content, created_at AS createdAt FROM thread_messages";
   const selected = scope.selectedMessageIds ?? [];
-  const visibility = selected.length
+  const range = selected.length
     ? `thread_id = ? AND (seq >= ? OR id IN (${selected.map(() => "?").join(", ")}))`
     : "thread_id = ? AND seq >= ?";
+  const visibility = `(${range}) AND run_id IN (SELECT r.id FROM runs r JOIN tasks t ON t.id = r.task_id WHERE t.origin = 'chat')`;
   const args: SQLInputValue[] = [scope.threadId, scope.backgroundBoundary, ...selected];
   let rows: Original[];
   let descending = true;

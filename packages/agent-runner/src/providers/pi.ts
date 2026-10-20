@@ -143,6 +143,7 @@ export class PiProvider implements AgentProvider {
               ? [
                   "search_history",
                   "read_history",
+                  "create_routine",
                   "ask_question",
                   "publish_progress",
                   "publish_result",

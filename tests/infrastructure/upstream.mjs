@@ -50,7 +50,10 @@ createServer({ key: readFileSync("/tls/key.pem"), cert: readFileSync("/tls/cert.
   const inspectMaterials = JSON.stringify(latest?.content).includes("Inspect Bot materials");
   const questionAnswer = JSON.stringify(latest?.content).includes("Owner answer to question container-city");
   const question = JSON.stringify(latest?.content).includes("Ask owner for a city");
-  const reply = questionAnswer
+  const createRoutine = JSON.stringify(latest?.content).includes("Create one-shot archive Routine");
+  const reply = createRoutine
+    ? tools.length ? { text: "Created the independent Routine." } : { tool: "create_routine", arguments: { requestId: "container-routine", text: "Inspect Bot materials", runAt: "2020-01-01T00:00:00Z", timezone: "Asia/Shanghai" } }
+    : questionAnswer
     ? { text: "Continued the original Run for Hangzhou." }
     : question
     ? { tool: "ask_question", arguments: { requestId: "container-city", text: "Which city?" }, text: "Waiting for the owner" }

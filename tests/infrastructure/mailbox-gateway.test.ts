@@ -542,6 +542,39 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
         state: "succeeded",
         outcome: { reply: "Continued the original Run for Hangzhou." },
       });
+      const source = await boundedHost.sendThread(
+        "personal",
+        {
+          requestId: "routine-source",
+          text: "Create one-shot archive Routine",
+        },
+        "new-task",
+      );
+      while (!signal.aborted) {
+        const tasks = (await boundedHost.threadDetail("personal")).tasks;
+        if (
+          tasks[4]?.runs[0]?.state === "succeeded" &&
+          (await boundedDriver.list(signal)).length === 0
+        )
+          break;
+        await setTimeout(100, undefined, { signal });
+      }
+      const occurrence = (await boundedHost.threadDetail("personal")).tasks[4];
+      expect(occurrence).toMatchObject({
+        origin: "routine",
+        runs: [
+          { state: "succeeded", references: [], outcome: { reply: "Shared material visible." } },
+        ],
+      });
+      expect(boundedHost.listRoutines("personal").routines).toEqual([
+        expect.objectContaining({
+          nextOccurrence: null,
+          taskId: occurrence?.id,
+          source: expect.objectContaining({ taskId: source.taskId, runId: source.runId }),
+        }),
+      ]);
+      await boundedHost.reconcile();
+      expect((await boundedHost.threadDetail("personal")).tasks).toHaveLength(5);
     } finally {
       await boundedHost.stop();
     }

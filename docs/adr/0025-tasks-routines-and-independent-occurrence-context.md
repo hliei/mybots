@@ -1,7 +1,7 @@
 # Tasks, Routines, and independent occurrence context
 
 Status: accepted
-Implementation: planned
+Implementation: partial. One-shot Routines create independent occurrence Tasks and Runs. Cron and Routine lifecycle controls remain planned.
 
 A Task represents requested work, whether it originates in the Bot's direct
 Thread, a scheduled occurrence, or a delegation. A Routine is the persistent
