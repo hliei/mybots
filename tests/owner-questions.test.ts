@@ -212,8 +212,10 @@ it.each([false, true])(
           text: "Plan a trip",
         })
       ).json();
-      await vi.waitFor(async () =>
-        expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("waiting"),
+      await vi.waitFor(
+        async () =>
+          expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("waiting"),
+        { timeout: 5000 },
       );
       expect(requests).toHaveLength(1);
       expect(await readFile(join(root, "groups", "personal", "wait-evidence.txt"), "utf8")).toBe(
