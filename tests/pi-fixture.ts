@@ -18,6 +18,7 @@ export type ModelReply =
 /** Real HTTP/SSE boundary; SDK execution and persistence are not substituted. */
 export async function startPiService(
   respond: (request: ModelRequest) => ModelReply | Promise<ModelReply>,
+  options?: { contextWindow?: number },
 ) {
   const requests: ModelRequest[] = [];
   let observeRequest: (() => void) | undefined;
@@ -82,7 +83,7 @@ export async function startPiService(
         reasoning: false,
         input: ["text"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 32768,
+        contextWindow: options?.contextWindow ?? 32768,
         maxTokens: 4096,
       },
     ],
