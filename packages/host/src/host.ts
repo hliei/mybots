@@ -14,6 +14,11 @@ import type {
 } from "@mybots/mailbox";
 import { HostMailbox } from "@mybots/mailbox/node";
 import {
+  ensureDeliveredArtifactDirectory,
+  readDeliveredArtifact,
+  writeDeliveredArtifact,
+} from "./artifacts.ts";
+import {
   attachmentFilename,
   DEFAULT_MAX_FILE_BYTES,
   ensureTaskAttachmentDirectory,
@@ -248,6 +253,7 @@ export class Host {
   private readonly observers = new Set<(event: HostEvent) => void>();
   /** Highest outbound sequence already observed per session; seeded at startup. */
   private readonly observed = new Map<string, number>();
+  private readonly publishing = new Set<string>();
   private polling?: Promise<void>;
   private readonly stopJobs = new Map<string, Promise<void>>();
   private stopping?: Promise<void>;
@@ -768,7 +774,7 @@ export class Host {
           this.syncChat(execution);
           this.enforceBudget(execution);
           this.reconcileDurableWait(execution);
-          this.historyOperations(execution);
+          await this.historyOperations(execution);
           if (!execution.handle && !execution.starting && !execution.replacing)
             await this.reconcileSession(execution);
           // Observe new rows even while an earlier channel delivery remains pending.
@@ -1167,11 +1173,12 @@ export class Host {
     return this.store.threads.detail(botId, this.timestamp());
   }
 
-  private historyOperations(execution: SessionExecution): void {
+  private async historyOperations(execution: SessionExecution): Promise<void> {
     const { mailbox, route } = execution;
     if (route.session.purpose !== "run" || !this.owned(route.session.id)) return;
     for (const request of mailbox.historyRequests()) {
-      if (mailbox.operationResponse(request.id)) continue;
+      if (mailbox.operationResponse(request.id) || this.publishing.has(request.id)) continue;
+      this.publishing.add(request.id);
       try {
         if (
           (!execution.handle && !execution.starting) ||
@@ -1179,11 +1186,16 @@ export class Host {
           request.incarnation === 0
         )
           throw new ChatRequestError("Execution scope is no longer active.", 403);
-        mailbox.respondOperation(request.id, { result: this.scopedOperation(execution, request) });
+        const result = await this.scopedOperation(execution, request);
+        if (!mailbox.operationResponse(request.id))
+          mailbox.respondOperation(request.id, { result });
       } catch (error) {
-        mailbox.respondOperation(request.id, {
-          error: error instanceof ChatRequestError ? error.message : "History unavailable.",
-        });
+        if (!mailbox.operationResponse(request.id))
+          mailbox.respondOperation(request.id, {
+            error: error instanceof ChatRequestError ? error.message : "History unavailable.",
+          });
+      } finally {
+        this.publishing.delete(request.id);
       }
     }
     const snapshot = mailbox.executionSnapshot();
@@ -1201,7 +1213,10 @@ export class Host {
     });
   }
 
-  private scopedOperation(execution: SessionExecution, request: HistoryRequest): unknown {
+  private async scopedOperation(
+    execution: SessionExecution,
+    request: HistoryRequest,
+  ): Promise<unknown> {
     if (!request.input || typeof request.input !== "object" || Array.isArray(request.input))
       throw new ChatRequestError("Invalid history arguments.");
     const input = request.input as Record<string, unknown>;
@@ -1252,12 +1267,14 @@ export class Host {
     return publication ? { state: "recorded" as const, publication } : { state: "absent" as const };
   }
 
-  private publishExecution(
+  private async publishExecution(
     execution: SessionExecution,
     request: HistoryRequest,
     input: Record<string, unknown>,
   ) {
-    if (Object.keys(input).some((key) => !["requestId", "text"].includes(key)))
+    const result = request.operation === "publish_result";
+    const allowed = ["requestId", "text", ...(result ? ["files"] : [])];
+    if (Object.keys(input).some((key) => !allowed.includes(key)))
       throw new ChatRequestError("Unknown history field.");
     const run = this.store.threads.run(execution.route.session.id);
     const attempt = this.store.threads.executingAttempt(run.id);
@@ -1284,16 +1301,93 @@ export class Host {
       Array.from(input.text).length > 2000
     )
       throw new ChatRequestError("Progress and selected results must be 1 to 2000 characters.");
-    return this.store.threads.recordPublication({
-      id: request.id,
-      kind: request.operation === "publish_progress" ? "progress" : "result",
-      botId: execution.route.session.agent_group_id,
-      taskId: run.task_id,
-      runId: run.id,
-      attemptId: attempt.id,
-      text: input.text,
-      now: this.timestamp(),
-    });
+    const botId = execution.route.session.agent_group_id;
+    const prior = this.store.threads.publication(botId, run.id, input.requestId);
+    if (prior) return prior;
+    const selected = result ? await this.snapshotWorkspaceFiles(botId, input.files) : [];
+    const now = this.timestamp();
+    try {
+      const current = this.store.threads.executingAttempt(run.id);
+      if (
+        !this.owned(run.id) ||
+        this.store.threads.run(run.id).state !== "active" ||
+        current?.id !== attempt.id ||
+        current.incarnation !== request.incarnation
+      )
+        throw new ChatRequestError("Execution scope is no longer active.", 403);
+      return this.store.threads.recordPublication({
+        id: request.id,
+        kind: result ? "result" : "progress",
+        botId,
+        taskId: run.task_id,
+        runId: run.id,
+        attemptId: attempt.id,
+        text: input.text,
+        now,
+        artifacts: selected.map((file) => ({ id: file.id, name: file.name, bytes: file.bytes })),
+      });
+    } catch (error) {
+      const recorded = this.store.threads.publication(botId, run.id, input.requestId);
+      if (recorded) return recorded;
+      await this.removeSnapshots(
+        botId,
+        selected.map((file) => file.id),
+      );
+      throw error;
+    }
+  }
+
+  private async snapshotWorkspaceFiles(botId: string, value: unknown) {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.length > 16)
+      throw new ChatRequestError("A selected result accepts at most 16 workspace files.");
+    const selected: { id: string; name: string; bytes: number }[] = [];
+    const names = new Set<string>();
+    const pending: { id: string; name: string; bytes: Buffer }[] = [];
+    for (const entry of value) {
+      if (typeof entry !== "string")
+        throw new ChatRequestError("Selected files must be workspace paths.");
+      const parts = workspaceRelativePath(entry);
+      const name = parts.join("/");
+      if (names.has(name)) throw new ChatRequestError("Select each workspace file once.");
+      names.add(name);
+      pending.push({
+        id: randomUUID(),
+        name,
+        bytes: await readWorkspaceFile(this.workspaceDirectory(botId), parts, this.maxFileBytes()),
+      });
+    }
+    if (pending.length === 0) return selected;
+    const directory = await ensureDeliveredArtifactDirectory(this.root, botId);
+    const written: string[] = [];
+    try {
+      for (const file of pending) {
+        await writeDeliveredArtifact(directory, file.id, file.bytes);
+        written.push(file.id);
+        selected.push({ id: file.id, name: file.name, bytes: file.bytes.length });
+      }
+    } catch (error) {
+      await this.removeSnapshots(botId, written);
+      throw error;
+    }
+    return selected;
+  }
+
+  private async removeSnapshots(botId: string, ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    const directory = await ensureDeliveredArtifactDirectory(this.root, botId);
+    for (const id of ids) await rm(join(directory, id), { force: true });
+  }
+
+  async downloadArtifact(botId: string, runId: string, artifactId: string) {
+    const record = this.store.threads.artifact(botId, runId, artifactId);
+    if (!record) throw new ChatRequestError("Delivered artifact not found.", 404);
+    const directory = await ensureDeliveredArtifactDirectory(this.root, botId);
+    const bytes = await readDeliveredArtifact(directory, record.id);
+    if (bytes.length !== record.bytes)
+      throw new ChatRequestError("Delivered artifact unavailable.", 503);
+    const filename = record.name.split("/").at(-1) as string;
+    return { filename, bytes };
   }
 
   async runHistory(botId: string, runId: string, input: Record<string, unknown>) {

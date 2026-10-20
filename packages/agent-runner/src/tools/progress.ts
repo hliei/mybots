@@ -3,7 +3,7 @@ import type { HistoryOperation } from "@mybots/mailbox";
 import { Type } from "typebox";
 
 export const PROGRESS_INSTRUCTIONS =
-  "publish_progress records owner-visible progress for this Attempt. publish_result records one selected text result. Neither completes the Run, changes its outcome, grants privileges, nor administers a Bot. Do not send Bot, Task, Run, or Attempt identity. After a timeout, call read_operation with the same requestId; do not publish that request again.";
+  "publish_progress records owner-visible progress for this Attempt. publish_result records a selected result summary and optional immutable snapshots of workspace-relative files (up to 16, each within the installation file limit, 25 MiB by default). Neither completes the Run, changes its outcome, grants privileges, nor administers a Bot. Do not send Bot, Task, Run, or Attempt identity. After a timeout, call read_operation with the same requestId; do not publish that request again.";
 
 export function createProgressTools(operation: HistoryOperation) {
   const text = (value: unknown) => ({
@@ -31,11 +31,12 @@ export function createProgressTools(operation: HistoryOperation) {
       name: "publish_result",
       label: "Publish selected result",
       description:
-        "Record one selected text result for the current Attempt. This is not the Run outcome and grants no authority. Reuse requestId after a timeout.",
+        "Record a selected result summary with optional workspace-relative files preserved as immutable downloads for the current Attempt. This is not the Run outcome and grants no authority. Reuse requestId after a timeout.",
       parameters: Type.Object(
         {
           requestId: Type.String({ minLength: 1, maxLength: 128 }),
           text: Type.String({ minLength: 1, maxLength: 2000 }),
+          files: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 16 })),
         },
         { additionalProperties: false },
       ),
