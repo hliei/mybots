@@ -654,6 +654,7 @@ it("upgrades a reset-enabled store without losing selected originals or Run boun
     DROP TABLE admission_queue;
     DROP TABLE admission_scheduler;
     ALTER TABLE runs DROP COLUMN wait_reason;
+    DROP TABLE task_attachments;
     ALTER TABLE runs DROP COLUMN active_ms;
     ALTER TABLE runs DROP COLUMN active_since;
     ALTER TABLE runs DROP COLUMN budget_exhausted_at;
@@ -673,7 +674,7 @@ it("upgrades a reset-enabled store without losing selected originals or Run boun
   });
   const upgraded = new DatabaseSync(join(root, "data", "host.db"));
   try {
-    expect(upgraded.prepare("PRAGMA user_version").get()?.user_version).toBe(14);
+    expect(upgraded.prepare("PRAGMA user_version").get()?.user_version).toBe(15);
     expect(upgraded.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(
       upgraded.prepare("SELECT selected_message_ids FROM runs WHERE id = ?").get(selected.runId),

@@ -75,7 +75,7 @@ the owner Skill panel to import and activate updates. `agent.resources.tools` se
 tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
 Selecting a web tool requires matching `agent.web` configuration. The execution
 harness is Pi; the model backend is specified separately by `model.provider` and
-`model.id`. The central store uses schema version 11 for host routing, Bot configuration,
+`model.id`. The central store uses schema version 13 for host routing, Bot configuration,
 Threads, original messages, Tasks, Runs, Attempts and stable input admissions.
 An older store containing sessions requires fresh runtime records; see the
 [replacement instructions](../README.md#persistence-and-reliability). The central store saves the model
@@ -183,7 +183,13 @@ response is lost or completion races admission.
 
 Internal executor sessions use Run IDs. Directional mailboxes and SDK state live
 at `data/sessions/<bot_id>/<run_id>/`; shared workspace files remain at
-`groups/<folder>/`. One actual Attempt per Bot holds an execution slot from
+`groups/<folder>/`. Task attachments live at
+`data/task-attachments/<bot_id>/<task_id>/`, under the uploaded file name, and are mounted read-only at
+`/workspace/group/.task-attachments` only for Runs of that Task. They are not
+copied into another Task, another Bot, or the model prompt. The owner can save
+one attachment into a relative path in that Bot's workspace; that copy is then
+available to the Bot's other Tasks. The reserved workspace path
+`.task-attachments` is not a shared save destination. A workspace listing returns at most 1000 regular files, and a workspace-save request must stay within 64 KiB. One actual Attempt per Bot holds an execution slot from
 admission until that Attempt ends. Unconfirmed stop keeps the slot. A durable
 wait releases it only after every recorded tool call has a result and no tool is
 still current; an idle container is not execution. Excess runnable work stays in
@@ -635,6 +641,33 @@ messages. The Host selects quoted original Thread references for new Runs; withi
 context and compaction remain SDK-owned. Conversation messages are not copied
 into shared files. Persist working materials
 explicitly when they should be accessible from another session.
+
+## Long-term memory
+
+Each Bot's workspace holds readable Markdown at `memory/index.md`,
+`memory/definition.md`, and `memory/topics/<id>.md`. The Bot maintains those
+files with its ordinary read, write, and edit tools. No separate approval is
+required. Another Bot's workspace is not mounted, so its memory is not supplied.
+
+Execution loads at most 16,000 characters from the index and 16,000 from the
+definition, states the omitted count, and names topic files without copying
+their text. The next turn reads the files again. If they differ from the memory
+last supplied to that Run, the prompt says the current text supersedes older
+recollections. Deleting a file stops that load. The Run ledger and earlier
+transcript stay. This does not guarantee forgetting, and a later save can record
+a fact again.
+
+`GET /api/bots/:botId/memory` returns the files. `PUT` and `DELETE` on
+`/memory/index`, `/memory/definition`, and `/memory/topics/:id` send
+`{ "content": "...", "version": "<sha256>" }`. `version` is the hash from the
+read, or `null` when creating a missing file. A mismatch returns 409 with the
+observed file so the client can reread it. The UI shows that observed text and
+does not overwrite the draft until the owner loads it. These checks do not lock
+the workspace; an Agent write can still land between the read and the save.
+Delayed reads and status refreshes also preserve unsaved editor drafts.
+
+The browser section **Long-term memory** edits and deletes the same files. Its
+wording states that deletion is not history erasure or guaranteed forgetting.
 
 ## Run execution budgets and idle resources
 

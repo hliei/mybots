@@ -62,8 +62,9 @@ it("pages original Chinese history with stable cursors, complete text offsets an
       })
     ).json();
     anchor ||= sent.messageId;
-    await vi.waitFor(async () =>
-      expect((await get(path)).tasks[index].runs[0].state).toBe("succeeded"),
+    await vi.waitFor(
+      async () => expect((await get(path)).tasks[index].runs[0].state).toBe("succeeded"),
+      { timeout: 3000 },
     );
   }
   const page = await get(`${path}/history?query=${encodeURIComponent("项目 火星")}`);

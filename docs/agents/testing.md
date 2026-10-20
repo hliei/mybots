@@ -67,7 +67,7 @@ Run every new or modified test file and iterate until it passes. Use focused
 runs during development, then follow the delivery checks in
 [Development](development.md#validation-and-completion).
 
-Ordinary tests use at most two workers to limit contention among Host processes,
+Ordinary tests use one worker to limit contention among Host processes,
 SDK fixtures, and SQLite operations during local and CI verification.
 
 Run live-service checks only when explicitly requested. Keep credentials out of
@@ -247,6 +247,16 @@ instructions, missing resources, separate conversations reading shared materials
 automatic compaction and exact summary reopening. An explicit reset persists a
 fresh SDK conversation without a model request and preserves previous logs.
 
+`tests/bot-memory.test.ts` edits index and topic memory through public HTTP. It
+checks per-Bot isolation, a stale save that returns the observed file, refusal
+to follow a symlink outside the workspace, deletion that stops loading, and the
+same files after a new Host starts. `tests/pi-memory.test.ts` uses the real SDK
+and a controlled model to check ordinary write-tool maintenance, the 16,000
+character index and definition limit, omission of topic bodies and other Bots'
+files, an in-flight request that keeps its original memory, owner corrections on
+the next opening, compaction plus same-Run reopening, and deletion that leaves
+the SDK ledger in place.
+
 `tests/host-resources.test.ts` connects the public Host API to the production
 mailbox loop and real Pi adapter through an offline driver. It checks selected
 resources, shared instructions and files, tool execution, and correlated replies.
@@ -293,6 +303,17 @@ is retained for these contracts.
 
 ## Local client API and browser
 
+`tests/task-attachments.test.ts` uploads through the authenticated Host API. It checks
+selected-Task bytes across restart, an empty list for another Task, a deliberate
+workspace copy that another Bot does not receive, escaped and symlink paths, and
+rejection above the 25 MiB default or a smaller installation limit.
+`tests/container-driver.test.ts` checks that a Run mounts that Task directory
+read-only and refuses a path outside it. `tests/browser/local-client.spec.ts`
+uploads, downloads, saves, and shows the 25 MiB limit without rendering file
+contents. `tests/browser/task-attachments.spec.ts` checks Task targeting,
+deliberate same-Bot reuse, another Bot's empty workspace, an escaped path, and
+a smaller installation limit.
+
 `tests/local-client.test.ts` exercises HTTP and WebSocket credential/Host/Origin
 checks, idempotent browser pairing and reads after a fresh Host starts over the
 same state. These tests use real SQLite and mailboxes with the existing controlled
@@ -305,7 +326,8 @@ browser connection on reload, and status recovery after Host restart. It asserts
 rendered content and owner actions rather than pixel snapshots. It also selects
 a Bot's direct Thread, creates independent Tasks, targets additions to active and
 queued Tasks, resets chat background while a Run continues, selects an earlier
-message into the next Run, checks cross-Bot progress, and recovers a dropped message response
+message into the next Run, checks cross-Bot progress, edits long-term memory with a stale-save conflict and
+deletion, and recovers a dropped message response
 and saved work after reload and Host restart. Browser checks remain offline and
 do not establish actual-container or actual-service evidence.
 

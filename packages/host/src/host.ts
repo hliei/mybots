@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout } from "node:timers/promises";
 import type {
@@ -13,6 +13,18 @@ import type {
   WebConfiguration,
 } from "@mybots/mailbox";
 import { HostMailbox } from "@mybots/mailbox/node";
+import {
+  attachmentFilename,
+  DEFAULT_MAX_FILE_BYTES,
+  ensureTaskAttachmentDirectory,
+  fileLimitMessage,
+  listWorkspaceFiles,
+  readTaskAttachment,
+  readWorkspaceFile,
+  saveInsideWorkspace,
+  workspaceRelativePath,
+  writeTaskAttachment,
+} from "./attachments.ts";
 import { BotRequestError, parseBotCreate, parseBotSettings, publicModel } from "./bots.ts";
 import { ChatRequestError, chatInput } from "./chat.ts";
 import { validateHostConfiguration } from "./config/host.ts";
@@ -26,6 +38,7 @@ import type {
   SessionObservation,
 } from "./drivers/types.ts";
 import { observesSessions } from "./drivers/types.ts";
+import { BotMemory, parseMemoryDelete, parseMemorySave } from "./memory.ts";
 import {
   decideStallAction,
   type RecoveryOutcome,
@@ -99,6 +112,8 @@ export interface HostConfiguration {
   approvedModels?: ModelConfiguration[];
   /** Bounds actual Attempt execution. Omitted means four active Attempts. */
   admission?: { activeExecutionLimit: number };
+  /** Per-file transfer limit. Omitted means 25 MiB. */
+  files?: { maxBytes: number };
   destinations: { id: string; channelType: string; platformId: string; instance: string }[];
 }
 
@@ -383,15 +398,24 @@ export class Host {
           route.session.purpose === "run"
             ? this.store.threads.context(route.session.id)
             : undefined,
-      }).then((material) => ({
-        route,
-        material,
-        mailbox: new HostMailbox(material.directory),
-        incarnation: 0,
-        startedAtMs: 0,
-        superseded: new Set<SessionHandle>(),
-        cleanups: new Set<Promise<void>>(),
-      }));
+      }).then(async (material) => {
+        if (route.session.purpose === "run") {
+          material.taskAttachments = await ensureTaskAttachmentDirectory(
+            this.root,
+            route.session.agent_group_id,
+            this.store.threads.run(route.session.id).task_id,
+          );
+        }
+        return {
+          route,
+          material,
+          mailbox: new HostMailbox(material.directory),
+          incarnation: 0,
+          startedAtMs: 0,
+          superseded: new Set<SessionHandle>(),
+          cleanups: new Set<Promise<void>>(),
+        };
+      });
       this.prepared.set(route.session.id, pending);
       void pending.then(
         (execution) => {
@@ -959,6 +983,53 @@ export class Host {
     return new LocalSkills(this.root).list(botId);
   }
 
+  private async memoryWorkspace(botId: string): Promise<string> {
+    const bot = this.managedBots().find((item) => item.id === botId);
+    if (!bot) throw new BotRequestError("Bot not found.", 404);
+    if (!/^groups\/[^/]+$/.test(bot.workspace))
+      throw new BotRequestError("Bot workspace is unavailable.", 503);
+    const groups = join(this.root, "groups");
+    await mkdir(groups, { recursive: true });
+    if ((await lstat(groups)).isSymbolicLink())
+      throw new BotRequestError("Bot workspaces must use real directories.", 503);
+    const workspace = join(this.root, bot.workspace);
+    await mkdir(workspace, { recursive: true });
+    const realGroups = await realpath(groups);
+    const realWorkspace = await realpath(workspace);
+    if (realWorkspace !== workspace || !realWorkspace.startsWith(`${realGroups}${sep}`))
+      throw new BotRequestError("Bot workspace is unavailable.", 503);
+    return realWorkspace;
+  }
+
+  async readMemory(botId: string) {
+    return new BotMemory(await this.memoryWorkspace(botId)).read();
+  }
+
+  async saveMemory(
+    botId: string,
+    kind: "index" | "definition" | "topic",
+    value: unknown,
+    topicId?: string,
+  ) {
+    const input = parseMemorySave(value);
+    return new BotMemory(await this.memoryWorkspace(botId)).save(
+      kind,
+      input.content,
+      input.version,
+      topicId,
+    );
+  }
+
+  async deleteMemory(
+    botId: string,
+    kind: "index" | "definition" | "topic",
+    value: unknown,
+    topicId?: string,
+  ) {
+    const input = parseMemoryDelete(value);
+    return new BotMemory(await this.memoryWorkspace(botId)).delete(kind, input.version, topicId);
+  }
+
   importSkill(botId: string, value: unknown) {
     this.localSkills(botId);
     return new LocalSkills(this.root).import(botId, value);
@@ -1000,6 +1071,91 @@ export class Host {
 
   sessions(): SavedSession[] {
     return this.store.sessions();
+  }
+
+  maxFileBytes(): number {
+    return this.configuration.files?.maxBytes ?? DEFAULT_MAX_FILE_BYTES;
+  }
+
+  async listAttachments(botId: string, taskId: string) {
+    const attachments = this.store.threads.attachments(botId, taskId);
+    return { attachments, maxBytes: this.maxFileBytes() };
+  }
+
+  async uploadAttachment(botId: string, taskId: string, filename: string, bytes: Buffer) {
+    const name = attachmentFilename(filename);
+    if (bytes.length === 0) throw new ChatRequestError("Choose a file to upload.");
+    if (bytes.length > this.maxFileBytes())
+      throw new ChatRequestError(fileLimitMessage(this.maxFileBytes()), 413);
+    this.store.threads.requireTask(botId, taskId);
+    const id = randomUUID();
+    const directory = await ensureTaskAttachmentDirectory(this.root, botId, taskId);
+    await writeTaskAttachment(directory, name, bytes);
+    const createdAt = this.timestamp();
+    try {
+      this.store.threads.insertAttachment({
+        id,
+        taskId,
+        botId,
+        filename: name,
+        bytes: bytes.length,
+        createdAt,
+      });
+    } catch (error) {
+      await rm(join(directory, name), { force: true });
+      if (error instanceof Error && error.message.includes("UNIQUE"))
+        throw new ChatRequestError("This Task already has an attachment with that name.", 409);
+      throw error;
+    }
+    return { id, filename: name, bytes: bytes.length, createdAt };
+  }
+
+  async downloadAttachment(botId: string, taskId: string, attachmentId: string) {
+    const record = this.store.threads.attachment(botId, taskId, attachmentId);
+    const directory = await ensureTaskAttachmentDirectory(this.root, botId, taskId);
+    const bytes = await readTaskAttachment(directory, record.filename);
+    if (bytes.length > this.maxFileBytes())
+      throw new ChatRequestError(fileLimitMessage(this.maxFileBytes()), 413);
+    return { filename: record.filename, bytes };
+  }
+
+  async saveAttachmentToWorkspace(
+    botId: string,
+    taskId: string,
+    attachmentId: string,
+    path: unknown,
+  ) {
+    const record = this.store.threads.attachment(botId, taskId, attachmentId);
+    const parts = workspaceRelativePath(path);
+    const directory = await ensureTaskAttachmentDirectory(this.root, botId, taskId);
+    const bytes = await readTaskAttachment(directory, record.filename);
+    if (bytes.length > this.maxFileBytes())
+      throw new ChatRequestError(fileLimitMessage(this.maxFileBytes()), 413);
+    const folder = this.store.managedBots().find((bot) => bot.id === botId)?.workspace;
+    if (!folder) throw new ChatRequestError("Bot not found.", 404);
+    await saveInsideWorkspace(join(this.root, folder), parts, bytes);
+    return { path: parts.join("/"), bytes: bytes.length };
+  }
+
+  async listWorkspace(botId: string) {
+    return { files: await listWorkspaceFiles(this.workspaceDirectory(botId)) };
+  }
+
+  async readWorkspace(botId: string, path: unknown) {
+    const parts = workspaceRelativePath(path);
+    const bytes = await readWorkspaceFile(
+      this.workspaceDirectory(botId),
+      parts,
+      this.maxFileBytes(),
+    );
+    return { bytes };
+  }
+
+  private workspaceDirectory(botId: string): string {
+    this.store.threads.thread(botId);
+    const folder = this.store.managedBots().find((bot) => bot.id === botId)?.workspace;
+    if (!folder) throw new ChatRequestError("Bot not found.", 404);
+    return join(this.root, folder);
   }
 
   async threadDetail(botId: string) {

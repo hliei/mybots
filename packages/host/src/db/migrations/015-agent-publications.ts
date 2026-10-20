@@ -11,6 +11,6 @@ CREATE TABLE agent_publications (
  created_at TEXT NOT NULL
 );
 CREATE INDEX agent_publications_run ON agent_publications(run_id);
-PRAGMA user_version = 14;
+PRAGMA user_version = 15;
 COMMIT;
 `;
