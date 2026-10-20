@@ -417,7 +417,8 @@ upstreams and do not establish actual-service acceptance.
 mailboxes with a controlled Host clock/executor. It verifies due/overdue restart,
 atomic one-shot admission, source-cancellation independence, failed/cancelled
 outcomes, acknowledged uncertainty without replay, identity rejection, explicit
-selected inputs, queued/active Task additions and chat isolation. The real Pi
+selected inputs, paginated rereading of selected prior occurrence originals,
+queued/active Task additions and chat isolation. The real Pi
 case creates and looks up a Routine with actual tools, starts a fresh occurrence
 ledger and durably records steering through the production polling loop.
 `tests/browser/routines.spec.ts` exercises creation, saved schedule, reload,

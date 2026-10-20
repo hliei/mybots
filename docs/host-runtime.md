@@ -776,7 +776,9 @@ global limit, cumulative active budget and confirmed-stop rules. Its fresh
 Run-local SDK ledger receives Bot identity, workspace/current Memory and explicit
 selected inputs, without implicit direct-chat or previous-occurrence context.
 Occurrence bodies stay in Task/Run evidence; the Thread presents linked work
-summaries separately from chat originals. Ordinary Thread input selects chat
+summaries separately from chat originals. Explicitly selected earlier occurrence
+originals remain accessible to that Run's history tools, including paginated
+reading, while default Thread history excludes them. Ordinary Thread input selects chat
 work; explicit Task additions target the occurrence through the same durable
 queued/active/waiting input path and never edit the Routine. Known failures are
 retained, and acknowledged unknown effects are held for inspection rather than

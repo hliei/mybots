@@ -446,3 +446,56 @@ it("retains only explicitly selected inputs in distinct occurrence contexts", as
   ]);
   expect(tasks[2].runs[0].references).toEqual([]);
 });
+
+it("lets a Run reread an explicitly selected Routine result without exposing it in default Thread history", async () => {
+  let selected = "";
+  const driver = new MailboxDriver();
+  driver.respond = async (input, material) => {
+    if (input.content !== "Read selected result")
+      return `Earlier Routine result: ${"detail ".repeat(400)}`;
+    const mailbox = new RunnerMailbox(material.directory);
+    mailbox.requestHistory({
+      id: "selected-original",
+      operation: "read_history",
+      input: { messageId: selected, textOffset: 2000 },
+      incarnation: mailbox.executionIncarnation(),
+    });
+    const result = await vi.waitFor(() => {
+      const response = mailbox.historyResponse("selected-original");
+      expect(response).toBeDefined();
+      return response as {
+        error?: string;
+        result?: { messages: { id: string; textOffset: number; text: string }[] };
+      };
+    });
+    if (result.error) return `History lookup failed: ${result.error}`;
+    expect(result.result?.messages).toEqual([
+      expect.objectContaining({
+        id: selected,
+        textOffset: 2000,
+        text: expect.stringContaining("detail"),
+      }),
+    ]);
+    return "Recovered selected original";
+  };
+  await start(driver);
+  await post("routines", { ...definition, runAt: "2026-10-20T00:00:00Z" });
+  await vi.waitFor(async () =>
+    expect((await get("thread")).tasks[0].runs[0].state).toBe("succeeded"),
+  );
+  selected = (await get("thread")).tasks[0].runs[0].inputs[0].outcome.resultId;
+  expect(typeof selected).toBe("string");
+  expect((await get("thread/history")).messages).toEqual([]);
+  await post("routines", {
+    ...definition,
+    requestId: "read-selected",
+    text: "Read selected result",
+    runAt: "2026-10-20T00:00:00Z",
+    selectedMessageIds: [selected],
+  });
+  await vi.waitFor(async () =>
+    expect((await get("thread")).tasks[1].runs[0].state).toBe("succeeded"),
+  );
+  expect((await get("thread")).tasks[1].runs[0].outcome.reply).toBe("Recovered selected original");
+  expect((await get("thread/history")).messages).toEqual([]);
+});
