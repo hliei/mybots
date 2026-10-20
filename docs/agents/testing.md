@@ -67,6 +67,9 @@ Run every new or modified test file and iterate until it passes. Use focused
 runs during development, then follow the delivery checks in
 [Development](development.md#validation-and-completion).
 
+Ordinary tests use at most two workers to limit contention among Host processes,
+SDK fixtures, and SQLite operations during local and CI verification.
+
 Run live-service checks only when explicitly requested. Keep credentials out of
 fixtures and output, and report live checks separately from ordinary validation.
 An offline suite passing does not establish that a real provider or platform
@@ -247,7 +250,8 @@ fresh SDK conversation without a model request and preserves previous logs.
 `tests/host-resources.test.ts` connects the public Host API to the production
 mailbox loop and real Pi adapter through an offline driver. It checks selected
 resources, shared instructions and files, tool execution, and correlated replies.
-The Host rejects owner reset until prospective reset is implemented. This driver
+A separate case captures a chat background boundary without starting a Run.
+This driver
 bypasses Docker and gateway transport; it establishes neither mount isolation nor
 live-provider compatibility. `tests/host.test.ts` also verifies selected resources
 and web configuration persist into each Run's immutable runner context after Host
@@ -300,7 +304,8 @@ rejected/successful pairing, processing and acknowledged input counts, retained
 browser connection on reload, and status recovery after Host restart. It asserts
 rendered content and owner actions rather than pixel snapshots. It also selects
 a Bot's direct Thread, creates independent Tasks, targets additions to active and
-queued Tasks, checks cross-Bot progress, and recovers a dropped message response
+queued Tasks, resets chat background while a Run continues, selects an earlier
+message into the next Run, checks cross-Bot progress, and recovers a dropped message response
 and saved work after reload and Host restart. Browser checks remain offline and
 do not establish actual-container or actual-service evidence.
 
@@ -309,6 +314,12 @@ public HTTP. It checks saved and effective versions across restart, the finite
 pre-save steering cutoff, same-Run application after that cutoff, real SDK
 reopening with the saved instructions and tools, and a visible incompatible
 continuation that keeps the Run ledger and original history.
+
+`tests/chat-background.test.ts` resets a Thread through public HTTP while a Run
+is active and another is queued. Later Runs and real history-tool calls stay
+inside the boundary captured at admission; the owner can still read older
+originals and can select them into a new Run. Restart keeps the boundary.
+Workspace files remain.
 
 `tests/thread-execution.test.ts` exercises one-Thread operations through public
 HTTP with real Host/SQLite/mailboxes. It covers stable request replay/conflicts,

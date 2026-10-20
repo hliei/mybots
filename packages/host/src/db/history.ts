@@ -13,6 +13,7 @@ export interface HistoryScope {
   threadId: string;
   backgroundBoundary: number;
   searchBeforeSeq?: number;
+  selectedMessageIds?: string[];
 }
 function integer(value: unknown, fallback: number): number {
   if (value === undefined) return fallback;
@@ -52,8 +53,11 @@ export function history(db: DatabaseSync, scope: HistoryScope, value: unknown) {
   const terms = searching ? query.normalize("NFKC").toLowerCase().trim().split(/\s+/u) : [];
   const select =
     "SELECT id, seq, run_id AS runId, role, CAST(content AS BLOB) AS content, created_at AS createdAt FROM thread_messages";
-  const visibility = "thread_id = ? AND seq >= ?";
-  const args: SQLInputValue[] = [scope.threadId, scope.backgroundBoundary];
+  const selected = scope.selectedMessageIds ?? [];
+  const visibility = selected.length
+    ? `thread_id = ? AND (seq >= ? OR id IN (${selected.map(() => "?").join(", ")}))`
+    : "thread_id = ? AND seq >= ?";
+  const args: SQLInputValue[] = [scope.threadId, scope.backgroundBoundary, ...selected];
   let rows: Original[];
   let descending = true;
   if (input.messageId !== undefined) {

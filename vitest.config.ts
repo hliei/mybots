@@ -8,6 +8,7 @@ export default defineConfig({
     },
   },
   test: {
+    maxWorkers: 2,
     env: { NODE_OPTIONS: "--conditions=mybots-source" },
     environment: "node",
     globals: false,

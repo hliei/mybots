@@ -132,11 +132,18 @@ export class CliChannel {
                 previous.setTimeout(1000, () => previous.destroy());
               }
             }
-            await options.host.accept({
+            const admitted = await options.host.accept({
               destinationId: options.destinationId,
               userId: options.owner,
               text: payload.text,
             });
+            if (payload.text.trim() === "/reset" && admitted.backgroundBoundary !== undefined) {
+              socket.write(
+                `${JSON.stringify({
+                  text: `Chat background reset. Later conversational Runs start at boundary ${admitted.backgroundBoundary}. Existing Runs are unchanged.`,
+                })}\n`,
+              );
+            }
           } catch (error) {
             if (!socket.destroyed)
               socket.write(

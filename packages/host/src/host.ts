@@ -349,7 +349,7 @@ export class Host {
     userId: string;
     text: string;
     requestId?: string;
-  }): Promise<{ sessionId: string; messageId: string }> {
+  }): Promise<{ sessionId: string; messageId: string; backgroundBoundary?: number }> {
     if (this.stopped) throw new Error("Host is stopped");
     if (input.text.trim() === "/reset") return this.reset(input);
     const botId = this.store.ownerDestination(input.destinationId, input.userId);
@@ -383,12 +383,15 @@ export class Host {
     return { sessionId: admitted.runId, messageId: admitted.messageId };
   }
 
-  async reset(input: {
-    destinationId: string;
-    userId: string;
-  }): Promise<{ sessionId: string; messageId: string }> {
-    this.store.ownerDestination(input.destinationId, input.userId);
-    throw new ChatRequestError("Chat background reset is not available in this version.", 409);
+  async reset(input: { destinationId: string; userId: string }): Promise<{
+    sessionId: string;
+    messageId: string;
+    backgroundBoundary: number;
+  }> {
+    const botId = this.store.ownerDestination(input.destinationId, input.userId);
+    if (this.stopped) throw new Error("Host is stopped");
+    const admitted = this.store.threads.reset(botId, randomUUID());
+    return { sessionId: "", messageId: "", backgroundBoundary: admitted.backgroundBoundary };
   }
 
   /** Adopt a container the runtime already reports as running for this session. */
@@ -1073,6 +1076,13 @@ export class Host {
     return this.store.threads.history(botId, input);
   }
 
+  async resetThread(botId: string, value: unknown) {
+    const input = chatInput(value, []);
+    await this.threadDetail(botId);
+    if (this.stopped) throw new Error("Host is stopped");
+    return this.store.threads.reset(botId, input.requestId as string);
+  }
+
   async sendThread(
     botId: string,
     value: unknown,
@@ -1089,6 +1099,7 @@ export class Host {
         text: input.text as string,
         newTask: mode === "new-task",
         ...(taskId ? { taskId } : {}),
+        ...(input.selectedMessageIds ? { selectedMessageIds: input.selectedMessageIds } : {}),
       },
       this.timestamp(),
     );

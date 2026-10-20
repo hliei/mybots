@@ -194,6 +194,7 @@ after the save stays on the same Run and runs on the next Attempt, which
 replaces immutable context with the saved version and reopens that Run ledger.
 
 Pi owns Run-local automatic compaction, summaries and reopening. The Host selects
-bounded original Thread references for each new Run. Legacy `/reset` is rejected;
-prospective Thread background reset is delivered separately without replacing
-existing Run ledgers.
+bounded original Thread references for each new Run. `/reset` and the Thread
+reset operation capture a new chat background boundary for later conversational
+Runs. They do not replace existing Run ledgers. Earlier messages enter that
+background only when the owner selects them.
