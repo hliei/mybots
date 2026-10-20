@@ -1,7 +1,7 @@
 # User questions and controlled Host action approvals
 
 Status: accepted
-Implementation: partial. Persistent user questions and same-Run continuation are implemented; controlled action approvals remain planned.
+Implementation: partial. Persistent user questions, exact delegation action approvals, and same-Run continuation are implemented. Approval decisions and child admission are distinct durable states; child admission and executed approval evidence commit together.
 
 The current delivery includes persistent user questions and approvals for
 explicitly controlled Host operations. A user question collects information or

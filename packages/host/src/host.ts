@@ -1472,10 +1472,8 @@ export class Host {
     this.store.threads.thread(sourceBotId);
     if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
     const input = chatInput(value, ["mode"]);
-    if (input.mode === "ask-each-time")
-      throw new ChatRequestError("Ask-each-time collaboration is not available.", 409);
-    if (input.mode !== "deny" && input.mode !== "allow")
-      throw new ChatRequestError("Collaboration mode must be deny or allow.");
+    if (input.mode !== "deny" && input.mode !== "allow" && input.mode !== "ask-each-time")
+      throw new ChatRequestError("Collaboration mode must be deny, ask-each-time or allow.");
     return this.store.threads.setCollaboration(
       sourceBotId,
       targetBotId,
@@ -1490,7 +1488,11 @@ export class Host {
     request: HistoryRequest,
     input: Record<string, unknown>,
   ) {
-    if (Object.keys(input).some((key) => !["requestId", "targetBotId", "text"].includes(key)))
+    if (
+      Object.keys(input).some(
+        (key) => !["requestId", "targetBotId", "text", "deadline"].includes(key),
+      )
+    )
       throw new ChatRequestError("Unknown delegation field.");
     const run = this.store.threads.run(execution.route.session.id);
     const attempt = this.store.threads.executingAttempt(run.id);
@@ -1510,6 +1512,11 @@ export class Host {
       Array.from(input.text).length > 32000
     )
       throw new ChatRequestError("Selected delegation text must be 1 to 32000 characters.");
+    if (
+      input.deadline !== undefined &&
+      (typeof input.deadline !== "string" || !Number.isFinite(Date.parse(input.deadline)))
+    )
+      throw new ChatRequestError("Delegation deadline must be an explicit timestamp.");
     const recorded = this.store.threads.delegate({
       requestId: input.requestId,
       sourceBotId: execution.route.session.agent_group_id,
@@ -1518,10 +1525,50 @@ export class Host {
       parentRunId: run.id,
       parentAttemptId: attempt.id,
       text: input.text,
+      deadline: typeof input.deadline === "string" ? new Date(input.deadline).toISOString() : null,
       now: this.timestamp(),
     });
     if (recorded?.state === "pending") this.schedule();
     return recorded;
+  }
+
+  async decideApproval(botId: string, runId: string, approvalId: string, value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new ChatRequestError("An approval decision requires a JSON object.");
+    if (
+      Object.keys(value).some(
+        (key) =>
+          !["requestId", "decision", "operation", "targetBotId", "text", "deadline"].includes(key),
+      )
+    )
+      throw new ChatRequestError("Unsupported approval decision field.");
+    const { deadline, text, ...fields } = value as Record<string, unknown>;
+    if (
+      deadline !== null &&
+      (typeof deadline !== "string" || !Number.isFinite(Date.parse(deadline)))
+    )
+      throw new ChatRequestError(
+        "The exact approval deadline is required, including null for indefinite waiting.",
+      );
+    if (typeof text !== "string" || !text.trim() || Array.from(text).length > 32000)
+      throw new ChatRequestError("Selected delegation text must be 1 to 32000 characters.");
+    const input = chatInput(fields, ["decision", "operation", "targetBotId"]);
+    if (input.decision !== "approve" && input.decision !== "deny")
+      throw new ChatRequestError("Decision must be approve or deny.");
+    if (input.operation !== "delegate") throw new ChatRequestError("Unknown controlled operation.");
+    await this.threadDetail(botId);
+    const result = this.store.threads.decideApproval(
+      botId,
+      runId,
+      approvalId,
+      input.requestId,
+      input.decision,
+      { operation: "delegate", targetBotId: input.targetBotId, text, deadline },
+      this.timestamp(),
+    );
+    // Execution is reconciled separately after the complete tool batch ends its Attempt.
+    this.schedule();
+    return result;
   }
 
   async answerQuestion(botId: string, runId: string, questionId: string, value: unknown) {
@@ -2039,6 +2086,7 @@ export class Host {
     if (route.session.purpose !== "run") return;
     const id = route.session.id;
     this.store.threads.expireQuestions(this.timestamp());
+    this.store.threads.expireApprovals(this.timestamp());
     const inputs = mailbox.inputs();
     this.store.threads.reconcile(
       id,
@@ -2237,6 +2285,8 @@ export class Host {
     const id = execution.route.session.id;
     if (execution.starting || execution.replacing || execution.cutover) return;
     this.store.threads.expireQuestions(this.timestamp());
+    this.store.threads.expireApprovals(this.timestamp());
+    this.store.threads.executeApprovals(id, this.timestamp());
     const state = this.store.threads.run(id).state;
     const questions = this.store.threads.questions(id);
     const delegations = this.store.threads

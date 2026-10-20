@@ -139,10 +139,11 @@ function prefix() {
 async function originals(next = params): Promise<void> {
   const selected = botId;
   const current = ++revision;
+  // Keep refreshes on the requested page while its response is in flight.
+  params = next;
   try {
     const page = await get(`${prefix()}/thread/history?${new URLSearchParams(next)}`, isPage);
     if (botId !== selected || current !== revision) return;
-    params = next;
     const container = node("thread-messages");
     container.replaceChildren(
       paragraph(

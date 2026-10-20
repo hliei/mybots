@@ -106,13 +106,14 @@
           </form>
           <section id="collaboration">
             <h3>Delegation</h3>
-            <p>Directed collaboration defaults to deny. Allow lets this Bot delegate selected text to the named Bot. This Bot cannot grant itself, and the reverse direction needs its own permission. Ask-each-time approval is not available here.</p>
+            <p>Directed collaboration defaults to deny. Allow lets this Bot delegate selected text to the named Bot. This Bot cannot grant itself, and the reverse direction needs its own permission. Ask each time requires a local decision for the exact target and inputs before creating child work.</p>
             <form id="collaboration-form">
               <label for="collaboration-target">Target Bot</label>
               <select id="collaboration-target" required></select>
               <label for="collaboration-mode">Permission</label>
               <select id="collaboration-mode">
                 <option value="deny">Deny</option>
+                <option value="ask-each-time">Ask each time</option>
                 <option value="allow">Allow</option>
               </select>
               <button type="submit">Save delegation permission</button>

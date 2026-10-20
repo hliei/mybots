@@ -7,13 +7,13 @@ const retry = document.getElementById("collaboration-retry") as HTMLButtonElemen
 interface Peer {
   targetBotId: string;
   name: string;
-  mode: "deny" | "allow";
+  mode: "deny" | "ask-each-time" | "allow";
 }
 interface Pending {
   botId: string;
   requestId: string;
   targetBotId: string;
-  mode: "deny" | "allow";
+  mode: "deny" | "ask-each-time" | "allow";
 }
 
 let botId: string | undefined;
@@ -98,11 +98,12 @@ form.addEventListener("submit", (event) => {
     botId,
     requestId: crypto.randomUUID(),
     targetBotId: target.value,
-    mode: mode.value === "allow" ? "allow" : "deny",
+    mode:
+      mode.value === "ask-each-time" ? "ask-each-time" : mode.value === "allow" ? "allow" : "deny",
   });
 });
 target.addEventListener("change", () => {
-  const match = /\b(deny|allow)$/.exec(target.selectedOptions[0]?.textContent ?? "");
+  const match = /\b(deny|ask-each-time|allow)$/.exec(target.selectedOptions[0]?.textContent ?? "");
   if (match?.[1] && !pending) mode.value = match[1];
 });
 retry.addEventListener("click", () => {

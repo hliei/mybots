@@ -124,20 +124,29 @@ export async function serveClient(
     }
     return;
   }
+  const approvalDecision =
+    /^\/api\/bots\/([^/]+)\/runs\/([^/]+)\/approvals\/([^/]+)\/decision$/.exec(path);
   const questionAnswer = /^\/api\/bots\/([^/]+)\/runs\/([^/]+)\/questions\/([^/]+)\/answer$/.exec(
     path,
   );
   const runOperation = /^\/api\/bots\/([^/]+)\/runs\/([^/]+)\/(stop|retry|close)$/.exec(path);
   const taskStop = /^\/api\/bots\/([^/]+)\/tasks\/([^/]+)\/stop$/.exec(path);
-  if ((runOperation || taskStop || questionAnswer) && request.method === "POST") {
+  if (
+    (runOperation || taskStop || questionAnswer || approvalDecision) &&
+    request.method === "POST"
+  ) {
     try {
       const chunks: Buffer[] = [];
       let bytes = 0;
+      const maxBytes = (approvalDecision ? 256 : 64) * 1024;
       for await (const chunk of request.iterator({ destroyOnReturn: false })) {
         bytes += chunk.length;
-        if (bytes > 65536) {
+        if (bytes > maxBytes) {
           request.resume();
-          throw new ChatRequestError("Chat request exceeds 64 KiB.", 413);
+          throw new ChatRequestError(
+            `${approvalDecision ? "Approval" : "Chat"} request exceeds ${maxBytes / 1024} KiB.`,
+            413,
+          );
         }
         chunks.push(chunk);
       }
@@ -147,21 +156,31 @@ export async function serveClient(
       } catch {
         throw new ChatRequestError("Chat operations require valid JSON.");
       }
-      const botId = (runOperation?.[1] ?? taskStop?.[1] ?? questionAnswer?.[1]) as string;
-      const result = questionAnswer
-        ? await host.answerQuestion(
+      const botId = (runOperation?.[1] ??
+        taskStop?.[1] ??
+        questionAnswer?.[1] ??
+        approvalDecision?.[1]) as string;
+      const result = approvalDecision
+        ? await host.decideApproval(
             botId,
-            questionAnswer[2] as string,
-            questionAnswer[3] as string,
+            approvalDecision[2] as string,
+            approvalDecision[3] as string,
             input,
           )
-        : taskStop
-          ? await host.stopTask(botId, taskStop[2] as string, input)
-          : runOperation?.[3] === "retry"
-            ? await host.retryRun(botId, runOperation[2] as string, input)
-            : runOperation?.[3] === "close"
-              ? await host.closeRun(botId, runOperation[2] as string, input)
-              : await host.stopRun(botId, runOperation?.[2] as string, input);
+        : questionAnswer
+          ? await host.answerQuestion(
+              botId,
+              questionAnswer[2] as string,
+              questionAnswer[3] as string,
+              input,
+            )
+          : taskStop
+            ? await host.stopTask(botId, taskStop[2] as string, input)
+            : runOperation?.[3] === "retry"
+              ? await host.retryRun(botId, runOperation[2] as string, input)
+              : runOperation?.[3] === "close"
+                ? await host.closeRun(botId, runOperation[2] as string, input)
+                : await host.stopRun(botId, runOperation?.[2] as string, input);
       response.writeHead(202, { "Content-Type": "application/json" });
       response.end(JSON.stringify(result));
     } catch (error) {
