@@ -129,6 +129,13 @@ Bots can resolve a natural-language schedule through their scoped `create_routin
 tool and can pause, resume, run, edit or logically delete their own Routines with
 `manage_routine`. See [Routines](docs/host-runtime.md#routines).
 
+The Thread shows dated user and assistant bubbles with Markdown text, lists,
+links, tables and code blocks. Wide tables and code scroll inside the message.
+Copy message retrieves the complete original, including continuation pages;
+Copy code copies that code block. Message evidence exposes source identity and
+Run details. Raw HTML stays inert, unsafe links are disabled, and Markdown images
+never load remote content.
+
 The Thread includes local original-history search and paginated reading. Inspect
 Run evidence to page through complete inputs, Attempts and recorded model/tool
 activity. Live text is a bounded progress preview; reload/reconnect repairs it

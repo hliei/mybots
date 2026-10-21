@@ -9,6 +9,7 @@ import { showFeature } from "./navigation.ts";
 test("uploads bytes to the selected Task and deliberately saves them for that Bot", async ({
   page,
 }) => {
+  const filename = `<img src=x onerror=alert(1)>${"LongFilename".repeat(6)}.bin`;
   const root = await mkdtemp(join(tmpdir(), "mybots-files-browser-"));
   const child = fork(
     fileURLToPath(new URL("../../scripts/client-browser-host.mjs", import.meta.url)),
@@ -46,17 +47,26 @@ test("uploads bytes to the selected Task and deliberately saves them for that Bo
     await expect(tasks.locator("option")).toHaveCount(1);
     await expect(page.locator("#attachment-list")).toContainText("This Task has no attachments.");
     const first = await tasks.inputValue();
-    await page.getByLabel("File").setInputFiles({
-      name: "sample.bin",
+    await page.getByLabel("File", { exact: true }).setInputFiles({
+      name: filename,
       mimeType: "application/octet-stream",
       buffer: Buffer.from([1, 2, 3, 4]),
     });
     await showFeature(page, "files");
     await page.getByRole("button", { name: "Upload attachment" }).click();
-    await expect(page.locator("#attachment-list")).toContainText("sample.bin · 4 bytes");
+    await expect(page.locator("#attachment-list")).toContainText(`${filename} · 4 bytes`);
     await expect(
       page.locator("#attachments img, #attachments video, #attachments canvas"),
     ).toHaveCount(0);
+
+    expect(
+      await page
+        .locator("#attachment-list")
+        .evaluate((element) => element.scrollWidth <= element.clientWidth),
+    ).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
 
     await showFeature(page, "chat");
     await page.getByLabel("Message").fill("Second task");
@@ -67,13 +77,13 @@ test("uploads bytes to the selected Task and deliberately saves them for that Bo
     await showFeature(page, "files");
     await tasks.selectOption(second as string);
     await expect(page.locator("#attachment-list")).toContainText("This Task has no attachments.");
-    await expect(page.locator("#attachment-list")).not.toContainText("sample.bin");
+    await expect(page.locator("#attachment-list")).not.toContainText(filename);
 
     await showFeature(page, "files");
 
     await tasks.selectOption(first);
     await showFeature(page, "files");
-    await page.getByLabel("Workspace path for sample.bin").fill("shared/sample.bin");
+    await page.getByLabel(`Workspace path for ${filename}`).fill("shared/sample.bin");
     await showFeature(page, "files");
     await page.getByRole("button", { name: "Save to Bot workspace" }).click();
     await expect(page.locator("#workspace-files")).toContainText("shared/sample.bin · 4 bytes");
@@ -86,13 +96,13 @@ test("uploads bytes to the selected Task and deliberately saves them for that Bo
     await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Writer" }).click();
     await expect(page.locator("#workspace-files")).toContainText("No workspace files.");
-    await expect(page.locator("#workspace-files")).not.toContainText("sample.bin");
+    await expect(page.locator("#workspace-files")).not.toContainText("shared/sample.bin");
 
     await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
     await showFeature(page, "files");
     await tasks.selectOption(first);
-    await page.getByLabel("File").setInputFiles({
+    await page.getByLabel("File", { exact: true }).setInputFiles({
       name: "over.bin",
       mimeType: "application/octet-stream",
       buffer: Buffer.alloc(9),
@@ -101,7 +111,7 @@ test("uploads bytes to the selected Task and deliberately saves them for that Bo
     await page.getByRole("button", { name: "Upload attachment" }).click();
     await expect(page.locator("#attachment-message")).toContainText("8");
     await showFeature(page, "files");
-    await page.getByLabel("Workspace path for sample.bin").fill("../escape");
+    await page.getByLabel(`Workspace path for ${filename}`).fill("../escape");
     await showFeature(page, "files");
     await page.getByRole("button", { name: "Save to Bot workspace" }).click();
     await expect(page.locator("#attachment-message")).toContainText(/workspace/i);

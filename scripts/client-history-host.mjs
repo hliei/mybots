@@ -7,6 +7,7 @@ import { PiProvider } from "../packages/agent-runner/dist/providers/pi.js";
 import { WebSocketChannel } from "../packages/host/dist/channels/websocket.js";
 import { loadHostSettings } from "../packages/host/dist/config/host.js";
 import { Host } from "../packages/host/dist/host.js";
+import { longOriginal, markdownOriginal, wideOriginal } from "../tests/message-content.ts";
 import { startPiService } from "../tests/pi-fixture.ts";
 
 const root = process.argv[2];
@@ -23,8 +24,10 @@ const service = await startPiService(async (request) => {
         text: "Live original lookup",
       };
     await release.promise;
-    return { text: "Original evidence recovered" };
+    return { text: markdownOriginal };
   }
+  if (latest.includes("Read wide original")) return { text: wideOriginal };
+  if (latest.includes("Read long original")) return { text: longOriginal };
   return { text: `Remembered: ${latest}` };
 });
 const provider = new PiProvider({ modelRuntime: service.runtime, model: service.model });

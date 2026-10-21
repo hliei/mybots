@@ -1,3 +1,4 @@
+import { copyButton, markdown } from "./markdown.ts";
 import { openDetail } from "./shell.ts";
 
 interface Original {
@@ -64,6 +65,7 @@ export function clearBackgroundSelection(): void {
   boundaryChanged = true;
 }
 let params: Record<string, string> = {};
+let continuedOriginal: Original | undefined;
 let generation = 0;
 let revision = 0;
 let runRevision = 0;
@@ -138,6 +140,28 @@ async function get<T>(path: string, valid: (value: unknown) => value is T): Prom
 function prefix() {
   return `/api/bots/${encodeURIComponent(botId as string)}`;
 }
+async function completeOriginal(message: Original, path: string): Promise<string> {
+  if (!message.truncated) return message.text;
+  let offset = 0;
+  let text = "";
+  for (;;) {
+    const page = await get(
+      `${path}/thread/history?${new URLSearchParams({ messageId: message.id, textOffset: String(offset) })}`,
+      isPage,
+    );
+    const segment = page.messages.find((item) => item.id === message.id);
+    if (
+      !segment ||
+      segment.textOffset !== offset ||
+      (segment.nextTextOffset !== null && segment.nextTextOffset <= offset)
+    )
+      throw new Error("Original text unavailable.");
+    text += segment.text;
+    if (segment.nextTextOffset === null) return text;
+    offset = segment.nextTextOffset;
+  }
+}
+
 async function originals(next = params): Promise<void> {
   const selected = botId;
   const current = ++revision;
@@ -146,6 +170,19 @@ async function originals(next = params): Promise<void> {
   try {
     const page = await get(`${prefix()}/thread/history?${new URLSearchParams(next)}`, isPage);
     if (botId !== selected || current !== revision) return;
+    for (const message of page.messages) {
+      if (
+        continuedOriginal?.id === message.id &&
+        message.textOffset > 0 &&
+        continuedOriginal.textOffset === 0 &&
+        Array.from(continuedOriginal.text).length >= message.textOffset
+      ) {
+        message.text =
+          Array.from(continuedOriginal.text).slice(0, message.textOffset).join("") + message.text;
+        message.textOffset = 0;
+        message.truncated = message.nextTextOffset !== null;
+      }
+    }
     const container = node("thread-messages");
     container.replaceChildren(
       paragraph(
@@ -160,13 +197,40 @@ async function originals(next = params): Promise<void> {
             : "No messages yet. Send a message to start this conversation.",
         ),
       );
+    let dateGroup = "";
+    const path = prefix();
     for (const message of params.query
       ? page.messages
       : [...page.messages].sort((a, b) => a.seq - b.seq)) {
+      const date = new Date(message.createdAt);
+      const day = date.toLocaleDateString(undefined, { dateStyle: "long" });
+      if (day !== dateGroup) {
+        const heading = paragraph(day);
+        heading.className = "date-group";
+        container.append(heading);
+        dateGroup = day;
+      }
       const article = document.createElement("article");
       article.className = message.role === "user" ? "message user" : "message assistant";
+      article.dataset.messageId = message.id;
+      article.dataset.textOffset = String(message.textOffset);
+      const meta = document.createElement("div");
+      meta.className = "message-meta";
+      const time = document.createElement("time");
+      time.dateTime = message.createdAt;
+      time.textContent = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      time.title = date.toLocaleString();
+      meta.append(message.role === "user" ? "You · " : "Bot · ", time);
       article.append(
-        paragraph(`${message.role === "user" ? "You" : "Bot"}: ${message.text}`),
+        meta,
+        markdown(message.text, () => completeOriginal(message, path)),
+      );
+      const evidence = document.createElement("details");
+      evidence.className = "message-evidence";
+      const summary = document.createElement("summary");
+      summary.textContent = "Message evidence";
+      evidence.append(
+        summary,
         paragraph(
           `Source: ${message.id} · ${message.createdAt} · offset ${message.textOffset}${message.truncated ? " · excerpt" : ""}`,
         ),
@@ -183,18 +247,19 @@ async function originals(next = params): Promise<void> {
         label.append(box, ` Use in next Run background: ${message.text}`);
         article.append(label);
       }
-      article.append(button("Inspect Run evidence", () => void showRunHistory(message.runId)));
+      article.append(copyButton("Copy message", () => completeOriginal(message, path)));
+      evidence.append(button("Inspect Run evidence", () => void showRunHistory(message.runId)));
       if (message.nextTextOffset !== null)
         article.append(
-          button(
-            "Continue original text",
-            () =>
-              void originals({ messageId: message.id, textOffset: String(message.nextTextOffset) }),
-          ),
+          button("Continue original text", () => {
+            continuedOriginal = message;
+            void originals({ messageId: message.id, textOffset: String(message.nextTextOffset) });
+          }),
         );
-      article.append(
+      evidence.append(
         button("Read surrounding originals", () => void originals({ messageId: message.id })),
       );
+      article.append(evidence);
       container.append(article);
     }
     const nav = node("history-navigation");
@@ -334,6 +399,7 @@ export async function showHistory(
     revision++;
     runRevision++;
     params = {};
+    continuedOriginal = undefined;
     live.clear();
     node("run-history").replaceChildren();
     node("thread-messages").replaceChildren();

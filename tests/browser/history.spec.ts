@@ -4,10 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import {
+  codeOriginal,
+  longCodeOriginal,
+  longOriginal,
+  markdownOriginal,
+} from "../message-content.ts";
 import { showFeature } from "./navigation.ts";
 
 test("real Pi history, lost live frames, reload and Host restart preserve usable originals", async ({
   page,
+  context,
 }) => {
   const root = await mkdtemp(join(tmpdir(), "mybots-history-browser-"));
   let child: ChildProcess | undefined;
@@ -43,6 +50,10 @@ test("real Pi history, lost live frames, reload and Host restart preserve usable
     expect(await exit).toBe(0);
     child = undefined;
   }
+  const remoteRequests: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).hostname === "example.com") remoteRequests.push(request.url());
+  });
   const errors: string[] = [];
   let phase: "unpaired" | "connected" | "restarting" = "unpaired";
   page.on("pageerror", (error) => errors.push(error.message));
@@ -88,6 +99,27 @@ test("real Pi history, lost live frames, reload and Host restart preserve usable
     child?.send("complete");
     await expect(page.locator("#chat-works article").last()).toContainText("Outcome: succeeded");
     await expect(page.locator("#thread-messages")).toContainText("Original evidence recovered");
+    const reply = page.locator("#thread-messages article.assistant").last();
+    await expect(reply.locator("strong")).toHaveText("bold");
+    await expect(reply.locator("em")).toHaveText("emphasis");
+    await expect(reply.locator("ol")).toHaveAttribute("start", "3");
+    await expect(reply.locator("ul ul")).toContainText("Nested item");
+    await expect(reply.locator("table")).toContainText("Enabled");
+    await expect(reply.getByRole("link", { name: "documentation", exact: true })).toHaveAttribute(
+      "href",
+      "https://example.com/docs",
+    );
+    await expect(reply.locator("script, img, iframe, object, embed, svg")).toHaveCount(0);
+    await expect(reply.locator('a:not([href^="https://"])')).toHaveCount(0);
+    expect(await page.evaluate(() => Reflect.get(globalThis, "markdownExecuted"))).toBeUndefined();
+    expect(remoteRequests).toEqual([]);
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await reply.getByRole("button", { name: "Copy code", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(codeOriginal);
+    await reply.getByRole("button", { name: "Copy message", exact: true }).click();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(markdownOriginal);
     await page.getByRole("button", { name: "Older originals", exact: true }).click();
     await expect(page.locator("#thread-messages")).toContainText("original 0");
     await showFeature(page, "search");
@@ -117,6 +149,103 @@ test("real Pi history, lost live frames, reload and Host restart preserve usable
       .click();
     await expect(page.locator("#run-history")).toContainText("search_history");
     phase = "connected";
+    await showFeature(page, "chat");
+    await page.getByLabel("Message", { exact: true }).fill("Read long original");
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    await expect(page.locator("#thread-messages")).toContainText("Long original begins");
+    const longReply = page.locator("#thread-messages article.assistant").last();
+    const originalId = await longReply.getAttribute("data-message-id");
+    expect(originalId).toBeTruthy();
+    for (const viewport of [
+      { width: 1280, height: 900 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport);
+      expect(
+        await longReply.evaluate((element) => element.scrollWidth <= element.clientWidth),
+      ).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+    }
+    const time = longReply.locator("time");
+    const recorded = await page.evaluate(async () => {
+      const response = await fetch("/api/bots/personal/thread/history");
+      return response.json();
+    });
+    const original = recorded.messages.find((message: { id: string }) => message.id === originalId);
+    await expect(time).toHaveAttribute("datetime", original.createdAt);
+    await expect(page.locator(".date-group").last()).toHaveText(
+      new Date(original.createdAt).toLocaleDateString(undefined, { dateStyle: "long" }),
+    );
+    await longReply.getByRole("button", { name: "Copy message", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(longOriginal);
+    await longReply.getByRole("button", { name: "Copy code", exact: true }).click();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(longCodeOriginal);
+    let visibleLength = (await longReply.locator(".message-content").innerText()).length;
+    while (
+      await page.getByRole("button", { name: "Continue original text", exact: true }).isVisible()
+    ) {
+      const segment = page.locator(`#thread-messages article[data-message-id="${originalId}"]`);
+      const text = await segment.locator(".message-content").innerText();
+      expect(text).toContain("Long original begins");
+      await segment.getByRole("button", { name: "Continue original text", exact: true }).click();
+      await expect
+        .poll(async () => (await segment.locator(".message-content").innerText()).length)
+        .toBeGreaterThan(visibleLength);
+      visibleLength = (await segment.locator(".message-content").innerText()).length;
+    }
+    await expect(page.locator("#thread-messages")).toContainText("Long original ends 🪐");
+    await expect(page.locator("#thread-messages pre code")).toHaveText(longCodeOriginal);
+    const afterCopy = await page.evaluate(async () =>
+      (await fetch("/api/bots/personal/thread/history")).json(),
+    );
+    expect(afterCopy).toEqual(recorded);
+    await showFeature(page, "search");
+    await page.getByRole("button", { name: "Latest originals", exact: true }).click();
+    const user = page.locator("#thread-messages article.user").last();
+    await user.getByRole("button", { name: "Copy message", exact: true }).click();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe("Read long original");
+    await page.getByLabel("Message", { exact: true }).fill("Read wide original");
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    await expect(page.locator("#thread-messages")).toContainText("Wide content");
+    const wideReply = page.locator("#thread-messages article.assistant").last();
+    await expect(wideReply.getByRole("table")).toContainText("Column 14");
+    for (const viewport of [
+      { width: 1280, height: 900 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport);
+      for (const region of [
+        wideReply.locator("pre"),
+        wideReply.getByRole("region", { name: "Message table" }),
+      ]) {
+        expect(await region.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
+          true,
+        );
+        await region.evaluate((element) => {
+          element.scrollLeft = element.scrollWidth;
+        });
+        expect(await region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+      }
+      expect(
+        await wideReply.evaluate((element) => element.scrollWidth <= element.clientWidth),
+      ).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      await wideReply.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `/tmp/mybots-markdown-${viewport.width}.png` });
+    }
+    await wideReply.getByText("Message evidence", { exact: true }).click();
+    await wideReply.getByRole("button", { name: "Inspect Run evidence", exact: true }).click();
+    await expect(page.locator("#run-history")).toContainText("Column 14");
     expect(errors).toEqual([]);
   } finally {
     if (child) await stop();
