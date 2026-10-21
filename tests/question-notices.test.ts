@@ -2,12 +2,14 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { RunnerMailbox } from "@mybots/mailbox/node";
 import { afterEach, expect, it, vi } from "vitest";
 import { TelegramChannel } from "../packages/host/src/channels/telegram.ts";
 import { createTelegramApi } from "../packages/host/src/channels/telegram-api.ts";
 import { WebSocketChannel } from "../packages/host/src/channels/websocket.ts";
 import { loadHostSettings } from "../packages/host/src/config/host.ts";
+import { questionNoticeSchema } from "../packages/host/src/db/migrations/026-question-notices.ts";
 import type { HostConfiguration } from "../packages/host/src/host.ts";
 import { Host } from "../packages/host/src/host.ts";
 import { MailboxDriver } from "./host-fixture.ts";
@@ -130,7 +132,13 @@ async function get(path: string) {
   return response.json() as Promise<{
     tasks: { runs: { id: string; state: string; outcome: { kind: string } | null }[] }[];
     notices: {
-      questionId: string;
+      id: string;
+      kind: string;
+      questionId: string | null;
+      requestId: string | null;
+      routineId: string | null;
+      priorRunId: string | null;
+      sourceChain: { botId: string; runId: string; locator: string }[];
       botId: string;
       taskId: string;
       runId: string;
@@ -350,6 +358,20 @@ it("keeps an exhausted notice failed across restart until the owner resends it",
   await web?.close();
   await host?.stop();
   host = undefined;
+  // Recreate the preceding notice schema with the exhausted record and topic intact.
+  const previous = new DatabaseSync(join(root, "data", "host.db"));
+  try {
+    previous.exec(
+      `BEGIN IMMEDIATE; ${questionNoticeSchema.slice(questionNoticeSchema.indexOf("CREATE TABLE question_notices"))}`,
+    );
+    previous.exec(`INSERT INTO question_notices (question_id, bot_id, task_id, run_id, summary, locator,
+ eligibility, state, attempts, next_attempt_at, last_error, accepted_at, created_at, updated_at)
+ SELECT question_id, bot_id, task_id, run_id, summary, locator, eligibility, state, attempts,
+ next_attempt_at, last_error, accepted_at, created_at, updated_at FROM notices;
+ DROP TABLE notices; ALTER TABLE runs DROP COLUMN collaboration_waited;`);
+  } finally {
+    previous.close();
+  }
   const { configuration } = await loadHostSettings("examples/host/host-telegram.json");
   host = await Host.start({
     root,
@@ -770,4 +792,574 @@ it("retains topic history after logical Bot deletion without giving it to a same
   expect(fresh.telegramTopic).toBeNull();
   expect(fresh.notices).toEqual([]);
   expect(sends(telegram.calls)).toHaveLength(1);
+});
+
+it("announces a Routine outcome while ordinary chat stays client-only", async () => {
+  const telegram = await startTelegram((method, body) => {
+    if (method === "getChat") return okChat();
+    if (method === "createForumTopic") return okTopic(77, body.name);
+    return okSend();
+  });
+  const { configuration } = await open();
+  attach(telegram.url, configuration);
+  await post("/api/bots/personal/thread/messages", { requestId: "chat", text: "Hello" });
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).tasks[0]?.runs[0]?.state).toBe("succeeded"),
+  );
+  expect((await get("/api/bots/personal/thread")).notices).toEqual([]);
+  const routine = await (
+    await post("/api/bots/personal/routines", {
+      requestId: "daily",
+      text: "Check the archive",
+      runAt: "2026-10-21T00:01:00Z",
+      timezone: "UTC",
+    })
+  ).json();
+  now += 60000;
+  await host?.reconcile();
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).notices[0]).toMatchObject({
+      kind: "outcome",
+      state: "delivered",
+      routineId: routine.id,
+    }),
+  );
+  const detail = await get("/api/bots/personal/thread");
+  expect(detail.tasks[1]?.runs[0]?.state).toBe("succeeded");
+  expect(sends(telegram.calls)).toHaveLength(1);
+  expect(sends(telegram.calls)[0]?.body.text).toContain(`Routine: ${routine.id}`);
+  expect(sends(telegram.calls)[0]?.body.text).toContain("Work succeeded");
+});
+
+async function createBot(name: string) {
+  const response = await post("/api/bots", {
+    requestId: `bot-${name}`,
+    name,
+    instructions: name,
+    model: { provider: "deepseek", id: "deepseek-chat" },
+    tools: ["read"],
+  });
+  expect(response.status).toBe(201);
+  return (await response.json()).bot.id as string;
+}
+async function policy(source: string, target: string, mode: string) {
+  expect(
+    (
+      await post(`/api/bots/${source}/collaboration/${target}`, {
+        requestId: `${source}-${target}-${mode}`,
+        mode,
+      })
+    ).status,
+  ).toBe(201);
+}
+async function runner(driver: MailboxDriver, runId: string) {
+  await vi.waitFor(() =>
+    expect(driver.launches.some((row) => row.material.key.sessionId === runId)).toBe(true),
+  );
+  return new RunnerMailbox(
+    driver.launches.filter((row) => row.material.key.sessionId === runId).at(-1)?.material
+      .directory as string,
+  );
+}
+async function request(mailbox: RunnerMailbox, id: string, operation: string, input: unknown) {
+  mailbox.requestHistory({ id, operation, input, incarnation: mailbox.executionIncarnation() });
+  return vi.waitFor(() => {
+    const response = mailbox.historyResponse(id);
+    expect(response).toBeDefined();
+    expect(response?.error).toBeUndefined();
+    return response?.result as Record<string, string>;
+  });
+}
+async function blocked(_input: unknown, _material: unknown, signal: AbortSignal) {
+  if (!signal.aborted)
+    await new Promise<void>((resolve) =>
+      signal.addEventListener("abort", () => resolve(), { once: true }),
+    );
+  return "Stopped";
+}
+
+it("routes a nested child approval to its requesting Bot with source links and suppresses obsolete sends", async () => {
+  const driver = new MailboxDriver();
+  driver.respond = blocked;
+  const { configuration } = await open(driver);
+  const specialist = await createBot("Specialist");
+  const reviewer = await createBot("Reviewer");
+  await policy("personal", specialist, "allow");
+  await policy(specialist, reviewer, "ask-each-time");
+  const source = await (
+    await post("/api/bots/personal/thread/messages", { requestId: "source", text: "Coordinate" })
+  ).json();
+  const parent = await runner(driver, source.runId);
+  const child = await request(parent, "specialize", "delegate", {
+    requestId: "specialize",
+    targetBotId: specialist,
+    text: "Analyze",
+  });
+  parent.requestDurableWait("delegation");
+  const worker = await runner(driver, child.childRunId as string);
+  await request(worker, "review", "delegate", {
+    requestId: "review",
+    targetBotId: reviewer,
+    text: "Review",
+  });
+  worker.requestDurableWait("delegation");
+  const telegram = await startTelegram((method, body) => {
+    if (method === "getChat") return okChat();
+    if (method === "createForumTopic") return okTopic(88, body.name);
+    return { status: 500, body: { ok: false, description: "Outage" } };
+  });
+  attach(telegram.url, configuration);
+  await vi.waitFor(async () =>
+    expect((await get(`/api/bots/${specialist}/thread`)).notices[0]).toMatchObject({
+      kind: "approval",
+      requestId: "review",
+      attempts: 1,
+    }),
+  );
+  const notice = (await get(`/api/bots/${specialist}/thread`)).notices[0];
+  expect(notice?.sourceChain).toEqual([
+    expect.objectContaining({
+      botId: "personal",
+      runId: source.runId,
+      locator: expect.stringContaining(`run=${source.runId}`),
+    }),
+  ]);
+  expect((await get("/api/bots/personal/thread")).notices).toEqual([]);
+  expect(sends(telegram.calls)[0]?.body.text).toContain(`Bot: Specialist (${specialist})`);
+  expect(sends(telegram.calls)[0]?.body.text).toContain(`Source Bot: personal`);
+  expect(
+    (
+      await post(`/api/bots/${specialist}/runs/${child.childRunId}/approvals/review/decision`, {
+        requestId: "deny-review",
+        decision: "deny",
+        operation: "delegate",
+        targetBotId: reviewer,
+        text: "Review",
+        deadline: null,
+        files: [],
+      })
+    ).status,
+  ).toBe(202);
+  now += 5000;
+  await vi.waitFor(async () =>
+    expect((await get(`/api/bots/${specialist}/thread`)).notices[0]?.state).toBe("suppressed"),
+  );
+  expect(
+    (
+      await post(
+        `/api/bots/${specialist}/notices/${encodeURIComponent(notice?.id as string)}/resend`,
+        { requestId: "obsolete" },
+      )
+    ).status,
+  ).toBe(409);
+  expect(sends(telegram.calls)).toHaveLength(1);
+});
+
+it.each([false, true])(
+  "aggregates nested child outcomes into one root notice (leaf failure: %s)",
+  async (failLeaf) => {
+    const driver = new MailboxDriver();
+    const entered = new Set<string>();
+    driver.respond = async (input, material, signal) => {
+      if (!entered.has(material.key.sessionId)) {
+        entered.add(material.key.sessionId);
+        return blocked(input, material, signal);
+      }
+      return "Root handled the children";
+    };
+    const { configuration } = await open(driver);
+    const specialist = await createBot("Specialist");
+    const reviewer = await createBot("Reviewer");
+    await policy("personal", specialist, "allow");
+    await policy(specialist, reviewer, "allow");
+    const source = await (
+      await post("/api/bots/personal/thread/messages", { requestId: "root", text: "Coordinate" })
+    ).json();
+    const parent = await runner(driver, source.runId);
+    const child = await request(parent, "child", "delegate", {
+      requestId: "child",
+      targetBotId: specialist,
+      text: "Analyze",
+    });
+    parent.requestDurableWait("delegation");
+    const worker = await runner(driver, child.childRunId as string);
+    // Leaf completion is controlled so the parent really enters a durable wait.
+    const leafGate = Promise.withResolvers<void>();
+    const previous = driver.respond;
+    driver.respond = async (input, material, signal) => {
+      if (input.content === "Review") {
+        await Promise.race([leafGate.promise, blocked(input, material, signal)]);
+        return failLeaf ? { error: "Review unavailable" } : "Review ready";
+      }
+      return previous(input, material, signal);
+    };
+    const leaf = await request(worker, "leaf", "delegate", {
+      requestId: "leaf",
+      targetBotId: reviewer,
+      text: "Review",
+    });
+    worker.requestDurableWait("delegation");
+    await vi.waitFor(async () =>
+      expect((await get(`/api/bots/${specialist}/thread`)).tasks[0]?.runs[0]?.state).toBe(
+        "waiting",
+      ),
+    );
+    const telegram = await startTelegram((method, body) => {
+      if (method === "getChat") return okChat();
+      if (method === "createForumTopic") return okTopic(77, body.name);
+      return okSend();
+    });
+    attach(telegram.url, configuration);
+    leafGate.resolve();
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).notices[0]?.state).toBe("delivered"),
+    );
+    const detail = await get("/api/bots/personal/thread");
+    expect(detail.tasks).toHaveLength(1);
+    expect(detail.notices[0]).toMatchObject({ kind: "outcome", runId: source.runId });
+    expect(detail.notices[0]?.summary).toContain(
+      failLeaf ? "Children: 1 succeeded, 1 failed" : "Children: 2 succeeded",
+    );
+    expect((await get(`/api/bots/${specialist}/thread`)).notices).toEqual([]);
+    expect((await get(`/api/bots/${reviewer}/thread`)).notices).toEqual([]);
+    expect((await get(`/api/bots/${reviewer}/thread`)).tasks[0]?.runs[0]).toMatchObject({
+      id: leaf.childRunId,
+      state: failLeaf ? "failed" : "succeeded",
+    });
+    expect(sends(telegram.calls)).toHaveLength(1);
+  },
+);
+
+it("announces uncertain child work in its Bot topic and suppresses the notice after explicit retry", async () => {
+  const driver = new MailboxDriver();
+  driver.respond = async (input, material, signal) => {
+    if (input.content === "Unknown effect")
+      new RunnerMailbox(material.directory).acknowledge(input.id, "completed");
+    return blocked(input, material, signal);
+  };
+  const { configuration } = await open(driver);
+  const childBot = await createBot("Specialist");
+  await policy("personal", childBot, "allow");
+  const source = await (
+    await post("/api/bots/personal/thread/messages", { requestId: "root", text: "Coordinate" })
+  ).json();
+  const parent = await runner(driver, source.runId);
+  const child = await request(parent, "child", "delegate", {
+    requestId: "child",
+    targetBotId: childBot,
+    text: "Unknown effect",
+  });
+  parent.requestDurableWait("delegation");
+  const worker = await runner(driver, child.childRunId as string);
+  await vi.waitFor(() => expect(worker.pending()).toHaveLength(0));
+  await post(`/api/bots/${childBot}/runs/${child.childRunId}/stop`, { requestId: "stop-gap" });
+  await vi.waitFor(async () =>
+    expect((await get(`/api/bots/${childBot}/thread`)).tasks[0]?.runs[0]?.state).toBe("uncertain"),
+  );
+  const telegram = await startTelegram((method, body) => {
+    if (method === "getChat") return okChat();
+    if (method === "createForumTopic") return okTopic(88, body.name);
+    return { status: 500, body: { ok: false, description: "Outage" } };
+  });
+  attach(telegram.url, configuration);
+  await vi.waitFor(async () =>
+    expect((await get(`/api/bots/${childBot}/thread`)).notices[0]).toMatchObject({
+      kind: "uncertain",
+      attempts: 1,
+    }),
+  );
+  expect((await get(`/api/bots/${childBot}/thread`)).notices[0]?.sourceChain[0]?.runId).toBe(
+    source.runId,
+  );
+  expect((await get("/api/bots/personal/thread")).notices).toEqual([]);
+  expect(sends(telegram.calls)[0]?.body.text).toContain("Outcome uncertain");
+  expect(
+    (await post(`/api/bots/${childBot}/runs/${child.childRunId}/retry`, { requestId: "retry-gap" }))
+      .status,
+  ).toBe(202);
+  await vi.waitFor(async () =>
+    expect((await get(`/api/bots/${childBot}/thread`)).notices[0]?.state).toBe("suppressed"),
+  );
+  now += 5000;
+  expect(sends(telegram.calls)).toHaveLength(1);
+});
+
+it("retains a failed Routine outcome notice across restart and identifies its explicit retry", async () => {
+  const driver = new MailboxDriver();
+  driver.respond = async () => ({ error: "Archive unavailable" });
+  const telegram = await startTelegram((method, body) => {
+    if (method === "getChat") return okChat();
+    if (method === "createForumTopic") return okTopic(77, body.name);
+    return { status: 500, body: { ok: false, description: "Outage" } };
+  });
+  const { configuration } = await open(driver);
+  attach(telegram.url, configuration);
+  const routine = await (
+    await post("/api/bots/personal/routines", {
+      requestId: "archive",
+      text: "Check archive",
+      runAt: "2026-10-21T00:00:00Z",
+      timezone: "UTC",
+    })
+  ).json();
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).notices[0]?.attempts).toBe(1),
+  );
+  const original = (await get("/api/bots/personal/thread")).notices[0];
+  expect(original).toMatchObject({
+    kind: "outcome",
+    routineId: routine.id,
+    summary: "Work failed. Archive unavailable",
+  });
+  await channel?.stop();
+  channel = undefined;
+  await web?.close();
+  await host?.stop();
+  host = await Host.start({
+    root,
+    configuration,
+    driver: new MailboxDriver(),
+    now: () => now,
+    reconcileMs: 365 * 86400000,
+  });
+  web = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
+  base = `http://127.0.0.1:${web.address.port}`;
+  await closeTelegram?.();
+  closeTelegram = undefined;
+  const recovered = await startTelegram((method) => (method === "getChat" ? okChat() : okSend()));
+  attach(recovered.url, configuration);
+  expect((await get("/api/bots/personal/thread")).notices[0]).toMatchObject({
+    attempts: 1,
+    nextAttemptAt: "2026-10-21T00:00:05.000Z",
+  });
+  now += 5000;
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).notices[0]?.state).toBe("delivered"),
+  );
+  const retry = await (
+    await post(`/api/bots/personal/runs/${original?.runId}/retry`, { requestId: "retry-archive" })
+  ).json();
+  expect(retry.taskId).toBe(original?.taskId);
+  expect(retry.runId).not.toBe(original?.runId);
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).notices).toHaveLength(2),
+  );
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).notices[1]?.state).toBe("delivered"),
+  );
+  expect((await get("/api/bots/personal/thread")).notices[1]).toMatchObject({
+    routineId: routine.id,
+    priorRunId: original?.runId,
+    runId: retry.runId,
+    taskId: original?.taskId,
+  });
+  expect(sends(recovered.calls).at(-1)?.body.text).toContain(
+    `Explicit retry of Run: ${original?.runId}`,
+  );
+  expect((await get("/api/bots/personal/thread")).tasks[0]?.runs[1]?.state).toBe("succeeded");
+});
+
+it("retains root outcome eligibility when a question and child share the durable wait", async () => {
+  const driver = new MailboxDriver();
+  const entered = new Set<string>();
+  const childDone = Promise.withResolvers<void>();
+  driver.respond = async (input, material, signal) => {
+    if (input.content === "Child analysis") {
+      await Promise.race([childDone.promise, blocked(input, material, signal)]);
+      return "Analysis done";
+    }
+    if (!entered.has(material.key.sessionId)) {
+      entered.add(material.key.sessionId);
+      return blocked(input, material, signal);
+    }
+    return "Report ready";
+  };
+  const { configuration } = await open(driver);
+  const target = await createBot("Specialist");
+  await policy("personal", target, "allow");
+  const source = await (
+    await post("/api/bots/personal/thread/messages", { requestId: "source", text: "Coordinate" })
+  ).json();
+  const parent = await runner(driver, source.runId);
+  await request(parent, "child", "delegate", {
+    requestId: "child",
+    targetBotId: target,
+    text: "Child analysis",
+  });
+  await request(parent, "preference", "ask_question", {
+    requestId: "preference",
+    text: "Which format?",
+  });
+  parent.requestDurableWait("owner-question");
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).tasks[0]?.runs[0]?.state).toBe("waiting"),
+  );
+  childDone.resolve();
+  await vi.waitFor(async () =>
+    expect((await get(`/api/bots/${target}/thread`)).tasks[0]?.runs[0]?.state).toBe("succeeded"),
+  );
+  await post(`/api/bots/personal/runs/${source.runId}/questions/preference/answer`, {
+    requestId: "answer",
+    text: "Brief",
+  });
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).tasks[0]?.runs[0]?.state).toBe("succeeded"),
+  );
+  const telegram = await startTelegram((method, body) => {
+    if (method === "getChat") return okChat();
+    if (method === "createForumTopic") return okTopic(77, body.name);
+    return okSend();
+  });
+  attach(telegram.url, configuration);
+  await vi.waitFor(async () =>
+    expect(
+      (await get("/api/bots/personal/thread")).notices.find((notice) => notice.kind === "outcome"),
+    ).toMatchObject({ runId: source.runId, state: "delivered" }),
+  );
+  expect(sends(telegram.calls)).toHaveLength(1);
+});
+
+it("rechecks an approval deadline after topic creation before sending", async () => {
+  const driver = new MailboxDriver();
+  driver.respond = blocked;
+  const { configuration } = await open(driver);
+  const target = await createBot("Specialist");
+  await policy("personal", target, "ask-each-time");
+  const source = await (
+    await post("/api/bots/personal/thread/messages", { requestId: "source", text: "Coordinate" })
+  ).json();
+  const parent = await runner(driver, source.runId);
+  await request(parent, "expires", "delegate", {
+    requestId: "expires",
+    targetBotId: target,
+    text: "Analyze",
+    deadline: new Date(now + 1000).toISOString(),
+  });
+  parent.requestDurableWait("delegation");
+  const topicGate = Promise.withResolvers<void>();
+  try {
+    const telegram = await startTelegram(async (method, body) => {
+      if (method === "getChat") {
+        await topicGate.promise;
+        return okChat();
+      }
+      if (method === "createForumTopic") return okTopic(77, body.name);
+      return okSend();
+    });
+    attach(telegram.url, configuration);
+    await vi.waitFor(() =>
+      expect(telegram.calls.some((call) => call.method === "getChat")).toBe(true),
+    );
+    now += 1000;
+    topicGate.resolve();
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).notices[0]?.state).toBe("suppressed"),
+    );
+    expect(sends(telegram.calls)).toHaveLength(0);
+    expect((await get("/api/bots/personal/thread")).tasks[0]?.runs[0]?.state).toBe("waiting");
+  } finally {
+    topicGate.resolve();
+  }
+});
+
+it("keeps collaboration eligibility when the child finishes during the parent's wait shutdown", async () => {
+  const driver = new MailboxDriver();
+  let stopEntered = false;
+  const stopGate = Promise.withResolvers<void>();
+  const childGate = Promise.withResolvers<void>();
+  const startDriver = driver.start.bind(driver);
+  driver.start = async (material, signal) => {
+    const handle = await startDriver(material, signal);
+    return {
+      ...handle,
+      stop: async () => {
+        if (material.key.agentGroupId === "personal") {
+          stopEntered = true;
+          await stopGate.promise;
+        }
+        await handle.stop();
+      },
+    };
+  };
+  let parentEntered = false;
+  driver.respond = async (input, material, signal) => {
+    if (input.content === "Analyze") {
+      await Promise.race([childGate.promise, blocked(input, material, signal)]);
+      return "Child ready";
+    }
+    if (!parentEntered) {
+      parentEntered = true;
+      return blocked(input, material, signal);
+    }
+    return "Report ready";
+  };
+  try {
+    const { configuration } = await open(driver);
+    const target = await createBot("Specialist");
+    await policy("personal", target, "allow");
+    const source = await (
+      await post("/api/bots/personal/thread/messages", { requestId: "source", text: "Coordinate" })
+    ).json();
+    const parent = await runner(driver, source.runId);
+    await request(parent, "child", "delegate", {
+      requestId: "child",
+      targetBotId: target,
+      text: "Analyze",
+    });
+    parent.requestDurableWait("delegation");
+    await vi.waitFor(() => expect(stopEntered).toBe(true));
+    childGate.resolve();
+    await vi.waitFor(async () =>
+      expect((await get(`/api/bots/${target}/thread`)).tasks[0]?.runs[0]?.state).toBe("succeeded"),
+    );
+    stopGate.resolve();
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).tasks[0]?.runs[0]?.state).toBe("succeeded"),
+    );
+    const telegram = await startTelegram((method, body) => {
+      if (method === "getChat") return okChat();
+      if (method === "createForumTopic") return okTopic(77, body.name);
+      return okSend();
+    });
+    attach(telegram.url, configuration);
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).notices[0]).toMatchObject({
+        kind: "outcome",
+        state: "delivered",
+      }),
+    );
+  } finally {
+    stopGate.resolve();
+    childGate.resolve();
+  }
+});
+
+it("retains a deleted Bot's failed outcome history and rejects new manual delivery", async () => {
+  const telegram = await startTelegram(
+    () => okChat(),
+    () => false,
+  );
+  const { configuration } = await open();
+  attach(telegram.url, configuration);
+  await post("/api/bots/personal/routines", {
+    requestId: "archive",
+    text: "Check archive",
+    runAt: "2026-10-21T00:00:00Z",
+    timezone: "UTC",
+  });
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).notices[0]?.state).toBe("failed"),
+  );
+  const before = await get("/api/bots/personal/thread");
+  expect((await post("/api/bots/personal/delete", { requestId: "delete" })).status).toBe(202);
+  expect(
+    (
+      await post(
+        `/api/bots/personal/notices/${encodeURIComponent(before.notices[0]?.id as string)}/resend`,
+        { requestId: "resend-deleted" },
+      )
+    ).status,
+  ).toBe(409);
+  expect((await get("/api/bots/personal/thread")).notices).toEqual(before.notices);
+  expect((await get("/api/bots/personal/thread")).telegramTopic).toEqual(before.telegramTopic);
 });

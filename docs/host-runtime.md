@@ -154,7 +154,22 @@ unconfigured chats, and advances the polling offset past every returned update.
 Ordinary Telegram text does not enter a Thread or answer a question. Pairing is
 the only private message that changes Host state, and that code is not Agent input.
 
-A pending owner question creates a notice for its Bot. Private topic mode comes
+Pending owner questions and action approvals create notices for the requesting
+Bot. Known completion and terminal failure notify for Routine occurrences and
+root Runs that entered durable collaboration waiting. Successful children and
+source-handled child failures contribute counts to the root report without
+separate final alerts. Uncertain outcomes require owner attention in the producing
+Bot's topic. Child attention notices retain source-chain links to their owned
+parent work. Immediate chat replies and tool progress remain in the client.
+
+Notices include a concise summary, Bot/Task/Run/request identity and a local
+client locator. Occurrence notices also identify the Routine, and explicit retries
+identify the previous Run. The client displays each notice's eligibility and
+independent delivery progress with topic repair and manual resend. The generic
+resend operation is `POST /api/bots/:botId/notices/:noticeId/resend`, with a stable
+`requestId`. The question-specific resend route remains available.
+
+Private topic mode comes
 from `getMe` `has_topics_enabled`, including for a question that is already
 pending when the owner chat is attached. The Host keeps that Bot's private-chat
 topic, the notice's eligibility, attempt count, retry time and delivery outcome
@@ -164,7 +179,10 @@ does not revive an exhausted notice. The owner can repair a deleted topic or
 unavailable topic mode from the client and resend a failed notice. Acceptance by
 Telegram is not a read receipt and does not promise that only one copy arrived.
 A delivery failure does not change the Run outcome. An unsent notice is
-suppressed once the question is answered, expires or is cancelled. Polling
+suppressed once a decision request is resolved, expires or is cancelled; unsent
+uncertainty notices are suppressed after explicit retry or closure. Logical Bot
+deletion retains topic mappings and accepted notice history, and a same-name
+replacement receives its own identity and topic. Polling
 retries a failed long poll and stops with the host, aborting in-flight requests.
 
 `container.image` and `container.network` select an existing runner image and
@@ -720,7 +738,7 @@ without accessing the underlying socket. The connection stays open for interacti
 chat; EOF, quit or Ctrl+C disconnect it while host-side Agent work continues.
 `WebSocketChannel.listen` and `close` own the owner-local WebSocket listener, its
 clients and their bounded frames. `TelegramChannel.listen`, `start` and `stop` own
-Bot API polling for one Telegram instance and attach question-notice delivery;
+Bot API polling for one Telegram instance and attach independent notice delivery;
 `dispatch` ignores ordinary text, topic messages and callbacks. `runHost` starts the Telegram channel when `telegram`
 settings are present. Importing these modules starts no services. Observers cannot
 prevent persistence;
@@ -745,7 +763,7 @@ integration tests use real central/session SQLite and the same driver boundary.
 `tests/host-telegram.test.ts` drives the channel with a controlled Bot API:
 ignored text, topic messages and callbacks, offset advance, cancellation,
 restart, token containment and entry-point wiring. `tests/question-notices.test.ts`
-drives question notices through that HTTP boundary. No test contacts Telegram
+drives decision, outcome and uncertainty notices through that HTTP boundary. No test contacts Telegram
 or uses a real token. These checks do not
 establish Docker, gateway, CA or live provider behavior. The
 opt-in infrastructure suite and actual-service acceptance remain separate.

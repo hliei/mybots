@@ -198,7 +198,9 @@ export async function serveClient(
     }
     return;
   }
-  const noticeResend = /^\/api\/bots\/([^/]+)\/questions\/([^/]+)\/notice\/resend$/.exec(path);
+  const workNoticeResend = /^\/api\/bots\/([^/]+)\/notices\/([^/]+)\/resend$/.exec(path);
+  const noticeResend =
+    workNoticeResend ?? /^\/api\/bots\/([^/]+)\/questions\/([^/]+)\/notice\/resend$/.exec(path);
   const topicRepair = /^\/api\/bots\/([^/]+)\/telegram-topic\/repair$/.exec(path);
   if ((noticeResend || topicRepair) && request.method === "POST") {
     try {
@@ -211,9 +213,9 @@ export async function serveClient(
       }
       const botId = decodeURIComponent((noticeResend?.[1] ?? topicRepair?.[1]) as string);
       const result = noticeResend
-        ? await host.resendQuestionNotice(
+        ? await host.resendNotice(
             botId,
-            decodeURIComponent(noticeResend[2] as string),
+            `${workNoticeResend ? "" : "question:"}${decodeURIComponent(noticeResend[2] as string)}`,
             input,
           )
         : await host.repairTelegramTopic(botId, input);

@@ -42,7 +42,7 @@ import { ChatRequestError, chatInput } from "./chat.ts";
 import { validateHostConfiguration } from "./config/host.ts";
 import { provisionSession, replaceSessionContext } from "./container-runner.ts";
 import { HostStore, type SavedSession, type SessionRoute } from "./db/index.ts";
-import type { DelegationFile } from "./db/threads.ts";
+import type { DelegationFile, Notice } from "./db/threads.ts";
 import type {
   ModelConfiguration,
   SessionDriver,
@@ -53,12 +53,12 @@ import type {
 import { observesSessions } from "./drivers/types.ts";
 import { BotMemory, parseMemoryDelete, parseMemorySave } from "./memory.ts";
 import {
-  conciseQuestion,
-  questionNoticeFailure,
-  questionNoticeText,
+  conciseNotice,
+  noticeFailure,
+  noticeText,
   telegramTopicName,
   terminalTopicFailure,
-} from "./question-notices.ts";
+} from "./notifications.ts";
 import {
   decideStallAction,
   type RecoveryOutcome,
@@ -827,7 +827,7 @@ export class Host {
           if (!signal.aborted) this.emit({ type: "failure", error: "Session mailbox unavailable" });
         }
       }
-      this.scheduleQuestionNotices();
+      this.scheduleNotices();
       await setTimeout(20, undefined, { signal }).catch((error) => {
         if (!signal.aborted) throw error;
       });
@@ -1391,6 +1391,7 @@ export class Host {
       const execution = await pending;
       if (execution.route.session.agent_group_id === botId) this.syncChat(execution);
     }
+    if (this.noticeChatId()) this.store.threads.recordPolicyNotices(this.timestamp());
     return this.store.threads.detail(botId, this.timestamp());
   }
 
@@ -2736,7 +2737,7 @@ export class Host {
     };
   }
 
-  /** Send question notices through one owner-private chat. Later calls replace the chat. */
+  /** Send eligible notices through one owner-private chat. Later calls replace the chat. */
   attachTelegramNotices(api: TelegramApi, chatId: string): void {
     if (!/^\d+$/u.test(chatId)) throw new Error("Telegram notices require one owner private chat.");
     this.telegramNotices = { api, chatId };
@@ -2744,16 +2745,12 @@ export class Host {
       this.recordQuestionNotice(question);
   }
 
-  async resendQuestionNotice(botId: string, questionId: string, value: unknown) {
+  async resendNotice(botId: string, noticeId: string, value: unknown) {
+    this.store.threads.rejectDeleted(botId);
     if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
     const input = chatInput(value, []);
     await this.threadDetail(botId);
-    return this.store.threads.resendQuestionNotice(
-      botId,
-      questionId,
-      input.requestId,
-      this.timestamp(),
-    );
+    return this.store.threads.resendNotice(botId, noticeId, input.requestId, this.timestamp());
   }
 
   async repairTelegramTopic(botId: string, value: unknown) {
@@ -2764,7 +2761,7 @@ export class Host {
     const payload = { operation: "repair-telegram-topic", botId };
     const replayed = this.store.threads.peekAdmission(input.requestId, payload);
     if (replayed) return replayed;
-    const topic = await this.recreateQuestionTopic(botId);
+    const topic = await this.recreateTelegramTopic(botId);
     return this.store.threads.commitAdmission(input.requestId, payload, topic);
   }
 
@@ -2789,74 +2786,61 @@ export class Host {
     text: string;
   }): void {
     if (!this.noticeChatId()) return;
-    this.store.threads.recordQuestionNotice({
+    this.store.threads.recordNotice({
+      id: `question:${question.id}`,
+      kind: "question",
+      requestId: question.id,
       questionId: question.id,
       botId: question.botId,
       taskId: question.taskId,
       runId: question.runId,
-      summary: conciseQuestion(question.text),
+      summary: conciseNotice(question.text),
       locator: `/?bot=${encodeURIComponent(question.botId)}&run=${encodeURIComponent(question.runId)}#question-${encodeURIComponent(question.id)}`,
       now: this.timestamp(),
     });
   }
 
-  private questionPending(notice: { questionId: string; runId: string }): boolean {
-    return this.store.threads
-      .questions(notice.runId)
-      .some((question) => question.id === notice.questionId && question.state === "pending");
-  }
-
-  private scheduleQuestionNotices(): void {
+  private scheduleNotices(): void {
+    if (this.noticeChatId()) this.store.threads.recordPolicyNotices(this.timestamp());
     if (this.noticesActive || this.stopped || !this.telegramNotices) return;
     this.noticesActive = true;
-    this.noticePump = this.pumpQuestionNotices().finally(() => {
+    this.noticePump = this.pumpNotices().finally(() => {
       this.noticesActive = false;
     });
   }
 
-  private async pumpQuestionNotices(): Promise<void> {
+  private async pumpNotices(): Promise<void> {
     const api = this.telegramNotices;
     if (!api) return;
-    this.store.threads.suppressUnsentQuestionNotices(this.timestamp());
-    for (const notice of this.store.threads.dueQuestionNotices(this.timestamp())) {
+    this.store.threads.suppressUnsentNotices(this.timestamp());
+    for (const notice of this.store.threads.dueNotices(this.timestamp())) {
       if (this.controller.signal.aborted) return;
       try {
-        await this.deliverQuestionNotice(notice, api);
+        await this.deliverNotice(notice, api);
       } catch {
         if (this.controller.signal.aborted) return;
       }
     }
   }
 
-  private async deliverQuestionNotice(
-    notice: {
-      questionId: string;
-      botId: string;
-      taskId: string;
-      runId: string;
-      summary: string;
-      locator: string;
-    },
+  private async deliverNotice(
+    notice: Notice,
     transport: { api: TelegramApi; chatId: string },
   ): Promise<void> {
     const signal = this.controller.signal;
-    if (!this.questionPending(notice)) {
-      this.store.threads.suppressUnsentQuestionNotices(this.timestamp());
+    if (!this.store.threads.noticeCurrent(notice, this.timestamp())) {
+      this.store.threads.suppressUnsentNotices(this.timestamp());
       return;
     }
     let topicId: string;
     try {
-      const ensured = await this.ensureQuestionTopic(notice.botId, transport, signal);
+      const ensured = await this.ensureTelegramTopic(notice.botId, transport, signal);
       if (!ensured.ok) {
         if (ensured.terminal)
-          this.store.threads.failQuestionNotice(
-            notice.questionId,
-            this.timestamp(),
-            ensured.failure,
-          );
+          this.store.threads.failNotice(notice.id, this.timestamp(), ensured.failure);
         else
-          this.store.threads.recordQuestionNoticeAttempt({
-            questionId: notice.questionId,
+          this.store.threads.recordNoticeAttempt({
+            id: notice.id,
             now: this.timestamp(),
             delivered: false,
             error: ensured.failure,
@@ -2867,25 +2851,24 @@ export class Host {
       topicId = ensured.topicId;
     } catch (error) {
       if (signal.aborted) return;
-      this.recordNoticeError(notice.questionId, notice.botId, transport.chatId, error);
+      this.recordNoticeError(notice.id, notice.botId, transport.chatId, error);
       return;
     }
-    if (!this.questionPending(notice)) {
-      this.store.threads.suppressUnsentQuestionNotices(this.timestamp());
+    if (!this.store.threads.noticeCurrent(notice, this.timestamp())) {
+      this.store.threads.suppressUnsentNotices(this.timestamp());
       return;
     }
     try {
-      const text = questionNoticeText({
+      const text = noticeText({
         ...notice,
         botName: this.store.threads.botName(notice.botId),
       });
       signal.throwIfAborted();
-      if (!this.store.threads.beginQuestionNoticeAttempt(notice.questionId, this.timestamp()))
-        return;
+      if (!this.store.threads.beginNoticeAttempt(notice.id, this.timestamp())) return;
       await transport.api.sendMessage(transport.chatId, text, signal, topicId);
       if (signal.aborted) return;
-      this.store.threads.recordQuestionNoticeAttempt({
-        questionId: notice.questionId,
+      this.store.threads.recordNoticeAttempt({
+        id: notice.id,
         now: this.timestamp(),
         delivered: true,
         reserved: true,
@@ -2893,11 +2876,11 @@ export class Host {
       });
     } catch (error) {
       if (signal.aborted) return;
-      this.recordNoticeError(notice.questionId, notice.botId, transport.chatId, error, true);
+      this.recordNoticeError(notice.id, notice.botId, transport.chatId, error, true);
     }
   }
 
-  private async createQuestionTopic(
+  private async createTelegramTopic(
     botId: string,
     transport: { api: TelegramApi; chatId: string },
     signal: AbortSignal,
@@ -2928,7 +2911,7 @@ export class Host {
     });
   }
 
-  private async ensureQuestionTopic(
+  private async ensureTelegramTopic(
     botId: string,
     transport: { api: TelegramApi; chatId: string },
     signal: AbortSignal,
@@ -2945,7 +2928,7 @@ export class Host {
         terminal: true,
         failure: saved.failure ?? "Telegram topic needs repair.",
       };
-    const topic = await this.createQuestionTopic(botId, transport, signal);
+    const topic = await this.createTelegramTopic(botId, transport, signal);
     if (topic.state !== "mapped" || !topic.topicId)
       return {
         ok: false,
@@ -2956,7 +2939,7 @@ export class Host {
   }
 
   private recordNoticeError(
-    questionId: string,
+    id: string,
     botId: string,
     chatId: string,
     error: unknown,
@@ -2964,7 +2947,7 @@ export class Host {
   ): void {
     const now = this.timestamp();
     if (error instanceof TelegramRequestError && terminalTopicFailure(error.kind)) {
-      const failure = questionNoticeFailure(error);
+      const failure = noticeFailure(error);
       if (
         error.kind === "topic-missing" ||
         error.kind === "topic-mode" ||
@@ -2979,26 +2962,26 @@ export class Host {
           now,
         });
       if (error.kind === "topic-missing")
-        this.store.threads.recordQuestionNoticeAttempt({
-          questionId,
+        this.store.threads.recordNoticeAttempt({
+          id,
           now,
           delivered: false,
           error: failure,
           terminal: true,
           reserved,
         });
-      else this.store.threads.failQuestionNotice(questionId, now, failure);
+      else this.store.threads.failNotice(id, now, failure);
       return;
     }
     const retryAfterMs = error instanceof TelegramRequestError ? error.retryAfterMs : undefined;
     const message =
       error instanceof TelegramRequestError
-        ? questionNoticeFailure(error)
+        ? noticeFailure(error)
         : error instanceof Error
           ? error.message.slice(0, 300)
           : "Telegram delivery failed.";
-    this.store.threads.recordQuestionNoticeAttempt({
-      questionId,
+    this.store.threads.recordNoticeAttempt({
+      id,
       now,
       delivered: false,
       error: message,
@@ -3007,7 +2990,7 @@ export class Host {
     });
   }
 
-  private async recreateQuestionTopic(botId: string) {
+  private async recreateTelegramTopic(botId: string) {
     const transport = this.telegramNotices;
     if (!transport) throw new ChatRequestError("Telegram is not configured for this Host.", 409);
     const saved = this.store.threads.telegramTopic(botId);
@@ -3015,7 +2998,7 @@ export class Host {
       return { botId, ...saved };
     const signal = this.controller.signal;
     try {
-      return await this.createQuestionTopic(botId, transport, signal);
+      return await this.createTelegramTopic(botId, transport, signal);
     } catch (error) {
       if (signal.aborted) throw new ChatRequestError("Host is stopped.", 503);
       if (!(error instanceof TelegramRequestError) || error.kind === "retryable")
@@ -3028,7 +3011,7 @@ export class Host {
         chatId: transport.chatId,
         topicId: null,
         state: "repairable",
-        failure: questionNoticeFailure(error),
+        failure: noticeFailure(error),
         now: this.timestamp(),
       });
     }
