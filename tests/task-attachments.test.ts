@@ -82,6 +82,8 @@ it("upgrades a budget-enabled store with Task attachments and retains spent Run 
       DROP TABLE action_approvals; DROP TABLE delegations; DROP TABLE collaboration_grants; DROP TABLE timezone_updates; DROP TABLE bot_timezones; DROP TABLE routine_commands; DROP TABLE routine_occurrences; DROP TABLE routines; DROP TABLE owner_questions; DROP TABLE delivered_artifacts;
       DROP TABLE agent_publications;
       DROP TABLE task_attachments;
+      DROP TABLE bot_lifecycle_requests;
+      ALTER TABLE agent_groups DROP COLUMN availability;
       UPDATE runs SET active_ms = 1234000, active_since = NULL;
       PRAGMA user_version = 13;
     `);

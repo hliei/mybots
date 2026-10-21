@@ -14,9 +14,15 @@ interface Snapshot {
   }[];
 }
 
+type BotAvailability = "active" | "disabled" | "deleted";
+
+const logicalDeletionRetention =
+  "Logical deletion keeps this Bot's configuration, history, results, workspace, memory, and materials, including copies held by other Bots. It does not restore the Bot or permanently purge retained data.";
+
 interface Bot {
   id: string;
   name: string;
+  availability: BotAvailability;
   workspace: string;
   instructions: string;
   model: { provider: string; id: string };
@@ -86,6 +92,9 @@ function isBot(value: unknown): value is Bot {
     [value.id, value.name, value.workspace, value.instructions].every(
       (field) => typeof field === "string",
     ) &&
+    (value.availability === "active" ||
+      value.availability === "disabled" ||
+      value.availability === "deleted") &&
     isModel(value.model) &&
     isStrings(value.tools) &&
     typeof value.savedVersion === "number" &&
@@ -154,6 +163,7 @@ const saveSettings = document.querySelector<HTMLButtonElement>(
 ) as HTMLButtonElement;
 const settingsMessage = document.querySelector<HTMLElement>("#settings-message") as HTMLElement;
 const pendingKey = "mybots.pending-bot";
+const pendingLifecycleKey = "mybots.pending-lifecycle";
 const pendingSettingsKey = "mybots.pending-settings";
 let selectedId = localStorage.getItem("mybots.selected-bot");
 let pending: Creation | undefined;
@@ -170,6 +180,26 @@ interface SettingsDraft extends Creation {
   skills?: SkillSelection[];
 }
 let pendingSettings: SettingsDraft | undefined;
+interface LifecycleDraft {
+  botId: string;
+  requestId: string;
+  operation: "disable" | "enable" | "delete";
+}
+let pendingLifecycle: LifecycleDraft | undefined;
+try {
+  const stored: unknown = JSON.parse(localStorage.getItem(pendingLifecycleKey) ?? "null");
+  if (
+    record(stored) &&
+    typeof stored.botId === "string" &&
+    typeof stored.requestId === "string" &&
+    (stored.operation === "disable" ||
+      stored.operation === "enable" ||
+      stored.operation === "delete")
+  )
+    pendingLifecycle = stored as unknown as LifecycleDraft;
+} catch {
+  /* An unreadable lifecycle draft has no valid request to retry. */
+}
 try {
   const stored: unknown = JSON.parse(localStorage.getItem(pendingSettingsKey) ?? "null");
   if (isCreation(stored) && record(stored) && typeof stored.botId === "string")
@@ -243,7 +273,10 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     heading.textContent = bot.name;
     const identity = document.createElement("p");
     identity.textContent = `Bot ID: ${bot.id}`;
-    article.append(heading, identity);
+    const availability = document.createElement("p");
+    const managedBot = managed.find((item) => item.id === bot.id);
+    availability.textContent = `Availability: ${managedBot?.availability ?? "active"}`;
+    article.append(heading, identity, availability);
     const sessions = snapshot.sessions.filter((session) => session.botId === bot.id);
     if (sessions.length === 0) {
       const empty = document.createElement("p");
@@ -305,13 +338,44 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
       paragraph.textContent = text;
       selected.append(paragraph);
     }
+    const lifecycle = document.createElement("p");
+    lifecycle.id = "bot-lifecycle";
+    lifecycle.textContent =
+      active.availability === "deleted"
+        ? logicalDeletionRetention
+        : active.availability === "disabled"
+          ? "This Bot is disabled. New chat, tasks, retries, Routines, and delegations are not admitted. Enabling does not revive cancelled work."
+          : "Disabling blocks new chat, tasks, retries, Routines, and delegations and cancels unfinished owned work.";
+    selected.append(lifecycle);
+    const actions = document.createElement("p");
+    const operation = (name: "disable" | "enable" | "delete", label: string): HTMLButtonElement => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent =
+        pendingLifecycle?.botId === active.id && pendingLifecycle.operation === name
+          ? `Retry ${label}`
+          : label;
+      button.addEventListener("click", () => void changeAvailability(active.id, name));
+      return button;
+    };
+    if (active.availability === "active") actions.append(operation("disable", "Disable Bot"));
+    if (active.availability === "disabled") {
+      actions.append(operation("enable", "Enable Bot"));
+      actions.append(operation("disable", "Retry cancellation"));
+    }
+    if (active.availability !== "deleted") {
+      actions.append(operation("delete", "Logically delete Bot"));
+      const disclosure = document.createElement("p");
+      disclosure.textContent = logicalDeletionRetention;
+      selected.append(actions, disclosure);
+    }
     void showSkills(
       active.id,
       pendingSettings?.botId === active.id
         ? (pendingSettings.skills ?? active.skills)
         : active.skills,
     );
-    void showMemory(active.id);
+    void showMemory(active.id, active.availability !== "deleted");
     settingsSection.hidden = false;
     settingsVersions.textContent =
       active.savedVersion === active.effectiveVersion
@@ -332,14 +396,51 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     if (pendingSettings?.botId === active.id) {
       settingsFields.disabled = true;
       saveSettings.textContent = "Retry configuration";
+    } else if (active.availability !== "deleted") {
+      settingsFields.disabled = false;
+      saveSettings.disabled = false;
+    }
+    if (active.availability === "deleted") {
+      settingsFields.disabled = true;
+      saveSettings.disabled = true;
+      settingsMessage.textContent =
+        "Deleted Bot configuration stays inspectable. Active edits are not available.";
     }
   } else {
     settingsSection.hidden = true;
     void showSkills(undefined);
     void showMemory(undefined);
   }
-  void showChat(active?.id);
+  void showChat(active?.id, active?.availability);
   if (snapshot.bots.length === 0) bots.textContent = "No Bots configured.";
+}
+
+async function changeAvailability(
+  botId: string,
+  operation: LifecycleDraft["operation"],
+): Promise<void> {
+  try {
+    if (
+      !pendingLifecycle ||
+      pendingLifecycle.botId !== botId ||
+      pendingLifecycle.operation !== operation
+    ) {
+      pendingLifecycle = { botId, requestId: crypto.randomUUID(), operation };
+      localStorage.setItem(pendingLifecycleKey, JSON.stringify(pendingLifecycle));
+    }
+    const response = await fetch(`/api/bots/${encodeURIComponent(botId)}/${operation}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId: pendingLifecycle.requestId }),
+    });
+    if (response.ok || (response.status >= 400 && response.status < 500)) {
+      localStorage.removeItem(pendingLifecycleKey);
+      pendingLifecycle = undefined;
+    }
+  } catch {
+    /* Keep the saved requestId so a later click retries the same lifecycle operation. */
+  }
+  await load();
 }
 
 let loading = false;

@@ -30,7 +30,13 @@ import {
   workspaceRelativePath,
   writeTaskAttachment,
 } from "./attachments.ts";
-import { BotRequestError, parseBotCreate, parseBotSettings, publicModel } from "./bots.ts";
+import {
+  BotRequestError,
+  logicalDeletionRetention,
+  parseBotCreate,
+  parseBotSettings,
+  publicModel,
+} from "./bots.ts";
 import { ChatRequestError, chatInput } from "./chat.ts";
 import { validateHostConfiguration } from "./config/host.ts";
 import { provisionSession, replaceSessionContext } from "./container-runner.ts";
@@ -988,6 +994,39 @@ export class Host {
     }
   }
 
+  async setBotAvailability(
+    botId: string,
+    operation: "disable" | "enable" | "delete",
+    value: unknown,
+  ) {
+    this.store.threads.thread(botId);
+    if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
+    const input = chatInput(value, []);
+    const changed = this.store.threads.setAvailability(
+      botId,
+      operation,
+      input.requestId,
+      this.timestamp(),
+    );
+    for (const runId of changed.resumeRunIds)
+      this.store.threads.resumeWait(runId, this.timestamp());
+    for (const runId of changed.stoppingRunIds) await this.beginStop(runId);
+    if (operation === "enable") this.admitDueRoutines();
+    this.schedule();
+    const bot = this.store.managedBots().find((item) => item.id === botId);
+    if (!bot) throw new ChatRequestError("Bot not found.", 404);
+    return {
+      requestId: input.requestId,
+      replayed: changed.replayed,
+      bot,
+      ...(operation === "delete" ? { retention: logicalDeletionRetention } : {}),
+      runs: changed.stoppingRunIds.map((runId) => {
+        const run = this.store.threads.run(runId);
+        return { runId, state: run.state, stopError: run.stop_error };
+      }),
+    };
+  }
+
   localSkills(botId: string) {
     if (!this.managedBots().some((bot) => bot.id === botId))
       throw new BotRequestError("Bot not found.", 404);
@@ -1016,12 +1055,21 @@ export class Host {
     return new BotMemory(await this.memoryWorkspace(botId)).read();
   }
 
+  private rejectDeletedEdits(botId: string): void {
+    if (this.store.threads.availability(botId) === "deleted")
+      throw new BotRequestError(
+        "Deleted Bot materials stay inspectable. Active edits are not available.",
+        409,
+      );
+  }
+
   async saveMemory(
     botId: string,
     kind: "index" | "definition" | "topic",
     value: unknown,
     topicId?: string,
   ) {
+    this.rejectDeletedEdits(botId);
     const input = parseMemorySave(value);
     return new BotMemory(await this.memoryWorkspace(botId)).save(
       kind,
@@ -1037,6 +1085,7 @@ export class Host {
     value: unknown,
     topicId?: string,
   ) {
+    this.rejectDeletedEdits(botId);
     const input = parseMemoryDelete(value);
     return new BotMemory(await this.memoryWorkspace(botId)).delete(kind, input.version, topicId);
   }

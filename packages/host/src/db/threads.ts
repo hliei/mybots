@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { InboundMessage, OutboundMessage, ProcessingAck } from "@mybots/mailbox";
-import { ChatRequestError } from "../chat.ts";
+import { ChatRequestError, rejectInactiveBot } from "../chat.ts";
 import { history } from "./history.ts";
 import type { SavedSession } from "./index.ts";
 import { type Routine, routineBusy } from "./routines.ts";
@@ -114,6 +114,129 @@ export class ThreadStore {
    WHERE id NOT IN (SELECT bot_id FROM threads)`)
       .run(now);
   }
+  availability(botId: string): string {
+    const row = this.db.prepare("SELECT availability FROM agent_groups WHERE id = ?").get(botId) as
+      | { availability: string }
+      | undefined;
+    if (!row) throw new ChatRequestError("Bot not found.", 404);
+    return row.availability;
+  }
+
+  private requireAdmitting(botId: string): void {
+    rejectInactiveBot(this.availability(botId));
+  }
+
+  /**
+   * Disable or delete blocks new admissions and cancels unfinished owned work.
+   * Enable restores admission only. Cancelled Runs stay cancelled.
+   */
+  setAvailability(
+    botId: string,
+    operation: "disable" | "enable" | "delete",
+    requestId: string,
+    now: string,
+  ): { replayed: boolean; stoppingRunIds: string[]; resumeRunIds: string[] } {
+    this.thread(botId);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const prior = this.db
+        .prepare("SELECT bot_id, operation FROM bot_lifecycle_requests WHERE request_id = ?")
+        .get(requestId) as { bot_id: string; operation: string } | undefined;
+      if (prior && (prior.bot_id !== botId || prior.operation !== operation))
+        throw new ChatRequestError("This requestId belongs to another operation.", 409);
+      const replayed = !!prior;
+      if (!replayed) {
+        if (
+          this.db
+            .prepare("SELECT request_id FROM input_admissions WHERE request_id = ?")
+            .get(requestId) ||
+          this.db
+            .prepare("SELECT request_id FROM bot_creations WHERE request_id = ?")
+            .get(requestId) ||
+          this.db
+            .prepare("SELECT request_id FROM bot_updates WHERE request_id = ?")
+            .get(requestId) ||
+          this.db
+            .prepare("SELECT request_id FROM routine_commands WHERE request_id = ?")
+            .get(requestId)
+        )
+          throw new ChatRequestError("This requestId belongs to another operation.", 409);
+        this.db
+          .prepare("INSERT INTO bot_lifecycle_requests VALUES (?, ?, ?)")
+          .run(requestId, botId, operation);
+      }
+      const current = this.availability(botId);
+      const stopping = new Set<string>();
+      const resume = new Set<string>();
+      if (operation === "enable") {
+        if (current === "deleted")
+          throw new ChatRequestError(
+            "Deleted Bots stay inspectable. Restoration is not available.",
+            409,
+          );
+        if (current === "active" && !replayed)
+          throw new ChatRequestError("Bot is already active.", 409);
+        if (current === "disabled")
+          this.db
+            .prepare("UPDATE agent_groups SET availability = 'active' WHERE id = ?")
+            .run(botId);
+      } else {
+        if (operation === "disable" && current === "deleted")
+          throw new ChatRequestError("Bot is deleted.", 409);
+        for (const id of this.cancelOwnedWork(botId, now, resume)) stopping.add(id);
+        const next = operation === "delete" ? "deleted" : "disabled";
+        if (current !== "deleted" && current !== next)
+          this.db.prepare("UPDATE agent_groups SET availability = ? WHERE id = ?").run(next, botId);
+      }
+      this.db.exec("COMMIT");
+      return {
+        replayed,
+        stoppingRunIds: [...stopping],
+        resumeRunIds: [...resume].filter((id) => !stopping.has(id)),
+      };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  /** Persist cancellation of this Bot's unfinished Runs, descendants, and pending decisions. */
+  private cancelOwnedWork(botId: string, now: string, resume: Set<string>): string[] {
+    const stopping = new Set<string>();
+    const owned = this.db
+      .prepare(
+        `SELECT r.id AS id FROM runs r JOIN sessions s ON s.id = r.id
+ WHERE s.agent_group_id = ? AND s.purpose = 'run'
+ AND r.state IN ('queued', 'active', 'waiting', 'stopping', 'uncertain')`,
+      )
+      .all(botId) as { id: string }[];
+    for (const row of owned) for (const id of this.markOwnedStopping(row.id, now)) stopping.add(id);
+    const inbound = this.db
+      .prepare(
+        `SELECT d.id AS id, d.parent_run_id AS parentRunId FROM delegations d
+ JOIN action_approvals a ON a.id = d.id
+ WHERE d.target_bot_id = ? AND d.child_run_id IS NULL AND a.state IN ('pending', 'approved')`,
+      )
+      .all(botId) as { id: string; parentRunId: string }[];
+    for (const row of inbound) {
+      this.settleApproval(
+        row.id,
+        "cancelled",
+        "Target Bot is disabled or deleted and does not admit this delegation.",
+        now,
+      );
+      const parent = this.run(row.parentRunId);
+      if (
+        parent.state === "waiting" &&
+        !stopping.has(parent.id) &&
+        !this.openDelegations(parent.id) &&
+        !this.openQuestions(parent.id)
+      )
+        resume.add(parent.id);
+    }
+    return [...stopping];
+  }
+
   thread(botId: string): ThreadRow {
     const row = this.db.prepare("SELECT * FROM threads WHERE bot_id = ?").get(botId) as unknown as
       | ThreadRow
@@ -166,6 +289,7 @@ export class ThreadStore {
     destinationId = "local-client",
   ) {
     return this.admit(input.requestId, { ...input, destinationId }, () => {
+      this.requireAdmitting(input.botId);
       const thread = this.thread(input.botId);
       const selected = input.selectedMessageIds ?? [];
       let run: RunRow | undefined;
@@ -298,6 +422,7 @@ export class ThreadStore {
   runNow(botId: string, routine: Routine, requestId: string, now: string) {
     const definition = { ...routine, nextOccurrence: now };
     return this.admit(requestId, { operation: "run-routine", botId, routineId: routine.id }, () => {
+      this.requireAdmitting(botId);
       const saved = this.db
         .prepare("SELECT deleted_at FROM routines WHERE id = ? AND bot_id = ?")
         .get(routine.id, botId) as { deleted_at: string | null } | undefined;
@@ -476,6 +601,7 @@ export class ThreadStore {
   }
   retry(botId: string, runId: string, requestId: string, now: string) {
     return this.admit(requestId, { operation: "retry", botId, runId }, () => {
+      this.requireAdmitting(botId);
       const run = this.ownedRun(botId, runId);
       if (["queued", "active", "stopping"].includes(run.state))
         throw new ChatRequestError("Stop is unconfirmed.", 409);
@@ -1654,7 +1780,9 @@ export class ThreadStore {
     );
     return (
       this.db
-        .prepare("SELECT id, name FROM agent_groups WHERE id != ? ORDER BY name, id")
+        .prepare(
+          "SELECT id, name FROM agent_groups WHERE id != ? AND availability = 'active' ORDER BY name, id",
+        )
         .all(botId) as { id: string; name: string }[]
     ).map((bot) => ({
       targetBotId: bot.id,
@@ -1788,6 +1916,8 @@ export class ThreadStore {
     }
     if (this.delegationIdentityUsed(input.requestId))
       throw new ChatRequestError("Request identity belongs to another operation.", 409);
+    this.requireAdmitting(input.sourceBotId);
+    this.requireAdmitting(input.targetBotId);
     const denied = this.delegationsInvolving(input.parentRunId).find(
       (row) =>
         row.parentRunId === input.parentRunId &&
@@ -2002,6 +2132,15 @@ export class ThreadStore {
     for (const row of this.delegationsInvolving(runId)) {
       const approval = row.approval;
       if (row.parentRunId !== runId || approval?.state !== "approved") continue;
+      if (this.availability(row.targetBotId) !== "active") {
+        this.settleApproval(
+          row.id,
+          "stale",
+          "Target Bot is disabled or deleted and does not admit this delegation.",
+          now,
+        );
+        continue;
+      }
       if (
         row.state !== "pending" ||
         row.childRunId ||

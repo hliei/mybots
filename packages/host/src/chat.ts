@@ -6,6 +6,17 @@ export class ChatRequestError extends Error {
   }
 }
 
+/** Disabled and deleted Bots keep their identity and reject new admissions. */
+export function rejectInactiveBot(availability: string): void {
+  if (availability === "active") return;
+  throw new ChatRequestError(
+    availability === "disabled"
+      ? "Bot is disabled. New chat, tasks, retries, Routines, and delegations are not admitted."
+      : "Bot is deleted. Its identity remains for inspection and does not admit new work.",
+    409,
+  );
+}
+
 /** Validate the entire owner operation; execution settings cannot be overridden here. */
 export function chatInput(
   value: unknown,

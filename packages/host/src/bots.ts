@@ -15,9 +15,16 @@ export interface BotConfigurationView {
   tools: string[];
 }
 
+export type BotAvailability = "active" | "disabled" | "deleted";
+
+/** Product deletion keeps evidence. It does not list feature files or offer restore or purge. */
+export const logicalDeletionRetention =
+  "Logical deletion keeps this Bot's configuration, history, results, workspace, memory, and materials, including copies held by other Bots. It does not restore the Bot or permanently purge retained data.";
+
 export interface ManagedBot extends BotSettings {
   skills: SkillSelection[];
   id: string;
+  availability: BotAvailability;
   /** Owned material relative to the installation root. */
   workspace: string;
   savedVersion: number;

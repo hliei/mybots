@@ -327,6 +327,7 @@ const retry = element<HTMLButtonElement>("retry-chat");
 const resetBackground = element<HTMLButtonElement>("reset-background");
 const pendingKey = "mybots.pending-thread-input";
 let botId: string | undefined;
+let availability: "active" | "disabled" | "deleted" = "active";
 let version = 0;
 let refreshTimer = 0;
 let sending = false;
@@ -339,15 +340,21 @@ try {
   /* Unreadable browser state has no request to recover. */
 }
 function controls(): void {
+  const admitting = availability === "active";
   for (const node of form.querySelectorAll<
     HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement
   >("input, textarea, select, button"))
-    node.disabled = sending || !!pending;
+    node.disabled = !admitting || sending || !!pending;
   retry.hidden = !pending;
-  retry.disabled = sending;
+  retry.disabled = sending || !admitting;
 }
-export async function showChat(selectedBotId: string | undefined): Promise<void> {
+export async function showChat(
+  selectedBotId: string | undefined,
+  next?: "active" | "disabled" | "deleted",
+): Promise<void> {
   window.clearTimeout(refreshTimer);
+  if (!selectedBotId) availability = "active";
+  else if (next) availability = next;
   if (botId !== selectedBotId) {
     clearBackgroundSelection();
     botId = selectedBotId;
@@ -368,10 +375,20 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
   controls();
   if (pending && !sending)
     notice.textContent = `Response unconfirmed for Bot ${pending.botId}. Retry the saved input to recover its Task/Run association.`;
+  else if (availability !== "active")
+    notice.textContent =
+      availability === "disabled"
+        ? "This Bot is disabled. New chat, tasks, retries, Routines, and delegations are not admitted."
+        : "This Bot is deleted. Its identity remains for inspection and does not admit new work.";
+  else if (notice.textContent?.startsWith("This Bot is ")) notice.textContent = "";
   try {
-    const pendingRoutine = await showRoutines(botId, () => {
-      if (botId) void showChat(botId);
-    });
+    const pendingRoutine = await showRoutines(
+      botId,
+      () => {
+        if (botId) void showChat(botId);
+      },
+      availability,
+    );
     if (current !== version) return;
     const response = await fetch(`/api/bots/${encodeURIComponent(botId)}/thread`, {
       cache: "no-store",
@@ -380,9 +397,14 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
     const detail: unknown = await response.json();
     if (!isDetail(detail)) throw new Error();
     if (current !== version) return;
-    showCollaboration(botId, detail.collaboration, () => {
-      if (botId) void showChat(botId);
-    });
+    showCollaboration(
+      botId,
+      detail.collaboration,
+      () => {
+        if (botId) void showChat(botId);
+      },
+      availability === "active",
+    );
     setBackgroundBoundary(detail.thread.backgroundBoundary);
     selected.textContent = `Thread ID: ${detail.thread.id} · Chat background boundary: ${detail.thread.backgroundBoundary}. Host execution: ${detail.admission.activeCount} of ${detail.admission.activeLimit} active.`;
     const priorTarget = target.value;
@@ -545,8 +567,11 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
           article.append(inspect);
           const runnable = ["queued", "active", "stopping", "waiting"].includes(run.state);
           if (runnable) article.append(runButton("Stop run", "stop", task.id, run.id));
-          if (run.state === "uncertain" || run.state === "closed")
-            article.append(runButton("Retry run", "retry", task.id, run.id));
+          if (run.state === "uncertain" || run.state === "closed") {
+            const retryRun = runButton("Retry run", "retry", task.id, run.id);
+            retryRun.disabled = availability !== "active";
+            article.append(retryRun);
+          }
           if (run.state === "uncertain")
             article.append(runButton("Close uncertain run", "close", task.id, run.id));
         }
