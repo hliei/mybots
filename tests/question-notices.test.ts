@@ -731,3 +731,43 @@ it("retains attempts and backoff when the Host stops during Telegram sends", asy
     releaseSend();
   }
 });
+
+it("retains topic history after logical Bot deletion without giving it to a same-name replacement", async () => {
+  const driver = new MailboxDriver();
+  const telegram = await startTelegram((method) => {
+    if (method === "getChat") return okChat();
+    if (method === "createForumTopic") return okTopic(77, "Personal");
+    return okSend();
+  });
+  const { configuration } = await open(driver);
+  attach(telegram.url, configuration);
+  await ask(driver, "retained-notice", "Which city?");
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).notices[0]?.state).toBe("delivered"),
+  );
+  const before = await get("/api/bots/personal/thread");
+  expect((await post("/api/bots/personal/delete", { requestId: "delete-personal" })).status).toBe(
+    202,
+  );
+  expect(
+    (await post("/api/bots/personal/telegram-topic/repair", { requestId: "repair-deleted" }))
+      .status,
+  ).toBe(409);
+  const retained = await get("/api/bots/personal/thread");
+  expect(retained.telegramTopic).toEqual(before.telegramTopic);
+  expect(retained.notices).toEqual(before.notices);
+  const replacement = await (
+    await post("/api/bots", {
+      requestId: "replacement",
+      name: "Personal",
+      instructions: "Independent identity",
+      model: { provider: "deepseek", id: "deepseek-chat" },
+      tools: ["read"],
+    })
+  ).json();
+  expect(replacement.bot.id).not.toBe("personal");
+  const fresh = await get(`/api/bots/${replacement.bot.id}/thread`);
+  expect(fresh.telegramTopic).toBeNull();
+  expect(fresh.notices).toEqual([]);
+  expect(sends(telegram.calls)).toHaveLength(1);
+});

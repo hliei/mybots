@@ -25,6 +25,6 @@ CREATE TABLE question_notices (
  updated_at TEXT NOT NULL
 );
 CREATE INDEX question_notices_bot ON question_notices(bot_id, state);
-PRAGMA user_version = 24;
+PRAGMA user_version = 26;
 COMMIT;
 `;

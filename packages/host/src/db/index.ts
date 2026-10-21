@@ -35,7 +35,9 @@ import { routineLifecycleSchema } from "./migrations/020-routine-lifecycle.ts";
 import { delegationSchema } from "./migrations/021-delegations.ts";
 import { actionApprovalSchema } from "./migrations/022-action-approvals.ts";
 import { collaborationRevocationSchema } from "./migrations/023-collaboration-revocation.ts";
-import { questionNoticeSchema } from "./migrations/024-question-notices.ts";
+import { delegationFileSchema } from "./migrations/024-delegation-files.ts";
+import { botAvailabilitySchema } from "./migrations/025-bot-availability.ts";
+import { questionNoticeSchema } from "./migrations/026-question-notices.ts";
 import { RoutineStore } from "./routines.ts";
 import { ThreadStore } from "./threads.ts";
 
@@ -107,7 +109,7 @@ export class HostStore {
       const { user_version } = this.db.prepare("PRAGMA user_version").get() as {
         user_version: number;
       };
-      if (user_version > 24) throw new Error("Unsupported host schema version");
+      if (user_version > 26) throw new Error("Unsupported host schema version");
       if (
         user_version > 0 &&
         user_version < 8 &&
@@ -139,7 +141,9 @@ export class HostStore {
       if (user_version <= 20) this.db.exec(delegationSchema);
       if (user_version <= 21) this.db.exec(actionApprovalSchema);
       if (user_version <= 22) this.db.exec(collaborationRevocationSchema);
-      if (user_version <= 23) this.db.exec(questionNoticeSchema);
+      if (user_version <= 23) this.db.exec(delegationFileSchema);
+      if (user_version <= 24) this.db.exec(botAvailabilitySchema);
+      if (user_version <= 25) this.db.exec(questionNoticeSchema);
       this.routines = new RoutineStore(this.db);
       this.seed(configuration, dirname(dirname(file)));
       this.threads = new ThreadStore(this.db);
@@ -181,7 +185,8 @@ export class HostStore {
           );
         }
         this.db
-          .prepare(`INSERT INTO agent_groups VALUES (?, ?, ?, 'pi', ?) ON CONFLICT(id) DO NOTHING`)
+          .prepare(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at)
+          VALUES (?, ?, ?, 'pi', ?) ON CONFLICT(id) DO NOTHING`)
           .run(agent.id, agent.name, agent.folder, now);
         this.db
           .prepare(
@@ -310,7 +315,7 @@ export class HostStore {
 
   managedBots(): ManagedBot[] {
     return this.db
-      .prepare(`SELECT a.id, a.name, a.folder, c.instructions, c.model_config, c.resources, c.version
+      .prepare(`SELECT a.id, a.name, a.folder, a.availability, c.instructions, c.model_config, c.resources, c.version
       FROM agent_groups a JOIN container_configs c ON c.agent_group_id = a.id ORDER BY a.created_at, a.id`)
       .all()
       .map((row) => {
@@ -337,6 +342,7 @@ export class HostStore {
         return {
           id: row.id as string,
           name: row.name as string,
+          availability: row.availability as ManagedBot["availability"],
           workspace: `groups/${row.folder}`,
           ...saved,
           savedVersion: row.version as number,
@@ -373,7 +379,8 @@ export class HostStore {
     try {
       const now = new Date().toISOString();
       this.db
-        .prepare("INSERT INTO agent_groups VALUES (?, ?, ?, 'pi', ?)")
+        .prepare(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at)
+        VALUES (?, ?, ?, 'pi', ?)`)
         .run(id, input.name, folder, now);
       this.db
         .prepare(`INSERT INTO container_configs
@@ -475,6 +482,14 @@ export class HostStore {
         | { version: number; resources: string | null; web: string | null }
         | undefined;
       if (!current) throw new BotRequestError("Bot not found.", 404);
+      const availability = this.db
+        .prepare("SELECT availability FROM agent_groups WHERE id = ?")
+        .get(botId) as { availability: string } | undefined;
+      if (availability?.availability === "deleted")
+        throw new BotRequestError(
+          "Deleted Bot configuration stays inspectable. Active edits are not available.",
+          409,
+        );
       const resources = JSON.parse(current.resources ?? "{}") as AgentResources;
       const nextResources = {
         ...resources,

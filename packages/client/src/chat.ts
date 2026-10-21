@@ -26,6 +26,7 @@ interface SelectedResult extends Publication {
   taskId: string;
   runId: string;
   delegationId: string | null;
+  originatingRunId: string | null;
   artifacts: { id: string; name: string; bytes: number }[];
 }
 interface Question {
@@ -55,6 +56,12 @@ interface TelegramTopic {
   state: "mapped" | "repairable";
   failure: string | null;
 }
+interface DelegationFile {
+  kind: "attachment" | "artifact";
+  id: string;
+  filename: string;
+  bytes: number;
+}
 interface Approval {
   id: string;
   operation: "delegate";
@@ -78,6 +85,7 @@ interface Delegation {
   text: string;
   state: string;
   result: string | null;
+  files: DelegationFile[];
 }
 interface Run {
   id: string;
@@ -142,6 +150,7 @@ interface Pending {
   text: string;
   questionId?: string;
   approval?: Approval;
+  files?: DelegationFile[];
   decision?: "approve" | "deny";
   taskId?: string;
   runId?: string;
@@ -171,6 +180,15 @@ function validTopic(value: unknown): value is TelegramTopic {
     (value.topicId === null || typeof value.topicId === "string") &&
     (value.state === "mapped" || value.state === "repairable") &&
     (value.failure === null || typeof value.failure === "string")
+  );
+}
+function validDelegationFile(value: unknown): value is DelegationFile {
+  return (
+    record(value) &&
+    (value.kind === "attachment" || value.kind === "artifact") &&
+    typeof value.id === "string" &&
+    typeof value.filename === "string" &&
+    typeof value.bytes === "number"
   );
 }
 function validApproval(value: unknown): value is Approval {
@@ -287,7 +305,9 @@ function isDetail(value: unknown): value is Detail {
                 (row.childRunId === null || typeof row.childRunId === "string") &&
                 (row.revokedAt === null || typeof row.revokedAt === "string") &&
                 (row.approval === null || validApproval(row.approval)) &&
-                (row.result === null || typeof row.result === "string"),
+                (row.result === null || typeof row.result === "string") &&
+                Array.isArray(row.files) &&
+                row.files.every(validDelegationFile),
             ) &&
             Array.isArray(run.progress) &&
             run.progress.every(publication) &&
@@ -298,6 +318,7 @@ function isDetail(value: unknown): value is Detail {
                 record(result) &&
                 [result.botId, result.taskId, result.runId].every((id) => typeof id === "string") &&
                 (result.delegationId === null || typeof result.delegationId === "string") &&
+                (result.originatingRunId === null || typeof result.originatingRunId === "string") &&
                 Array.isArray(result.artifacts) &&
                 result.artifacts.every(
                   (file: unknown) =>
@@ -380,6 +401,7 @@ const retry = element<HTMLButtonElement>("retry-chat");
 const resetBackground = element<HTMLButtonElement>("reset-background");
 const pendingKey = "mybots.pending-thread-input";
 let botId: string | undefined;
+let availability: "active" | "disabled" | "deleted" = "active";
 let version = 0;
 let refreshTimer = 0;
 let locatedQuestion = false;
@@ -393,15 +415,21 @@ try {
   /* Unreadable browser state has no request to recover. */
 }
 function controls(): void {
+  const admitting = availability === "active";
   for (const node of form.querySelectorAll<
     HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement
   >("input, textarea, select, button"))
-    node.disabled = sending || !!pending;
+    node.disabled = !admitting || sending || !!pending;
   retry.hidden = !pending;
-  retry.disabled = sending;
+  retry.disabled = sending || !admitting;
 }
-export async function showChat(selectedBotId: string | undefined): Promise<void> {
+export async function showChat(
+  selectedBotId: string | undefined,
+  next?: "active" | "disabled" | "deleted",
+): Promise<void> {
   window.clearTimeout(refreshTimer);
+  if (!selectedBotId) availability = "active";
+  else if (next) availability = next;
   if (botId !== selectedBotId) {
     clearBackgroundSelection();
     botId = selectedBotId;
@@ -422,10 +450,20 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
   controls();
   if (pending && !sending)
     notice.textContent = `Response unconfirmed for Bot ${pending.botId}. Retry the saved input to recover its Task/Run association.`;
+  else if (availability !== "active")
+    notice.textContent =
+      availability === "disabled"
+        ? "This Bot is disabled. New chat, tasks, retries, Routines, and delegations are not admitted."
+        : "This Bot is deleted. Its identity remains for inspection and does not admit new work.";
+  else if (notice.textContent?.startsWith("This Bot is ")) notice.textContent = "";
   try {
-    const pendingRoutine = await showRoutines(botId, () => {
-      if (botId) void showChat(botId);
-    });
+    const pendingRoutine = await showRoutines(
+      botId,
+      () => {
+        if (botId) void showChat(botId);
+      },
+      availability,
+    );
     if (current !== version) return;
     const response = await fetch(`/api/bots/${encodeURIComponent(botId)}/thread`, {
       cache: "no-store",
@@ -434,9 +472,14 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
     const detail: unknown = await response.json();
     if (!isDetail(detail)) throw new Error();
     if (current !== version) return;
-    showCollaboration(botId, detail.collaboration, () => {
-      if (botId) void showChat(botId);
-    });
+    showCollaboration(
+      botId,
+      detail.collaboration,
+      () => {
+        if (botId) void showChat(botId);
+      },
+      availability !== "deleted",
+    );
     setBackgroundBoundary(detail.thread.backgroundBoundary);
     selected.textContent = `Thread ID: ${detail.thread.id} · Chat background boundary: ${detail.thread.backgroundBoundary}. Host execution: ${detail.admission.activeCount} of ${detail.admission.activeLimit} active.`;
     const priorTarget = target.value;
@@ -511,7 +554,7 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
                   `Selected result · Attempt ${result.attemptId}: ${result.text}${result.truncated ? " [Excerpt]" : ""}`,
                 ),
                 paragraph(
-                  `Bot: ${result.botId} · Task: ${result.taskId} · Run: ${result.runId}${result.delegationId ? ` · Delegation: ${result.delegationId}` : ""}`,
+                  `Bot: ${result.botId} · Task: ${result.taskId} · Run: ${result.runId}${result.delegationId ? ` · Delegation: ${result.delegationId}` : ""}${result.originatingRunId ? ` · Originating Run: ${result.originatingRunId}` : ""}`,
                 ),
               );
               for (const file of result.artifacts) {
@@ -607,8 +650,11 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
           article.append(inspect);
           const runnable = ["queued", "active", "stopping", "waiting"].includes(run.state);
           if (runnable) article.append(runButton("Stop run", "stop", task.id, run.id));
-          if (run.state === "uncertain" || run.state === "closed")
-            article.append(runButton("Retry run", "retry", task.id, run.id));
+          if (run.state === "uncertain" || run.state === "closed") {
+            const retryRun = runButton("Retry run", "retry", task.id, run.id);
+            retryRun.disabled = availability !== "active";
+            article.append(retryRun);
+          }
           if (run.state === "uncertain")
             article.append(runButton("Close uncertain run", "close", task.id, run.id));
         }
@@ -652,6 +698,14 @@ function delegationCard(run: Run, delegation: Delegation): HTMLElement {
     paragraph(`Originating Run ${delegation.originatingRunId}`),
     paragraph(`Selected text: ${delegation.text}`),
   );
+  if (delegation.files.length > 0)
+    section.append(
+      paragraph(
+        `Selected files: ${delegation.files
+          .map((file) => `${file.kind} ${file.filename} (${file.bytes} bytes)`)
+          .join(", ")}`,
+      ),
+    );
   if (delegation.childTaskId && delegation.childRunId)
     section.append(
       paragraph(`Child Task ${delegation.childTaskId} · Child Run ${delegation.childRunId}`),
@@ -713,6 +767,7 @@ function approvalCard(source: Delegation, approval: Approval, run: Run): HTMLEle
           operation: "decision",
           text: approval.text,
           approval,
+          files: source.files,
           decision,
         };
         localStorage.setItem(pendingKey, JSON.stringify(pending));
@@ -737,7 +792,7 @@ function topicPanel(topic: TelegramTopic): HTMLElement {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "Repair Telegram topic";
-    button.disabled = sending || !!pending;
+    button.disabled = sending || !!pending || availability === "deleted";
     button.addEventListener("click", () => {
       if (!botId || sending || pending) return;
       pending = { botId, requestId: crypto.randomUUID(), operation: "repair", text: "" };
@@ -909,6 +964,12 @@ async function submit(newTask = false): Promise<void> {
               targetBotId: admitted.approval?.targetBotId,
               text: admitted.approval?.text,
               deadline: admitted.approval?.deadline,
+              files: (admitted.files ?? []).map((file) => ({
+                kind: file.kind,
+                id: file.id,
+                filename: file.filename,
+                bytes: file.bytes,
+              })),
             }
           : admitted.operation === "reset" || runOperation || noticeOperation
             ? { requestId: admitted.requestId }

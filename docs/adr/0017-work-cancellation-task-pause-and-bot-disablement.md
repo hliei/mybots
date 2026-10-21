@@ -1,7 +1,7 @@
 # Work cancellation, Routine pause, and Bot disablement
 
 Status: accepted
-Implementation: partial. Routine pause, resume, run-now and logical deletion are implemented. Bot disablement and deletion remain planned.
+Implementation: implemented. Routine pause, resume, run-now and logical deletion, and Bot disablement, enablement and data-preserving logical deletion, are available through the local API and client. Restoring a deleted Bot and permanently purging retained data remain outside this contract. Ongoing product retention is separate from the one-time fresh runtime transition in [ADR 0028](0028-fresh-runtime-state-for-the-execution-model.md).
 
 Stopping selected work cancels that work, its owned delegated descendants and
 pending user decisions. Preserve history and existing results; stopping one
