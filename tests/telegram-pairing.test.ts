@@ -50,10 +50,16 @@ it("registers the private chat that sends the pairing code and leaves the messag
   const sends: string[] = [];
   const api: TelegramApi = {
     async getMe() {
-      return { id: "1" };
+      return { id: "1", topicsEnabled: false };
     },
     async getUpdates(offset) {
       return { updates: [], nextOffset: offset };
+    },
+    async getChat() {
+      return { isForum: false };
+    },
+    async createForumTopic() {
+      return { topicId: "1" };
     },
     async sendMessage(_chatId, text) {
       sends.push(text);
@@ -81,8 +87,15 @@ it("registers the private chat that sends the pairing code and leaves the messag
   await channel.dispatch({ updateId: 2, userId: "99", chatId: "99", text: "123456" });
   expect(readPairedTelegram(root)?.platformId).toBe("42");
   expect(readPairedTelegram(root)).toEqual({ platformId: "42", instance: "telegram" });
-  await channel.dispatch({ updateId: 2, userId: "42", chatId: "42", text: "Hello" });
-  expect(host.sessions()).toHaveLength(1);
+  await channel.dispatch({
+    updateId: 3,
+    userId: "43",
+    chatId: "43",
+    text: "123456",
+    threadId: "9",
+  });
+  await channel.dispatch({ updateId: 4, userId: "42", chatId: "42", text: "Hello" });
+  expect(host.sessions()).toEqual([]);
 });
 
 it("retires a wrong pairing code and ignores groups and unpaired private chats", async () => {
@@ -91,10 +104,16 @@ it("retires a wrong pairing code and ignores groups and unpaired private chats",
   await writePairingState(root, { code: "123456", wrongs: 0 });
   const api: TelegramApi = {
     async getMe() {
-      return { id: "1" };
+      return { id: "1", topicsEnabled: false };
     },
     async getUpdates(offset) {
       return { updates: [], nextOffset: offset };
+    },
+    async getChat() {
+      return { isForum: false };
+    },
+    async createForumTopic() {
+      return { topicId: "1" };
     },
     async sendMessage() {},
   };
@@ -127,10 +146,16 @@ it("drops the pairing state on the sixth wrong private message", async () => {
   await writePairingState(root, { code: "123456", wrongs: 5 });
   const api: TelegramApi = {
     async getMe() {
-      return { id: "1" };
+      return { id: "1", topicsEnabled: false };
     },
     async getUpdates(offset) {
       return { updates: [], nextOffset: offset };
+    },
+    async getChat() {
+      return { isForum: false };
+    },
+    async createForumTopic() {
+      return { topicId: "1" };
     },
     async sendMessage() {},
   };

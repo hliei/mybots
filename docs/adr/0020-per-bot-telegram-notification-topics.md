@@ -1,7 +1,8 @@
 # Per-Bot Telegram notification topics
 
 Status: accepted
-Implementation: planned
+Implementation: question notices, per-Bot topic mapping and bounded delivery are
+implemented. Completion and collaboration alert routing remain planned.
 
 One Telegram bot account delivers notifications to one owner-private chat, with
 one private-chat topic per Mybots Bot. The Host persists Bot-to-topic identity and

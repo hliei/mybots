@@ -1,3 +1,5 @@
+import { chunkContent } from "./chunk-content.ts";
+
 /**
  * Telegram Bot API boundary.
  *
@@ -18,6 +20,23 @@ export interface TelegramUpdate {
   userId: string;
   chatId: string;
   text: string;
+  /** Present when the message belongs to a private-chat topic. */
+  threadId?: string;
+}
+
+export type TelegramFailureKind = "retryable" | "topic-missing" | "topic-mode" | "authority";
+
+/** Platform rejection. `retryAfterMs` is set only when Telegram states a wait. */
+export class TelegramRequestError extends Error {
+  readonly kind: TelegramFailureKind;
+  readonly retryAfterMs?: number;
+
+  constructor(message: string, kind: TelegramFailureKind, retryAfterMs?: number) {
+    super(message);
+    this.name = "TelegramRequestError";
+    this.kind = kind;
+    if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
+  }
 }
 
 export interface TelegramPollResult {
@@ -28,12 +47,16 @@ export interface TelegramPollResult {
 export interface TelegramBotIdentity {
   id: string;
   username?: string;
+  /** True when BotFather has enabled topics in this bot's private chats. */
+  topicsEnabled: boolean;
 }
 
 export interface TelegramApi {
   getMe(signal: AbortSignal): Promise<TelegramBotIdentity>;
   getUpdates(offset: number, signal: AbortSignal): Promise<TelegramPollResult>;
-  sendMessage(chatId: string, text: string, signal: AbortSignal): Promise<void>;
+  getChat(chatId: string, signal: AbortSignal): Promise<{ isForum: boolean }>;
+  createForumTopic(chatId: string, name: string, signal: AbortSignal): Promise<{ topicId: string }>;
+  sendMessage(chatId: string, text: string, signal: AbortSignal, topicId?: string): Promise<void>;
 }
 
 export interface TelegramApiOptions {
@@ -88,7 +111,28 @@ export function normalizeTelegramUpdate(value: unknown): TelegramUpdate | undefi
   const userId = digits(from.id, false);
   const chatId = digits(chat.id, true);
   if (userId === undefined || chatId === undefined) return undefined;
-  return { updateId: update.update_id, userId, chatId, text: message.text };
+  const threadId = digits(message.message_thread_id, false);
+  return {
+    updateId: update.update_id,
+    userId,
+    chatId,
+    text: message.text,
+    ...(threadId !== undefined ? { threadId } : {}),
+  };
+}
+
+function failureKind(status: number, description: string): TelegramFailureKind {
+  if (/message thread not found/iu.test(description)) return "topic-missing";
+  if (/not a forum|topics are not enabled|forum topics are disabled|topic mode/iu.test(description))
+    return "topic-mode";
+  if (
+    status === 403 ||
+    /blocked|kicked|not enough rights|have no rights|chat not found|can't send messages|need administrator/iu.test(
+      description,
+    )
+  )
+    return "authority";
+  return "retryable";
 }
 
 export function createTelegramApi(options: TelegramApiOptions): TelegramApi {
@@ -124,7 +168,18 @@ export function createTelegramApi(options: TelegramApiOptions): TelegramApi {
     if (!response.ok || result?.ok !== true) {
       const description =
         typeof result?.description === "string" ? result.description : `HTTP ${response.status}`;
-      throw new Error(`Telegram ${method} failed: ${description}`);
+      const parameters = record(result?.parameters);
+      const stated =
+        typeof parameters?.retry_after === "number" && parameters.retry_after > 0
+          ? parameters.retry_after
+          : undefined;
+      const described = /retry after (\d+)/iu.exec(description);
+      const seconds = stated ?? (described ? Number(described[1]) : undefined);
+      throw new TelegramRequestError(
+        `Telegram ${method} failed: ${description}`,
+        failureKind(response.status, description),
+        seconds !== undefined ? seconds * 1000 : undefined,
+      );
     }
     return result.result;
   }
@@ -134,12 +189,20 @@ export function createTelegramApi(options: TelegramApiOptions): TelegramApi {
       const result = record(await call("getMe", {}, signal));
       const id = digits(result?.id, false);
       if (!id) throw new Error("Telegram getMe returned an invalid bot identity.");
-      return { id, ...(typeof result?.username === "string" ? { username: result.username } : {}) };
+      return {
+        id,
+        ...(typeof result?.username === "string" ? { username: result.username } : {}),
+        topicsEnabled: result?.has_topics_enabled === true,
+      };
     },
     async getUpdates(offset, signal) {
       const result = await call(
         "getUpdates",
-        { offset, timeout: pollTimeoutSeconds, allowed_updates: ["message"] },
+        {
+          offset,
+          timeout: pollTimeoutSeconds,
+          allowed_updates: ["message", "callback_query"],
+        },
         signal,
       );
       if (!Array.isArray(result))
@@ -158,8 +221,27 @@ export function createTelegramApi(options: TelegramApiOptions): TelegramApi {
         }),
       };
     },
-    async sendMessage(chatId, text, signal) {
-      await call("sendMessage", { chat_id: chatId, text }, signal);
+    async getChat(chatId, signal) {
+      const result = record(await call("getChat", { chat_id: chatId }, signal));
+      return { isForum: result?.is_forum === true };
+    },
+    async createForumTopic(chatId, name, signal) {
+      const result = record(await call("createForumTopic", { chat_id: chatId, name }, signal));
+      const topicId = digits(result?.message_thread_id, false);
+      if (!topicId) throw new Error("Telegram createForumTopic returned an invalid topic.");
+      return { topicId };
+    },
+    async sendMessage(chatId, text, signal, topicId) {
+      const payload: Record<string, unknown> = { chat_id: chatId };
+      if (topicId !== undefined) {
+        if (!/^\d+$/u.test(topicId) || !Number.isSafeInteger(Number(topicId)))
+          throw new Error("Telegram topic id is invalid.");
+        payload.message_thread_id = Number(topicId);
+      }
+      for (const chunk of chunkContent(text, TELEGRAM_CHUNK_LIMIT)) {
+        signal.throwIfAborted();
+        await call("sendMessage", { ...payload, text: chunk }, signal);
+      }
     },
   };
 }

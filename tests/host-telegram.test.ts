@@ -10,7 +10,6 @@ import {
 } from "../packages/host/src/channels/telegram.ts";
 import {
   createTelegramApi,
-  TELEGRAM_CHUNK_LIMIT,
   type TelegramApi,
   type TelegramUpdate,
 } from "../packages/host/src/channels/telegram-api.ts";
@@ -59,10 +58,16 @@ function recordingApi(options: { failSends?: boolean } = {}) {
   const sends: { chatId: string; text: string }[] = [];
   const api: TelegramApi = {
     async getMe() {
-      return { id: "1", username: "test_bot" };
+      return { id: "1", username: "test_bot", topicsEnabled: false };
     },
     async getUpdates(offset) {
       return { updates: [], nextOffset: offset };
+    },
+    async getChat() {
+      return { isForum: true };
+    },
+    async createForumTopic() {
+      return { topicId: "1" };
     },
     async sendMessage(chatId, text) {
       if (options.failSends) throw new Error("Telegram unavailable");
@@ -127,14 +132,18 @@ it("keeps the Bot API token out of runner material and shared resources", async 
     destinations,
     owners: configuration.owners,
   });
-  const accepted = await channel.dispatch(update());
-  await vi.waitFor(async () =>
-    expect((await host?.inspect(accepted?.sessionId ?? ""))?.deliveries).toEqual([
-      expect.objectContaining({ status: "delivered" }),
-    ]),
-  );
-  expect(requests.some((url) => url.includes(token))).toBe(true);
-  expect(JSON.stringify(await host.inspect(accepted?.sessionId ?? ""))).not.toContain(token);
+  const accepted = await host.accept({
+    destinationId: "terminal",
+    userId: "cli:local",
+    text: "Hello",
+  });
+  expect(await channel.dispatch(update())).toBeUndefined();
+  const running = channel.start();
+  await vi.waitFor(() => expect(requests.some((url) => url.includes(token))).toBe(true));
+  expect(host.sessions().map((session) => session.id)).toEqual([accepted.sessionId]);
+  expect(JSON.stringify(await host.inspect(accepted.sessionId))).not.toContain(token);
+  await channel.stop();
+  await running;
   await channel.stop();
   channel = undefined;
   await host.stop();
@@ -149,7 +158,7 @@ it("keeps the Bot API token out of runner material and shared resources", async 
     expect(await readFile(file, "latin1"), `${file} must not hold the token`).not.toContain(token);
 });
 
-it("routes Telegram and CLI into one Thread and preserves it across restart", async () => {
+it("keeps Telegram text out of the Thread while CLI work survives restart", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-telegram-")));
   let driver = new MailboxDriver();
   host = await Host.start({ root, configuration, driver });
@@ -161,16 +170,17 @@ it("routes Telegram and CLI into one Thread and preserves it across restart", as
     destinations,
     owners: configuration.owners,
   });
-  const telegramFirst = await channel.dispatch(update({ text: "Telegram first" }));
+  expect(await channel.dispatch(update({ text: "Telegram first" }))).toBeUndefined();
+  expect(
+    await channel.dispatch(update({ text: "approve", threadId: "9", updateId: 2 })),
+  ).toBeUndefined();
   const cliFirst = await host.accept({
     destinationId: "terminal",
     userId: "cli:local",
     text: "CLI first",
   });
-  expect(telegramFirst?.sessionId).toBe(cliFirst.sessionId);
-  await vi.waitFor(() =>
-    expect(first.sends).toEqual([{ chatId: "42", text: "Reply: Telegram first" }]),
-  );
+  expect(host.sessions().map((session) => session.id)).toEqual([cliFirst.sessionId]);
+  expect(first.sends).toEqual([]);
   expect(driver.launches.map((launch) => launch.material.workspace)).toEqual([
     join(root, "groups", "personal"),
   ]);
@@ -189,29 +199,21 @@ it("routes Telegram and CLI into one Thread and preserves it across restart", as
     destinations,
     owners: configuration.owners,
   });
-  const telegramSecond = await channel.dispatch(update({ text: "Telegram second" }));
+  expect(await channel.dispatch(update({ text: "Telegram second" }))).toBeUndefined();
   const cliSecond = await host.accept({
     destinationId: "terminal",
     userId: "cli:local",
     text: "CLI second",
   });
-  expect(telegramSecond?.sessionId).not.toBe(telegramFirst?.sessionId);
-  expect(cliSecond.sessionId).toBe(telegramSecond?.sessionId);
-  await vi.waitFor(() =>
-    expect(resumed.sends).toEqual([{ chatId: "42", text: "Reply: Telegram second" }]),
-  );
-  const telegramLaunch = driver.launches.find((launch) =>
-    launch.material.directory.endsWith(telegramSecond?.sessionId ?? ""),
-  );
-  expect(telegramLaunch?.continuation).toBeUndefined();
-  expect((await host.threadDetail("personal")).tasks).toHaveLength(2);
+  expect(cliSecond.sessionId).toBe(cliFirst.sessionId);
+  expect(resumed.sends).toEqual([]);
+  expect(host.sessions().map((session) => session.messaging_group_id)).not.toContain("owner-chat");
+  expect((await host.threadDetail("personal")).tasks.length).toBeGreaterThan(0);
 });
 
-it("splits a long reply into ordered platform-sized chat messages", async () => {
+it("does not turn ordinary Telegram text into chat replies", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-telegram-")));
   const driver = new MailboxDriver();
-  const expected = Array.from({ length: 5 }, (_, index) => String(index).repeat(1000)).join("\n\n");
-  driver.respond = async () => expected;
   host = await Host.start({ root, configuration, driver });
   const { api, sends } = recordingApi();
   channel = TelegramChannel.listen({
@@ -221,11 +223,10 @@ it("splits a long reply into ordered platform-sized chat messages", async () => 
     destinations,
     owners: configuration.owners,
   });
-  await channel.dispatch(update());
-  await vi.waitFor(() => expect(sends).toHaveLength(2));
-  expect(sends.every((send) => send.chatId === "42")).toBe(true);
-  expect(sends.every((send) => Array.from(send.text).length <= TELEGRAM_CHUNK_LIMIT)).toBe(true);
-  expect(sends.map((send) => send.text).join("\n\n")).toBe(expected);
+  expect(await channel.dispatch(update())).toBeUndefined();
+  expect(host.sessions()).toEqual([]);
+  expect(sends).toEqual([]);
+  expect(driver.launches).toEqual([]);
 });
 
 it("advances polling offsets, ignores unsupported updates, and stops within a bounded shutdown", async () => {
@@ -264,12 +265,12 @@ it("advances polling offsets, ignores unsupported updates, and stops within a bo
     onError: () => {},
   });
   const running = channel.start();
-  await vi.waitFor(() => expect(sends).toEqual([{ chatId: "42", text: "Reply: Hello" }]));
   await vi.waitFor(() => expect(offsets).toEqual([0, 10]));
+  expect(sends).toEqual([]);
   await channel.stop();
   await expect(running).resolves.toBeUndefined();
   expect(signals.every((signal) => signal.aborted)).toBe(true);
-  expect(host.sessions()).toHaveLength(1);
+  expect(host.sessions()).toEqual([]);
 });
 
 it("ignores unknown senders, non-private chats and unconfigured chats without accepted work", async () => {
@@ -295,7 +296,7 @@ it("ignores unknown senders, non-private chats and unconfigured chats without ac
   expect(sends).toEqual([]);
 });
 
-it("routes an owner private message through the host and replies to its chat", async () => {
+it("does not admit an owner private message or topic callback as chat", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "mybots-telegram-")));
   const driver = new MailboxDriver();
   host = await Host.start({ root, configuration, driver });
@@ -307,19 +308,11 @@ it("routes an owner private message through the host and replies to its chat", a
     destinations,
     owners: configuration.owners,
   });
-  const accepted = await channel.dispatch(update());
-  expect(accepted).toBeDefined();
-  await vi.waitFor(() => expect(sends).toEqual([{ chatId: "42", text: "Reply: Hello" }]));
-  const session = host.sessions()[0];
-  expect(session).toMatchObject({ agent_group_id: "personal", messaging_group_id: "owner-chat" });
-  const inspected = await host.inspect(session.id);
-  expect(inspected.outputs).toEqual([
-    expect.objectContaining({
-      channel_type: "telegram",
-      platform_id: "42",
-      in_reply_to: accepted?.messageId,
-    }),
-  ]);
+  expect(await channel.dispatch(update())).toBeUndefined();
+  expect(await channel.dispatch(update({ threadId: "4", text: "approve" }))).toBeUndefined();
+  expect(host.sessions()).toEqual([]);
+  expect(sends).toEqual([]);
+  expect(driver.launches).toEqual([]);
 });
 
 it("requires coherent Telegram host settings before opening services", async () => {
@@ -379,7 +372,7 @@ it("cancels Telegram identity lookup when shutdown arrives during host startup",
         }),
       ]);
       signal.throwIfAborted();
-      return { id: "1" };
+      return { id: "1", topicsEnabled: false };
     },
   };
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -429,7 +422,7 @@ it.each([false, true])(
     const polling = Promise.withResolvers<void>();
     const api: TelegramApi = {
       async getMe() {
-        return { id: "1", username: "test_bot" };
+        return { id: "1", username: "test_bot", topicsEnabled: false };
       },
       async getUpdates(_offset, signal) {
         polling.resolve();
@@ -438,6 +431,12 @@ it.each([false, true])(
           if (signal.aborted) abort();
           else signal.addEventListener("abort", abort, { once: true });
         });
+      },
+      async getChat() {
+        return { isForum: true };
+      },
+      async createForumTopic() {
+        return { topicId: "1" };
       },
       async sendMessage() {},
     };
@@ -501,8 +500,18 @@ it("normalizes raw Bot API updates before routing and drops unsupported input", 
               ok: true,
               result: [
                 { update_id: 1, message: { text: "no sender", chat: { id: 42 } } },
-                { update_id: 2, message: { from: { id: 42 }, chat: { id: 42 }, text: "Hello" } },
-                { update_id: 3, message: { from: { id: 42 }, chat: { id: 42 }, text: "  " } },
+                { update_id: 2, callback_query: { id: "cb", from: { id: 42 }, data: "approve" } },
+                {
+                  update_id: 3,
+                  message: {
+                    from: { id: 42 },
+                    chat: { id: 42 },
+                    message_thread_id: 9,
+                    text: "Topic decision",
+                  },
+                },
+                { update_id: 4, message: { from: { id: 42 }, chat: { id: 42 }, text: "Hello" } },
+                { update_id: 5, message: { from: { id: 42 }, chat: { id: 42 }, text: "  " } },
               ],
             }),
             { status: 200, headers: { "content-type": "application/json" } },
@@ -533,10 +542,10 @@ it("normalizes raw Bot API updates before routing and drops unsupported input", 
     onError: () => {},
   });
   const running = channel.start();
-  await vi.waitFor(() => expect(sends).toEqual([{ chat_id: "42", text: "Reply: Hello" }]));
   await vi.waitFor(() => expect(polls).toHaveLength(2));
-  expect(polls[1]).toMatchObject({ offset: 4 });
-  expect(host.sessions()).toHaveLength(1);
+  expect(sends).toEqual([]);
+  expect(polls[1]).toMatchObject({ offset: 6 });
+  expect(host.sessions()).toEqual([]);
   await channel.stop();
   await expect(running).resolves.toBeUndefined();
 });
