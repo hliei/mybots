@@ -19,6 +19,32 @@ export interface ActionApproval {
   resolvedAt: string | null;
 }
 
+/** One selected Task attachment or delivered artifact copied with a delegation. */
+export interface DelegationFile {
+  kind: "attachment" | "artifact";
+  id: string;
+  filename: string;
+  bytes: number;
+}
+
+/** A selected file plus the SHA-256 of the bytes the approval or copy bound. */
+interface BoundDelegationFile extends DelegationFile {
+  digest: string;
+}
+
+export function sameDelegationFiles(left: DelegationFile[], right: DelegationFile[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (file, index) =>
+        file.kind === right[index]?.kind &&
+        file.id === right[index]?.id &&
+        file.filename === right[index]?.filename &&
+        file.bytes === right[index]?.bytes,
+    )
+  );
+}
+
 const RUN_ACTIVE_BUDGET_MS = 60 * 60 * 1000;
 
 interface ThreadRow {
@@ -294,6 +320,8 @@ export class ThreadStore {
         parentRunId: string;
         parentAttemptId: string;
         originatingRunId: string;
+        taskId?: string;
+        files?: BoundDelegationFile[];
       };
     },
     now: string,
@@ -332,7 +360,7 @@ export class ThreadStore {
           if (!found)
             throw new ChatRequestError("Selected message was not found on this Thread.", 404);
         }
-        const taskId = randomUUID();
+        const taskId = input.delegation?.taskId ?? randomUUID();
         const runId = randomUUID();
         this.db
           .prepare("INSERT INTO tasks VALUES (?, ?, ?, ?)")
@@ -406,6 +434,9 @@ export class ThreadStore {
               "UPDATE action_approvals SET state = 'executed', resolved_at = ? WHERE id = ? AND state = 'approved'",
             )
             .run(now, input.requestId);
+        if (input.delegation?.files?.length)
+          this.insertDelegationFiles(input.requestId, input.delegation.files);
+        if (input.delegation) this.receiveCopiedFiles(input.requestId, taskId, input.botId, now);
         this.db
           .prepare("UPDATE runs SET selected_message_ids = ? WHERE id = ?")
           .run(JSON.stringify(selected), runId);
@@ -1490,8 +1521,16 @@ export class ThreadStore {
     if (row.kind !== "result") return row;
     return {
       ...row,
-      delegationId: null,
+      ...this.resultLinks(row.runId),
       artifacts: this.artifactRows(row.id),
+    };
+  }
+
+  private resultLinks(runId: string) {
+    const delegation = this.delegationForChild(runId);
+    return {
+      delegationId: delegation?.id ?? null,
+      originatingRunId: delegation?.originatingRunId ?? null,
     };
   }
 
@@ -1502,6 +1541,16 @@ export class ThreadStore {
      FROM delivered_artifacts WHERE publication_id = ? ORDER BY rowid`,
       )
       .all(publicationId) as { id: string; name: string; bytes: number }[];
+  }
+
+  taskArtifact(botId: string, taskId: string, artifactId: string) {
+    this.requireTask(botId, taskId);
+    return this.db
+      .prepare(
+        `SELECT id, name, byte_size AS bytes
+     FROM delivered_artifacts WHERE id = ? AND bot_id = ? AND task_id = ?`,
+      )
+      .get(artifactId, botId, taskId) as { id: string; name: string; bytes: number } | undefined;
   }
 
   artifact(botId: string, runId: string, artifactId: string) {
@@ -1684,7 +1733,7 @@ export class ThreadStore {
               botId: row.botId,
               taskId: row.taskId,
               runId: row.runId,
-              delegationId: this.delegationForChild(run.id)?.id ?? null,
+              ...this.resultLinks(run.id),
               artifacts: this.artifactRows(row.id),
             })),
           inputs: this.inputs(run.id)
@@ -1756,24 +1805,61 @@ export class ThreadStore {
       .run(input.id, input.taskId, input.botId, input.filename, input.bytes, input.createdAt);
   }
 
-  attachments(
-    botId: string,
-    taskId: string,
-  ): { id: string; filename: string; bytes: number; createdAt: string }[] {
+  attachments(botId: string, taskId: string) {
     this.requireTask(botId, taskId);
-    return this.db
+    const rows = this.db
       .prepare(
-        `SELECT id, filename, byte_size AS bytes, created_at AS createdAt
-         FROM task_attachments WHERE task_id = ? AND bot_id = ? ORDER BY rowid`,
+        `SELECT a.id, a.filename, a.byte_size AS bytes, a.created_at AS createdAt,
+            d.child_run_id AS runId,
+            a.source_delegation_id AS sourceDelegationId,
+            a.source_bot_id AS sourceBotId,
+            a.source_task_id AS sourceTaskId,
+            a.source_run_id AS sourceRunId,
+            a.source_kind AS sourceKind,
+            a.source_file_id AS sourceFileId
+     FROM task_attachments a
+     LEFT JOIN delegations d ON d.id = a.source_delegation_id
+     WHERE a.task_id = ? AND a.bot_id = ? ORDER BY a.rowid`,
       )
-      .all(taskId, botId) as { id: string; filename: string; bytes: number; createdAt: string }[];
+      .all(taskId, botId) as {
+      id: string;
+      filename: string;
+      bytes: number;
+      createdAt: string;
+      runId: string | null;
+      sourceDelegationId: string | null;
+      sourceBotId: string | null;
+      sourceTaskId: string | null;
+      sourceRunId: string | null;
+      sourceKind: "attachment" | "artifact" | null;
+      sourceFileId: string | null;
+    }[];
+    return rows.map((row) => ({
+      id: row.id,
+      filename: row.filename,
+      bytes: row.bytes,
+      createdAt: row.createdAt,
+      runId: row.runId,
+      source:
+        row.sourceDelegationId &&
+        row.sourceBotId &&
+        row.sourceTaskId &&
+        row.sourceRunId &&
+        row.sourceKind &&
+        row.sourceFileId
+          ? {
+              delegationId: row.sourceDelegationId,
+              botId: row.sourceBotId,
+              taskId: row.sourceTaskId,
+              runId: row.sourceRunId,
+              kind: row.sourceKind,
+              fileId: row.sourceFileId,
+            }
+          : null,
+    }));
   }
 
-  attachment(
-    botId: string,
-    taskId: string,
-    attachmentId: string,
-  ): { id: string; filename: string; bytes: number; createdAt: string } {
+  attachment(botId: string, taskId: string, attachmentId: string) {
     const row = this.attachments(botId, taskId).find((item) => item.id === attachmentId);
     if (!row) throw new ChatRequestError("Attachment not found.", 404);
     return row;
@@ -1906,8 +1992,11 @@ export class ThreadStore {
     parentAttemptId: string;
     text: string;
     deadline?: string | null;
+    files?: BoundDelegationFile[];
+    childTaskId?: string;
     now: string;
   }) {
+    const files = input.files ?? [];
     if (input.sourceBotId === input.targetBotId)
       throw new ChatRequestError("A Bot cannot delegate to itself.", 403);
     this.thread(input.targetBotId);
@@ -1917,7 +2006,8 @@ export class ThreadStore {
         saved.parentRunId !== input.parentRunId ||
         saved.targetBotId !== input.targetBotId ||
         saved.text !== input.text ||
-        (saved.approval?.deadline ?? null) !== (input.deadline ?? null)
+        (saved.approval?.deadline ?? null) !== (input.deadline ?? null) ||
+        !sameDelegationFiles(saved.files, files)
       )
         throw new ChatRequestError(
           "Request identity has different delegation inputs. Use a new request and decision.",
@@ -1934,7 +2024,8 @@ export class ThreadStore {
         row.parentRunId === input.parentRunId &&
         row.targetBotId === input.targetBotId &&
         row.text === input.text &&
-        row.approval?.state === "denied",
+        row.approval?.state === "denied" &&
+        this.sameBoundDelegationFiles(row.id, files),
     );
     if (denied) return denied;
     const mode = this.collaborationMode(input.sourceBotId, input.targetBotId);
@@ -1964,6 +2055,7 @@ export class ThreadStore {
             input.text,
             input.now,
           );
+        this.insertDelegationFiles(input.requestId, files);
         this.db
           .prepare(`INSERT INTO action_approvals (id, operation, target_bot_id, text, deadline, state)
  VALUES (?, 'delegate', ?, ?, ?, 'pending')`)
@@ -1974,6 +2066,8 @@ export class ThreadStore {
         throw error;
       }
     } else {
+      if (files.length > 0 && !input.childTaskId)
+        throw new Error("Selected delegation files were not copied");
       this.send(
         {
           requestId: input.requestId,
@@ -1986,6 +2080,8 @@ export class ThreadStore {
             parentRunId: input.parentRunId,
             parentAttemptId: input.parentAttemptId,
             originatingRunId,
+            ...(input.childTaskId ? { taskId: input.childTaskId } : {}),
+            files,
           },
         },
         input.now,
@@ -1994,7 +2090,7 @@ export class ThreadStore {
     return this.delegation(input.requestId);
   }
 
-  private collaborationMode(sourceBotId: string, targetBotId: string): string {
+  collaborationMode(sourceBotId: string, targetBotId: string): string {
     return (
       (
         this.db
@@ -2047,7 +2143,9 @@ export class ThreadStore {
     approvalId: string,
     requestId: string,
     decision: "approve" | "deny",
-    expected: Pick<ActionApproval, "operation" | "targetBotId" | "text" | "deadline">,
+    expected: Pick<ActionApproval, "operation" | "targetBotId" | "text" | "deadline"> & {
+      files: DelegationFile[];
+    },
     now: string,
   ) {
     this.expireApprovals(now);
@@ -2066,7 +2164,8 @@ export class ThreadStore {
           approval.operation !== expected.operation ||
           approval.targetBotId !== expected.targetBotId ||
           approval.text !== expected.text ||
-          approval.deadline !== expected.deadline
+          approval.deadline !== expected.deadline ||
+          !sameDelegationFiles(delegation.files, expected.files)
         )
           throw new ChatRequestError(
             "Approval inputs changed. Read the current request and make a new decision.",
@@ -2137,9 +2236,41 @@ export class ThreadStore {
   }
 
   /** Recheck the immutable proposal and current policy immediately before atomic child admission. */
-  executeApprovals(runId: string, now: string): void {
+  approvedTransfers(runId: string) {
+    return this.delegationsInvolving(runId)
+      .filter(
+        (row) =>
+          row.parentRunId === runId &&
+          row.state === "pending" &&
+          !row.childRunId &&
+          row.approval?.state === "approved" &&
+          row.files.length > 0,
+      )
+      .map((row) => ({
+        id: row.id,
+        targetBotId: row.targetBotId,
+        sourceBotId: row.sourceBotId,
+        parentTaskId: row.parentTaskId,
+        parentRunId: row.parentRunId,
+        files: this.boundDelegationFiles(row.id),
+      }));
+  }
+
+  /** Mark an approved proposal stale when its selected bytes can no longer be copied. */
+  abandonApproval(id: string, message: string, now: string): void {
+    const delegation = this.delegation(id);
+    if (delegation?.approval?.state !== "approved" || delegation?.childRunId) return;
+    this.settleApproval(id, "stale", message, now);
+  }
+
+  executeApprovals(
+    runId: string,
+    now: string,
+    prepared: { delegationId: string; childTaskId: string }[] = [],
+  ): string[] {
+    const created: string[] = [];
     this.expireApprovals(now);
-    if (this.run(runId).state !== "waiting") return;
+    if (this.run(runId).state !== "waiting") return created;
     for (const row of this.delegationsInvolving(runId)) {
       const approval = row.approval;
       if (row.parentRunId !== runId || approval?.state !== "approved") continue;
@@ -2174,7 +2305,10 @@ export class ThreadStore {
         this.settleApproval(row.id, "stale", error.message, now);
         continue;
       }
-      this.send(
+      const childTaskId = prepared.find((item) => item.delegationId === row.id)?.childTaskId;
+      if (row.files.length > 0 && !childTaskId)
+        throw new Error("Selected delegation files were not copied");
+      const admitted = this.send(
         {
           requestId: row.id,
           botId: row.targetBotId,
@@ -2186,11 +2320,14 @@ export class ThreadStore {
             parentRunId: row.parentRunId,
             parentAttemptId: row.parentAttemptId,
             originatingRunId: row.originatingRunId,
+            ...(childTaskId ? { taskId: childTaskId } : {}),
           },
         },
         now,
       );
+      created.push(admitted.taskId);
     }
+    return created;
   }
 
   /**
@@ -2275,8 +2412,10 @@ export class ThreadStore {
     parentAttemptId: string;
     originatingRunId: string;
     text: string;
+    files?: BoundDelegationFile[];
     now: string;
   }) {
+    const files = input.files ?? [];
     return this.admit(
       input.requestId,
       {
@@ -2285,17 +2424,14 @@ export class ThreadStore {
         targetBotId: input.targetBotId,
         parentRunId: input.parentRunId,
         text: input.text,
+        files,
       },
       () => {
-        const existing = this.db
-          .prepare(
-            `SELECT id FROM delegations
- WHERE source_bot_id = ? AND target_bot_id = ? AND parent_run_id = ? AND text = ? AND state = 'denied'`,
-          )
-          .get(input.sourceBotId, input.targetBotId, input.parentRunId, input.text) as
-          | { id: string }
-          | undefined;
-        if (existing) return this.delegation(existing.id);
+        const existing = this.delegationsWhere(
+          "source_bot_id = ? AND target_bot_id = ? AND parent_run_id = ? AND state = 'denied'",
+          [input.sourceBotId, input.targetBotId, input.parentRunId],
+        ).find((row) => row.text === input.text && this.sameBoundDelegationFiles(row.id, files));
+        if (existing) return existing;
         this.db
           .prepare(`INSERT INTO delegations (
  id, source_bot_id, target_bot_id, parent_task_id, parent_run_id, parent_attempt_id,
@@ -2314,6 +2450,7 @@ export class ThreadStore {
             input.now,
             input.now,
           );
+        this.insertDelegationFiles(input.requestId, files);
         return this.delegation(input.requestId);
       },
     );
@@ -2353,6 +2490,92 @@ export class ThreadStore {
       resolvedAt: string | null;
       revokedAt: string | null;
     }[];
-    return rows.map((row) => ({ ...row, approval: this.approval(row.id) }));
+    return rows.map((row) => ({
+      ...row,
+      files: this.delegationFiles(row.id),
+      approval: this.approval(row.id),
+    }));
+  }
+
+  delegationFiles(id: string): DelegationFile[] {
+    return this.db
+      .prepare(
+        `SELECT kind, source_file_id AS id, filename, byte_size AS bytes
+     FROM delegation_files WHERE delegation_id = ? ORDER BY position`,
+      )
+      .all(id) as unknown as DelegationFile[];
+  }
+
+  private boundDelegationFiles(id: string): BoundDelegationFile[] {
+    return this.db
+      .prepare(
+        `SELECT kind, source_file_id AS id, filename, byte_size AS bytes, content_sha256 AS digest
+     FROM delegation_files WHERE delegation_id = ? ORDER BY position`,
+      )
+      .all(id) as unknown as BoundDelegationFile[];
+  }
+
+  private sameBoundDelegationFiles(id: string, files: BoundDelegationFile[]): boolean {
+    const saved = this.boundDelegationFiles(id);
+    return (
+      sameDelegationFiles(saved, files) &&
+      saved.every((file, index) => file.digest === files[index]?.digest)
+    );
+  }
+
+  private insertDelegationFiles(id: string, files: BoundDelegationFile[]): void {
+    const saved = this.delegationFiles(id);
+    if (saved.length > 0) {
+      if (!sameDelegationFiles(saved, files))
+        throw new ChatRequestError(
+          "Request identity has different delegation inputs. Use a new request and decision.",
+          409,
+        );
+      return;
+    }
+    const insert = this.db.prepare(
+      `INSERT INTO delegation_files
+       (delegation_id, position, kind, source_file_id, filename, byte_size, content_sha256)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const [position, file] of files.entries())
+      insert.run(id, position, file.kind, file.id, file.filename, file.bytes, file.digest);
+  }
+
+  /** Copy selected bytes' metadata onto the receiving Task. The bytes are already stored there. */
+  private receiveCopiedFiles(
+    delegationId: string,
+    taskId: string,
+    botId: string,
+    now: string,
+  ): void {
+    const copied = this.db
+      .prepare("SELECT COUNT(*) AS total FROM task_attachments WHERE source_delegation_id = ?")
+      .get(delegationId) as { total: number };
+    if (copied.total > 0) return;
+    const delegation = this.delegation(delegationId);
+    if (!delegation) return;
+    const insert = this.db.prepare(
+      `INSERT INTO task_attachments (
+ id, task_id, bot_id, filename, byte_size, created_at,
+ source_delegation_id, source_bot_id, source_task_id, source_run_id, source_kind, source_file_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const file of delegation.files) {
+      insert.run(
+        randomUUID(),
+        taskId,
+        botId,
+        file.filename,
+        file.bytes,
+        now,
+        delegationId,
+        delegation.sourceBotId,
+        delegation.parentTaskId,
+        delegation.parentRunId,
+        file.kind,
+        file.id,
+      );
+    }
   }
 }

@@ -7,6 +7,6 @@ CREATE TABLE bot_lifecycle_requests (
  bot_id TEXT NOT NULL REFERENCES agent_groups(id),
  operation TEXT NOT NULL CHECK (operation IN ('disable', 'enable', 'delete'))
 );
-PRAGMA user_version = 24;
+PRAGMA user_version = 25;
 COMMIT;
 `;

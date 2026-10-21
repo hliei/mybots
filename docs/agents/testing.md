@@ -439,6 +439,17 @@ the client before its waiting ancestors resume.
 The opt-in container suite does not add a delegation case; text handoff does not
 depend on a source mount. Actual-service acceptance remains separate.
 
+`tests/cross-bot-file-transfers.test.ts` copies selected Task attachments and
+delivered artifacts through a permitted delegation. It checks receiving-Task
+ownership, source Bot/Task/Run and delegation links, same-Thread exclusion,
+per-file and selection limits, exact approval, retained bytes after source
+changes, cancellation, and Host restart. A real Pi case selects an attachment,
+keeps those bytes out of the child prompt, and records the child result's
+producing and originating links. `tests/browser/cross-bot-file-transfers.spec.ts`
+approves the same selection in the built client and downloads the copy after
+restart. `tests/container-driver.test.ts` checks that a Run mounts only its own
+Task attachment directory.
+
 ## Routines
 
 `tests/routines.test.ts` uses authenticated HTTP, real SQLite and directional

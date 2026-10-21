@@ -22,8 +22,11 @@ test("a Run mounts only that Task's attachments read-only inside its workspace",
     });
     const taskId = "taskone";
     const attachments = join(material.root, "data", "task-attachments", "personal", taskId);
+    const unrelated = join(material.root, "data", "task-attachments", "personal", "other-task");
     await mkdir(attachments, { recursive: true });
+    await mkdir(unrelated, { recursive: true });
     await writeFile(join(attachments, "file-1"), "task bytes");
+    await writeFile(join(unrelated, "secret.txt"), "hidden");
     material.taskAttachments = attachments;
     const trustFile = join(root, "data", "gateway-trust", "ca.pem");
     await mkdir(join(root, "data", "gateway-trust"));
@@ -69,6 +72,8 @@ if (args[0] === "run") {
       `type=bind,source=${attachments},target=/workspace/group/.task-attachments,readonly`,
     );
     expect(args.filter((arg) => arg.includes("task-attachments"))).toEqual([mount]);
+    expect(args.join("\n")).not.toContain(unrelated);
+    expect(args.join("\n")).not.toContain("secret.txt");
     await handle.stop();
     material.taskAttachments = join(material.root, "groups", "personal");
     await expect(driver.start(material, new AbortController().signal)).rejects.toThrow(
