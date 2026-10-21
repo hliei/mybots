@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { isBotAvailability } from "../bots.ts";
 import { ChatRequestError, rejectInactiveBot } from "../chat.ts";
 import { nextCron, type routineInput } from "../routines.ts";
 
@@ -315,14 +316,13 @@ export class RoutineStore {
       .all(routineId) as { id: string; state: string }[];
   }
 
-  private availability(botId: string): string {
-    return (
-      (
-        this.db.prepare("SELECT availability FROM agent_groups WHERE id = ?").get(botId) as
-          | { availability: string }
-          | undefined
-      )?.availability ?? "deleted"
-    );
+  private availability(botId: string) {
+    const row = this.db.prepare("SELECT availability FROM agent_groups WHERE id = ?").get(botId) as
+      | { availability: unknown }
+      | undefined;
+    if (!row || !isBotAvailability(row.availability))
+      throw new ChatRequestError("Bot not found.", 404);
+    return row.availability;
   }
 
   private require(botId: string, routineId: string): Routine {

@@ -1,3 +1,5 @@
+import type { BotAvailability } from "./bots.ts";
+
 export class ChatRequestError extends Error {
   readonly status: number;
   constructor(message: string, status = 400) {
@@ -7,7 +9,7 @@ export class ChatRequestError extends Error {
 }
 
 /** Disabled and deleted Bots keep their identity and reject new admissions. */
-export function rejectInactiveBot(availability: string): void {
+export function rejectInactiveBot(availability: BotAvailability): void {
   if (availability === "active") return;
   throw new ChatRequestError(
     availability === "disabled"

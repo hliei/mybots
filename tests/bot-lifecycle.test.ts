@@ -448,6 +448,16 @@ it("logically deletes a Bot, retains evidence, and gives a same-name Bot a new w
       tools: [],
     })
   ).json();
+  expect(
+    (
+      await post("/api/bots/personal/routines", {
+        requestId: "kept-routine",
+        text: "Keep the definition",
+        runAt: "2026-12-01T00:00:00.000Z",
+        timezone: "UTC",
+      })
+    ).status,
+  ).toBe(201);
   await writeFile(join(root, personal.workspace, "kept-notes.txt"), "original notes");
   await writeFile(join(root, writer.bot.workspace, "kept-notes.txt"), "copied notes");
 
@@ -489,6 +499,26 @@ it("logically deletes a Bot, retains evidence, and gives a same-name Bot a new w
     409,
   );
   expect(
+    (await post("/api/bots/personal/thread/reset", { requestId: "reset-deleted" })).status,
+  ).toBe(409);
+  expect(
+    (await post("/api/bots/personal/timezone", { requestId: "zone-deleted", timezone: "UTC" }))
+      .status,
+  ).toBe(409);
+  expect(
+    (
+      await post(`/api/bots/personal/collaboration/${writer.bot.id}`, {
+        requestId: "grant-deleted",
+        mode: "allow",
+      })
+    ).status,
+  ).toBe(409);
+  const routineId = (await get("/api/bots/personal/routines")).routines[0].id as string;
+  expect(
+    (await post(`/api/bots/personal/routines/${routineId}/pause`, { requestId: "pause-deleted" }))
+      .status,
+  ).toBe(409);
+  expect(
     (
       await post("/api/bots/personal/thread/messages", {
         requestId: "deleted-chat",
@@ -521,6 +551,28 @@ it("logically deletes a Bot, retains evidence, and gives a same-name Bot a new w
     ),
   );
   expect((await get("/api/bots/personal/thread")).tasks).toHaveLength(1);
+});
+
+it("replays a lifecycle request without applying it again after a later change", async () => {
+  await start();
+  expect((await post("/api/bots/personal/disable", { requestId: "same-disable" })).status).toBe(
+    202,
+  );
+  expect((await post("/api/bots/personal/enable", { requestId: "later-enable" })).status).toBe(200);
+  const replay = await post("/api/bots/personal/disable", { requestId: "same-disable" });
+  expect(replay.status).toBe(200);
+  expect(await replay.json()).toMatchObject({
+    replayed: true,
+    bot: { id: "personal", availability: "active" },
+  });
+  expect(
+    (
+      await post("/api/bots/personal/thread/messages", {
+        requestId: "still-admitted",
+        text: "Still admitted",
+      })
+    ).status,
+  ).toBe(202);
 });
 
 async function putMemory(content: string, version: string | null = null) {

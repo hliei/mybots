@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { InboundMessage, OutboundMessage, ProcessingAck } from "@mybots/mailbox";
+import { type BotAvailability, isBotAvailability } from "../bots.ts";
 import { ChatRequestError, rejectInactiveBot } from "../chat.ts";
 import { history } from "./history.ts";
 import type { SavedSession } from "./index.ts";
@@ -114,12 +115,22 @@ export class ThreadStore {
    WHERE id NOT IN (SELECT bot_id FROM threads)`)
       .run(now);
   }
-  availability(botId: string): string {
+  availability(botId: string): BotAvailability {
     const row = this.db.prepare("SELECT availability FROM agent_groups WHERE id = ?").get(botId) as
-      | { availability: string }
+      | { availability: unknown }
       | undefined;
-    if (!row) throw new ChatRequestError("Bot not found.", 404);
+    if (!row || !isBotAvailability(row.availability))
+      throw new ChatRequestError("Bot not found.", 404);
     return row.availability;
+  }
+
+  /** Tombstoned Bots stay readable. Ordinary management writes are rejected. */
+  rejectDeleted(botId: string): void {
+    if (this.availability(botId) === "deleted")
+      throw new ChatRequestError(
+        "Deleted Bot materials stay inspectable. Active edits are not available.",
+        409,
+      );
   }
 
   private requireAdmitting(botId: string): void {
@@ -145,26 +156,26 @@ export class ThreadStore {
       if (prior && (prior.bot_id !== botId || prior.operation !== operation))
         throw new ChatRequestError("This requestId belongs to another operation.", 409);
       const replayed = !!prior;
-      if (!replayed) {
-        if (
-          this.db
-            .prepare("SELECT request_id FROM input_admissions WHERE request_id = ?")
-            .get(requestId) ||
-          this.db
-            .prepare("SELECT request_id FROM bot_creations WHERE request_id = ?")
-            .get(requestId) ||
-          this.db
-            .prepare("SELECT request_id FROM bot_updates WHERE request_id = ?")
-            .get(requestId) ||
-          this.db
-            .prepare("SELECT request_id FROM routine_commands WHERE request_id = ?")
-            .get(requestId)
-        )
-          throw new ChatRequestError("This requestId belongs to another operation.", 409);
-        this.db
-          .prepare("INSERT INTO bot_lifecycle_requests VALUES (?, ?, ?)")
-          .run(requestId, botId, operation);
+      if (replayed) {
+        this.db.exec("COMMIT");
+        return { replayed: true, stoppingRunIds: [], resumeRunIds: [] };
       }
+      if (
+        this.db
+          .prepare("SELECT request_id FROM input_admissions WHERE request_id = ?")
+          .get(requestId) ||
+        this.db
+          .prepare("SELECT request_id FROM bot_creations WHERE request_id = ?")
+          .get(requestId) ||
+        this.db.prepare("SELECT request_id FROM bot_updates WHERE request_id = ?").get(requestId) ||
+        this.db
+          .prepare("SELECT request_id FROM routine_commands WHERE request_id = ?")
+          .get(requestId)
+      )
+        throw new ChatRequestError("This requestId belongs to another operation.", 409);
+      this.db
+        .prepare("INSERT INTO bot_lifecycle_requests VALUES (?, ?, ?)")
+        .run(requestId, botId, operation);
       const current = this.availability(botId);
       const stopping = new Set<string>();
       const resume = new Set<string>();

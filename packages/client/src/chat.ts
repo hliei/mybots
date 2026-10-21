@@ -403,7 +403,7 @@ export async function showChat(
       () => {
         if (botId) void showChat(botId);
       },
-      availability === "active",
+      availability !== "deleted",
     );
     setBackgroundBoundary(detail.thread.backgroundBoundary);
     selected.textContent = `Thread ID: ${detail.thread.id} · Chat background boundary: ${detail.thread.backgroundBoundary}. Host execution: ${detail.admission.activeCount} of ${detail.admission.activeLimit} active.`;

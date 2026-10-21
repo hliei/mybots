@@ -486,6 +486,7 @@ export class Host {
     backgroundBoundary: number;
   }> {
     const botId = this.store.ownerDestination(input.destinationId, input.userId);
+    this.store.threads.rejectDeleted(botId);
     if (this.stopped) throw new Error("Host is stopped");
     const admitted = this.store.threads.reset(botId, randomUUID());
     return { sessionId: "", messageId: "", backgroundBoundary: admitted.backgroundBoundary };
@@ -1008,10 +1009,12 @@ export class Host {
       input.requestId,
       this.timestamp(),
     );
-    for (const runId of changed.resumeRunIds)
-      this.store.threads.resumeWait(runId, this.timestamp());
-    for (const runId of changed.stoppingRunIds) await this.beginStop(runId);
-    if (operation === "enable") this.admitDueRoutines();
+    if (!changed.replayed) {
+      for (const runId of changed.resumeRunIds)
+        this.store.threads.resumeWait(runId, this.timestamp());
+      for (const runId of changed.stoppingRunIds) await this.beginStop(runId);
+      if (operation === "enable") this.admitDueRoutines();
+    }
     this.schedule();
     const bot = this.store.managedBots().find((item) => item.id === botId);
     if (!bot) throw new ChatRequestError("Bot not found.", 404);
@@ -1056,7 +1059,9 @@ export class Host {
   }
 
   private rejectDeletedEdits(botId: string): void {
-    if (this.store.threads.availability(botId) === "deleted")
+    const bot = this.managedBots().find((item) => item.id === botId);
+    if (!bot) throw new BotRequestError("Bot not found.", 404);
+    if (bot.availability === "deleted")
       throw new BotRequestError(
         "Deleted Bot materials stay inspectable. Active edits are not available.",
         409,
@@ -1091,6 +1096,7 @@ export class Host {
   }
 
   importSkill(botId: string, value: unknown) {
+    this.rejectDeletedEdits(botId);
     this.localSkills(botId);
     return new LocalSkills(this.root).import(botId, value);
   }
@@ -1143,6 +1149,7 @@ export class Host {
   }
 
   async uploadAttachment(botId: string, taskId: string, filename: string, bytes: Buffer) {
+    this.store.threads.rejectDeleted(botId);
     const name = attachmentFilename(filename);
     if (bytes.length === 0) throw new ChatRequestError("Choose a file to upload.");
     if (bytes.length > this.maxFileBytes())
@@ -1185,6 +1192,7 @@ export class Host {
     attachmentId: string,
     path: unknown,
   ) {
+    this.store.threads.rejectDeleted(botId);
     const record = this.store.threads.attachment(botId, taskId, attachmentId);
     const parts = workspaceRelativePath(path);
     const directory = await ensureTaskAttachmentDirectory(this.root, botId, taskId);
@@ -1227,6 +1235,7 @@ export class Host {
   }
 
   updateTimezone(botId: string, value: unknown) {
+    this.store.threads.rejectDeleted(botId);
     this.store.threads.thread(botId);
     if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
     const input = chatInput(value, ["timezone"]);
@@ -1254,6 +1263,7 @@ export class Host {
   }
 
   updateRoutine(botId: string, routineId: string, value: unknown) {
+    this.store.threads.rejectDeleted(botId);
     this.store.threads.thread(botId);
     if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
     const selectedProvided =
@@ -1273,6 +1283,7 @@ export class Host {
   }
 
   setRoutinePaused(botId: string, routineId: string, value: unknown, paused: boolean) {
+    this.store.threads.rejectDeleted(botId);
     this.store.threads.thread(botId);
     if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
     const input = chatInput(value, []);
@@ -1304,6 +1315,7 @@ export class Host {
   }
 
   async deleteRoutine(botId: string, routineId: string, value: unknown) {
+    this.store.threads.rejectDeleted(botId);
     this.store.threads.thread(botId);
     if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
     const input = chatInput(value, []);
@@ -1518,6 +1530,7 @@ export class Host {
   }
 
   async updateCollaboration(sourceBotId: string, targetBotId: string, value: unknown) {
+    this.store.threads.rejectDeleted(sourceBotId);
     this.store.threads.thread(sourceBotId);
     if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
     const input = chatInput(value, ["mode"]);
@@ -1897,6 +1910,7 @@ export class Host {
   }
 
   async resetThread(botId: string, value: unknown) {
+    this.store.threads.rejectDeleted(botId);
     const input = chatInput(value, []);
     await this.threadDetail(botId);
     if (this.stopped) throw new Error("Host is stopped");

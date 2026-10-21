@@ -17,6 +17,10 @@ export interface BotConfigurationView {
 
 export type BotAvailability = "active" | "disabled" | "deleted";
 
+export function isBotAvailability(value: unknown): value is BotAvailability {
+  return value === "active" || value === "disabled" || value === "deleted";
+}
+
 /** Product deletion keeps evidence. It does not list feature files or offer restore or purge. */
 export const logicalDeletionRetention =
   "Logical deletion keeps this Bot's configuration, history, results, workspace, memory, and materials, including copies held by other Bots. It does not restore the Bot or permanently purge retained data.";

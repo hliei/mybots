@@ -257,7 +257,7 @@ export async function showRoutines(
         for (const control of [editor, schedule, zone, save, pause, run, remove])
           control.disabled = commanding || !!command;
         run.disabled = run.disabled || availability !== "active";
-        if (routine.paused) pause.disabled = pause.disabled || availability !== "active";
+        if (routine.paused) pause.disabled = pause.disabled || availability === "deleted";
         if (availability === "deleted")
           for (const control of [editor, schedule, zone, save, pause, run, remove])
             control.disabled = true;
