@@ -2498,7 +2498,7 @@ export class Host {
       taskId: question.taskId,
       runId: question.runId,
       summary: conciseQuestion(question.text),
-      locator: `/bots/${question.botId}/runs/${question.runId}/questions/${question.id}`,
+      locator: `/?bot=${encodeURIComponent(question.botId)}&run=${encodeURIComponent(question.runId)}#question-${encodeURIComponent(question.id)}`,
       now: this.timestamp(),
     });
   }
@@ -2583,17 +2583,20 @@ export class Host {
         botName: this.store.threads.botName(notice.botId),
       });
       signal.throwIfAborted();
+      if (!this.store.threads.beginQuestionNoticeAttempt(notice.questionId, this.timestamp()))
+        return;
       await transport.api.sendMessage(transport.chatId, text, signal, topicId);
       if (signal.aborted) return;
       this.store.threads.recordQuestionNoticeAttempt({
         questionId: notice.questionId,
         now: this.timestamp(),
         delivered: true,
+        reserved: true,
         error: null,
       });
     } catch (error) {
       if (signal.aborted) return;
-      this.recordNoticeError(notice.questionId, notice.botId, transport.chatId, error);
+      this.recordNoticeError(notice.questionId, notice.botId, transport.chatId, error, true);
     }
   }
 
@@ -2660,6 +2663,7 @@ export class Host {
     botId: string,
     chatId: string,
     error: unknown,
+    reserved = false,
   ): void {
     const now = this.timestamp();
     if (error instanceof TelegramRequestError && terminalTopicFailure(error.kind)) {
@@ -2684,6 +2688,7 @@ export class Host {
           delivered: false,
           error: failure,
           terminal: true,
+          reserved,
         });
       else this.store.threads.failQuestionNotice(questionId, now, failure);
       return;
@@ -2700,6 +2705,7 @@ export class Host {
       now,
       delivered: false,
       error: message,
+      reserved,
       ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
     });
   }

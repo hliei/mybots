@@ -155,7 +155,8 @@ const saveSettings = document.querySelector<HTMLButtonElement>(
 const settingsMessage = document.querySelector<HTMLElement>("#settings-message") as HTMLElement;
 const pendingKey = "mybots.pending-bot";
 const pendingSettingsKey = "mybots.pending-settings";
-let selectedId = localStorage.getItem("mybots.selected-bot");
+let selectedId =
+  new URLSearchParams(location.search).get("bot") ?? localStorage.getItem("mybots.selected-bot");
 let pending: Creation | undefined;
 try {
   const stored: unknown = JSON.parse(localStorage.getItem(pendingKey) ?? "null");

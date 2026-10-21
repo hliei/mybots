@@ -382,6 +382,7 @@ const pendingKey = "mybots.pending-thread-input";
 let botId: string | undefined;
 let version = 0;
 let refreshTimer = 0;
+let locatedQuestion = false;
 let sending = false;
 let pending: Pending | undefined;
 const answerDrafts = new Map<string, string>();
@@ -614,6 +615,16 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
         return article;
       }),
     );
+    if (!locatedQuestion && location.hash) {
+      const target = [...works.querySelectorAll<HTMLElement>("[data-question-id]")].find(
+        (section) => location.hash === `#${encodeURIComponent(section.id)}`,
+      );
+      if (target) {
+        target.tabIndex = -1;
+        target.focus();
+        locatedQuestion = true;
+      }
+    }
     if (
       current === version &&
       (pendingRoutine ||
@@ -745,6 +756,7 @@ function questionCard(
 ): HTMLElement {
   const section = document.createElement("section");
   section.dataset.questionId = question.id;
+  section.id = `question-${question.id}`;
   section.append(
     paragraph(`Question: ${question.text}`),
     paragraph(`Request: ${question.id} · ${question.state}`),

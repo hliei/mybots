@@ -2292,6 +2292,10 @@ export class ThreadStore {
   }
 
   dueQuestionNotices(now: string) {
+    this.db
+      .prepare(`UPDATE question_notices SET state = 'failed', next_attempt_at = NULL, updated_at = ?
+ WHERE state = 'pending' AND attempts >= 3`)
+      .run(now);
     return this.db
       .prepare(`SELECT question_id AS questionId, bot_id AS botId, task_id AS taskId, run_id AS runId,
  summary, locator, attempts
@@ -2349,6 +2353,20 @@ export class ThreadStore {
       .run(error, now, questionId);
   }
 
+  /** Reserve a platform send before its acceptance can become uncertain. */
+  beginQuestionNoticeAttempt(questionId: string, now: string): boolean {
+    const notice = this.db
+      .prepare("SELECT attempts, state FROM question_notices WHERE question_id = ?")
+      .get(questionId) as { attempts: number; state: string } | undefined;
+    if (notice?.state !== "pending" || notice.attempts >= 3) return false;
+    const wait = questionNoticeWaitMs(notice.attempts + 1);
+    this.db
+      .prepare(`UPDATE question_notices SET attempts = attempts + 1, next_attempt_at = ?,
+ last_error = 'Delivery acceptance is unconfirmed.', updated_at = ? WHERE question_id = ?`)
+      .run(wait === null ? null : new Date(Date.parse(now) + wait).toISOString(), now, questionId);
+    return true;
+  }
+
   recordQuestionNoticeAttempt(input: {
     questionId: string;
     now: string;
@@ -2356,6 +2374,7 @@ export class ThreadStore {
     error: string | null;
     retryAfterMs?: number;
     terminal?: boolean;
+    reserved?: boolean;
   }): void {
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -2366,7 +2385,7 @@ export class ThreadStore {
         this.db.exec("COMMIT");
         return;
       }
-      const attempts = row.attempts + 1;
+      const attempts = row.attempts + (input.reserved ? 0 : 1);
       const wait =
         input.delivered || input.terminal
           ? null

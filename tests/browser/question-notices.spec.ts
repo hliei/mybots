@@ -68,7 +68,7 @@ test("repairs a Bot topic and resends the question notice without changing the R
     await expect(works).toContainText("Private topic mode is unavailable.");
     await expect(works).toContainText("Telegram notice: failed · 0 of 3 attempts");
     await expect(works).toContainText(
-      `Local client: /bots/personal/runs/${ready.sessionId}/questions/browser-city`,
+      `Local client: /?bot=personal&run=${ready.sessionId}#question-browser-city`,
     );
     child?.send("telegram-mode:ready");
     await page.getByRole("button", { name: "Repair Telegram topic" }).click();
@@ -90,6 +90,12 @@ test("repairs a Bot topic and resends the question notice without changing the R
     expect(notice?.text).toContain(`Run: ${ready.sessionId}`);
     expect(notice?.text).toContain("Request: browser-city");
     expect(notice?.text).toContain("Which city?");
+    const locator = notice?.text?.match(/Local client: (.+)/)?.[1];
+    expect(locator).toBeTruthy();
+    await page.evaluate(() => localStorage.removeItem("mybots.selected-bot"));
+    await page.goto(new URL(locator as string, ready.url).href);
+    await expect(page.locator('[data-question-id="browser-city"]')).toBeFocused();
+    await expect(works).toContainText("Question: Which city?");
     const beforeRestart = sent.length;
     await stop();
     await start(Number(new URL(ready.url).port));

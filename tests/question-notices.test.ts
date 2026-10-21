@@ -230,7 +230,7 @@ it("sends a pending question to that Bot topic with identity and a local client 
     taskId: sent.taskId,
     runId: sent.runId,
     summary: "Which city?",
-    locator: `/bots/personal/runs/${sent.runId}/questions/destination`,
+    locator: `/?bot=personal&run=${sent.runId}#question-destination`,
     eligibility: "eligible",
     attempts: 1,
     acceptedAt: "2026-10-21T00:00:00.000Z",
@@ -247,7 +247,7 @@ it("sends a pending question to that Bot topic with identity and a local client 
           `Task: ${sent.taskId}`,
           `Run: ${sent.runId}`,
           "Request: destination",
-          `Local client: /bots/personal/runs/${sent.runId}/questions/destination`,
+          `Local client: /?bot=personal&run=${sent.runId}#question-destination`,
           "Which city?",
         ].join("\n"),
       },
@@ -569,7 +569,10 @@ it("suppresses an unsent notice when the question is answered", async () => {
   );
   const answered = await post(
     `/api/bots/personal/runs/${sent.runId}/questions/destination/answer`,
-    { requestId: "answer-destination", text: "Hangzhou" },
+    {
+      requestId: "answer-destination",
+      text: "Hangzhou",
+    },
   );
   expect(answered.status).toBe(202);
   releaseChat();
@@ -670,9 +673,61 @@ it("notifies a question that was already pending when the private chat is attach
       questionId: "before-chat",
       runId: sent.runId,
       state: "delivered",
-      locator: `/bots/personal/runs/${sent.runId}/questions/before-chat`,
+      locator: `/?bot=personal&run=${sent.runId}#question-before-chat`,
     }),
   );
   expect(sends(telegram.calls)[0]?.body.message_thread_id).toBe(77);
   expect((await get("/api/bots/personal/thread")).tasks[0]?.runs[0]?.state).not.toBe("failed");
+});
+
+it("retains attempts and backoff when the Host stops during Telegram sends", async () => {
+  const driver = new MailboxDriver();
+  let releaseSend = () => {};
+  const telegram = await startTelegram(async (method) => {
+    if (method === "getChat") return okChat();
+    if (method === "createForumTopic") return okTopic(77, "Personal");
+    await new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    return okSend();
+  });
+  const { configuration } = await open(driver);
+  attach(telegram.url, configuration);
+  const { mailbox } = await ask(driver, "interrupted-send", "Which city?");
+  mailbox.requestDurableWait("owner-question");
+  try {
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await vi.waitFor(() => expect(sends(telegram.calls)).toHaveLength(attempt));
+      expect((await get("/api/bots/personal/thread")).notices[0]?.attempts).toBe(attempt);
+      await channel?.stop();
+      channel = undefined;
+      await web?.close();
+      await host?.stop();
+      host = undefined;
+      releaseSend();
+      host = await Host.start({ root, configuration, driver: new MailboxDriver(), now: () => now });
+      web = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
+      base = `http://127.0.0.1:${web.address.port}`;
+      attach(telegram.url, configuration);
+      const notice = (await get("/api/bots/personal/thread")).notices[0];
+      expect(notice?.attempts).toBe(attempt);
+      if (attempt < 3) {
+        expect(notice?.nextAttemptAt).toBe(
+          new Date(now + (attempt === 1 ? 5000 : 30000)).toISOString(),
+        );
+        await expect(
+          vi.waitFor(() => expect(sends(telegram.calls)).toHaveLength(attempt + 1), {
+            timeout: 100,
+          }),
+        ).rejects.toThrow();
+        now += attempt === 1 ? 5000 : 30000;
+      }
+    }
+    await vi.waitFor(async () =>
+      expect((await get("/api/bots/personal/thread")).notices[0]?.state).toBe("failed"),
+    );
+    expect(sends(telegram.calls)).toHaveLength(3);
+  } finally {
+    releaseSend();
+  }
 });
