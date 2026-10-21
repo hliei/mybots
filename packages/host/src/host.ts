@@ -1468,19 +1468,21 @@ export class Host {
     });
   }
 
-  updateCollaboration(sourceBotId: string, targetBotId: string, value: unknown) {
+  async updateCollaboration(sourceBotId: string, targetBotId: string, value: unknown) {
     this.store.threads.thread(sourceBotId);
     if (this.stopped) throw new ChatRequestError("Host is stopped.", 503);
     const input = chatInput(value, ["mode"]);
     if (input.mode !== "deny" && input.mode !== "allow" && input.mode !== "ask-each-time")
       throw new ChatRequestError("Collaboration mode must be deny, ask-each-time or allow.");
-    return this.store.threads.setCollaboration(
+    const saved = this.store.threads.setCollaboration(
       sourceBotId,
       targetBotId,
       input.requestId,
       input.mode,
       this.timestamp(),
     );
+    for (const runId of saved.stoppingRunIds) await this.beginStop(runId);
+    return saved;
   }
 
   private delegate(

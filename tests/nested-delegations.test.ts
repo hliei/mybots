@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RunnerMailbox } from "@mybots/mailbox/node";
@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PiProvider } from "../packages/agent-runner/src/providers/pi.ts";
 import { WebSocketChannel } from "../packages/host/src/channels/websocket.ts";
 import { loadHostSettings } from "../packages/host/src/config/host.ts";
-import type { SessionDriver } from "../packages/host/src/drivers/types.ts";
+import type { SessionDriver, SessionHandle } from "../packages/host/src/drivers/types.ts";
 import { Host } from "../packages/host/src/host.ts";
 import { MailboxDriver } from "./host-fixture.ts";
 import { startPiService } from "./pi-fixture.ts";
@@ -1029,3 +1029,493 @@ it("rechecks the shared chain limit when nested approvals execute", async () => 
   });
   expect((await get(`/api/bots/${reviewer}/thread`)).tasks).toHaveLength(7);
 }, 15000);
+
+it("revokes an edge with nested work and a pending approval without cancelling its source", async () => {
+  const driver = new MailboxDriver();
+  driver.respond = async (input, _material, signal) => {
+    if (input.content === "Unrelated") return "Independent result";
+    await untilAbort(signal);
+    return "unused";
+  };
+  const chain = await nested(driver, "A decision owned by the cancelled child");
+  await allow(chain.specialist, "personal");
+  await writeFile(
+    join(root, "groups", chain.reviewer, "report.txt"),
+    "Delivered before revocation",
+  );
+  const published = await ask(chain.leafMailbox, "pre-revoke-report", "publish_result", {
+    requestId: "pre-revoke-report",
+    text: "Delivered evidence",
+    files: ["report.txt"],
+  });
+  expect(published.error).toBeUndefined();
+  const artifactId = (published.result?.artifacts as { id: string }[] | undefined)?.[0]?.id;
+  // A second source Attempt can propose an exact approval while the child is running.
+  const source = await (
+    await post("/api/bots/personal/thread/tasks", { requestId: "approval-source", text: "Approve" })
+  ).json();
+  const sourceMailbox = await mailbox(driver, source.runId);
+  expect(
+    (
+      await post(`/api/bots/personal/collaboration/${chain.specialist}`, {
+        requestId: "ask-specialist",
+        mode: "ask-each-time",
+      })
+    ).status,
+  ).toBe(201);
+  expect(
+    (
+      await ask(sourceMailbox, "pending-revoked", "delegate", {
+        requestId: "pending-revoked",
+        targetBotId: chain.specialist,
+        text: "Pending exact text",
+      })
+    ).result,
+  ).toMatchObject({ approval: { state: "pending" } });
+  // allow -> ask must leave existing work alone.
+  expect((await run(chain.reviewer, chain.leaf?.childRunId as string)).state).toBe("active");
+  const queued = await (
+    await post(`/api/bots/${chain.reviewer}/thread/tasks`, {
+      requestId: "unrelated-target",
+      text: "Unrelated",
+    })
+  ).json();
+  const response = await post(`/api/bots/personal/collaboration/${chain.specialist}`, {
+    requestId: "revoke-specialist",
+    mode: "deny",
+  });
+  expect(response.status).toBe(201);
+  await vi.waitFor(async () =>
+    expect((await run(chain.specialist, chain.middle?.childRunId as string)).state).toBe("closed"),
+  );
+  await vi.waitFor(async () =>
+    expect((await run(chain.reviewer, queued.runId)).state).toBe("succeeded"),
+  );
+  expect((await run(chain.reviewer, chain.leaf?.childRunId as string)).state).toBe("closed");
+  expect((await run(chain.specialist, chain.middle?.childRunId as string)).questions).toEqual([
+    expect.objectContaining({ state: "cancelled" }),
+  ]);
+  expect((await run("personal", chain.source.runId)).delegations).toContainEqual(
+    expect.objectContaining({
+      id: "nested-middle",
+      state: "cancelled",
+      revokedAt: expect.any(String),
+      result: expect.stringMatching(/revoked/i),
+    }),
+  );
+  expect((await run("personal", source.runId)).delegations).toContainEqual(
+    expect.objectContaining({
+      id: "pending-revoked",
+      childRunId: null,
+      approval: expect.objectContaining({ state: "stale" }),
+    }),
+  );
+  expect(
+    (
+      await post(`/api/bots/personal/runs/${source.runId}/approvals/pending-revoked/decision`, {
+        requestId: "too-late",
+        decision: "approve",
+        operation: "delegate",
+        targetBotId: chain.specialist,
+        text: "Pending exact text",
+        deadline: null,
+      })
+    ).status,
+  ).toBe(409);
+  expect(
+    (
+      await ask(sourceMailbox, "new-denied", "delegate", {
+        requestId: "new-denied",
+        targetBotId: chain.specialist,
+        text: "New forbidden request",
+      })
+    ).result,
+  ).toMatchObject({ state: "denied", childRunId: null });
+  expect((await run("personal", chain.source.runId)).state).not.toBe("closed");
+  const artifact = await fetch(
+    `${base}/api/bots/${chain.reviewer}/runs/${chain.leaf?.childRunId}/artifacts/${artifactId}`,
+    { headers },
+  );
+  expect(artifact.status).toBe(200);
+  expect(await artifact.text()).toBe("Delivered before revocation");
+  expect((await get(`/api/bots/${chain.specialist}/thread`)).collaboration).toContainEqual(
+    expect.objectContaining({ targetBotId: "personal", mode: "allow" }),
+  );
+  // Restoring permission cannot revive the cancelled child through retry.
+  expect(
+    (
+      await post(`/api/bots/personal/collaboration/${chain.specialist}`, {
+        requestId: "restore-specialist",
+        mode: "allow",
+      })
+    ).status,
+  ).toBe(201);
+  expect(
+    (
+      await post(`/api/bots/personal/collaboration/${chain.specialist}`, {
+        requestId: "revoke-specialist",
+        mode: "deny",
+      })
+    ).status,
+  ).toBe(200);
+  expect((await get("/api/bots/personal/thread")).collaboration).toContainEqual(
+    expect.objectContaining({ targetBotId: chain.specialist, mode: "allow" }),
+  );
+  expect(
+    (
+      await post(`/api/bots/${chain.specialist}/runs/${chain.middle?.childRunId}/retry`, {
+        requestId: "retry-revoked",
+      })
+    ).status,
+  ).toBe(409);
+});
+
+it("retains revoked stop capacity, recovers cancellation after restart and preserves uncertainty and late evidence", async () => {
+  const driver = new MailboxDriver();
+  driver.respond = async (input, _material, signal) => {
+    if (input.content === "Unrelated") return "Independent completed";
+    await untilAbort(signal);
+    return "unused";
+  };
+  let blocked = false;
+  let reviewer = "";
+  const originalStart = driver.start.bind(driver);
+  driver.start = async (material, signal) => {
+    const handle = await originalStart(material, signal);
+    return {
+      ...handle,
+      stop: async () => {
+        if (blocked && material.key.agentGroupId === reviewer) throw new Error("Stop failed");
+        await handle.stop();
+      },
+    };
+  };
+  const chain = await nested(driver);
+  reviewer = chain.reviewer;
+  blocked = true;
+  try {
+    // A final acknowledgement without result makes the confirmed outcome uncertain.
+    const input = (await host.inspect(chain.leaf?.childRunId as string)).inputs[0];
+    if (!input) throw new Error("Missing leaf input");
+    chain.leafMailbox.acknowledge(input.id, "completed");
+    const queued = await (
+      await post(`/api/bots/${reviewer}/thread/tasks`, {
+        requestId: "queued-on-revoked-target",
+        text: "Unrelated",
+      })
+    ).json();
+    expect(
+      (
+        await post(`/api/bots/personal/collaboration/${chain.specialist}`, {
+          requestId: "revoke-before-restart",
+          mode: "deny",
+        })
+      ).status,
+    ).toBe(201);
+    await vi.waitFor(async () =>
+      expect((await run(reviewer, chain.leaf?.childRunId as string)).stopError).toMatch(
+        /unconfirmed/,
+      ),
+    );
+    expect((await run(chain.specialist, chain.middle?.childRunId as string)).state).toBe(
+      "stopping",
+    );
+    expect((await run(reviewer, queued.runId)).state).toBe("queued");
+    const parallel = await (
+      await post("/api/bots/personal/thread/tasks", {
+        requestId: "parallel-source",
+        text: "Unrelated",
+      })
+    ).json();
+    await vi.waitFor(async () =>
+      expect((await run("personal", parallel.runId)).state).toBe("succeeded"),
+    );
+    expect(
+      (
+        await post(`/api/bots/personal/collaboration/${chain.specialist}`, {
+          requestId: "allow-before-restart",
+          mode: "allow",
+        })
+      ).status,
+    ).toBe(201);
+    await channel.close();
+    blocked = false;
+    await host.stop();
+    const { configuration } = await loadHostSettings("examples/host/host.json");
+    host = await Host.start({
+      root,
+      configuration,
+      driver,
+      now: () => now,
+      reconcileMs: 365 * 86400000,
+    });
+    channel = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
+    base = `http://127.0.0.1:${channel.address.port}`;
+    await vi.waitFor(async () =>
+      expect((await run(reviewer, queued.runId)).state).toBe("succeeded"),
+    );
+    expect((await run(reviewer, chain.leaf?.childRunId as string)).state).toBe("uncertain");
+    expect((await run(chain.specialist, chain.middle?.childRunId as string)).state).toBe(
+      "uncertain",
+    );
+    const source = await run("personal", chain.source.runId);
+    expect(source).toMatchObject({ state: "waiting", held: true });
+    expect(source.delegations).toContainEqual(
+      expect.objectContaining({
+        id: "nested-middle",
+        state: "uncertain",
+        revokedAt: expect.any(String),
+        result: expect.stringMatching(/revoked/i),
+      }),
+    );
+    chain.leafMailbox.reply(input, "Late revoked child result", "message");
+    await host.reconcile();
+    expect((await run(reviewer, chain.leaf?.childRunId as string)).lateEvidence).toContainEqual(
+      expect.objectContaining({ text: "Late revoked child result" }),
+    );
+    expect((await run("personal", chain.source.runId)).attempts).toHaveLength(1);
+    expect((await get("/api/bots/personal/thread")).tasks).toHaveLength(2);
+    expect(
+      (
+        await post(`/api/bots/${reviewer}/runs/${chain.leaf?.childRunId}/retry`, {
+          requestId: "revived-through-descendant",
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await post(`/api/bots/${chain.specialist}/runs/${chain.middle?.childRunId}/retry`, {
+          requestId: "revived-after-allow",
+        })
+      ).status,
+    ).toBe(409);
+  } finally {
+    blocked = false;
+  }
+});
+
+it("returns revocation through the real SDK on the same source Run without replaying delegation", async () => {
+  const childStarted = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let target = "";
+  const service = await startPiService(
+    async (request) => {
+      const body = JSON.stringify(request);
+      if (body.includes("Role: Specialist.")) {
+        childStarted.resolve();
+        await release.promise;
+        return { text: "Late specialist response" };
+      }
+      if (!body.includes("Delegated work sdk-revoked"))
+        return {
+          tool: "delegate",
+          arguments: { requestId: "sdk-revoked", targetBotId: target, text: "Selected work" },
+        };
+      expect(body).toMatch(/revoked/i);
+      return { text: "Permission revoked; work stopped" };
+    },
+    { contextWindow: 65536 },
+  );
+  try {
+    await start(
+      piRunDriver(new PiProvider({ modelRuntime: service.runtime, model: service.model })),
+    );
+    target = await bot("Specialist");
+    await allow("personal", target);
+    const source = await (
+      await post("/api/bots/personal/thread/messages", {
+        requestId: "sdk-revoke-source",
+        text: "Delegate selected work",
+      })
+    ).json();
+    await childStarted.promise;
+    await vi.waitFor(async () =>
+      expect((await run("personal", source.runId)).state).toBe("waiting"),
+    );
+    const ledger = (await host.inspect(source.runId)).continuation;
+    expect(
+      (
+        await post(`/api/bots/personal/collaboration/${target}`, {
+          requestId: "sdk-revoke-permission",
+          mode: "deny",
+        })
+      ).status,
+    ).toBe(201);
+    await vi.waitFor(
+      async () => expect((await run("personal", source.runId)).state).toBe("succeeded"),
+      { timeout: 5000 },
+    );
+    const parent = await run("personal", source.runId);
+    expect(parent.attempts).toHaveLength(2);
+    expect(parent.delegations).toContainEqual(
+      expect.objectContaining({ state: "cancelled", result: expect.stringMatching(/revoked/i) }),
+    );
+    expect((await host.inspect(source.runId)).continuation).toBe(ledger);
+    const history = await get(`/api/bots/personal/runs/${source.runId}/history?kind=records`);
+    expect(
+      history.records.filter(
+        (r: { kind: string; toolName: string }) =>
+          r.kind === "tool-call" && r.toolName === "delegate",
+      ),
+    ).toHaveLength(1);
+    expect(history.records.filter((r: { kind: string }) => r.kind === "tool-result")).toHaveLength(
+      1,
+    );
+    expect((await get(`/api/bots/${target}/thread`)).tasks).toHaveLength(1);
+  } finally {
+    release.resolve();
+    await channel?.close();
+    await host?.stop();
+    await service.close();
+  }
+}, 15000);
+
+it("blocks a new retry of previously failed child work while its direction is denied", async () => {
+  const driver = new MailboxDriver();
+  driver.respond = async (input, _material, signal) => {
+    if (input.content === "Failed child") return { error: "Child failed before revocation" };
+    await untilAbort(signal);
+    return "unused";
+  };
+  await start(driver);
+  const target = await bot("Specialist");
+  await allow("personal", target);
+  const source = await (
+    await post("/api/bots/personal/thread/tasks", {
+      requestId: "retry-policy-source",
+      text: "Hold source",
+    })
+  ).json();
+  const sourceMailbox = await mailbox(driver, source.runId);
+  const child = (
+    await ask(sourceMailbox, "failed-before-revoke", "delegate", {
+      requestId: "failed-before-revoke",
+      targetBotId: target,
+      text: "Failed child",
+    })
+  ).result;
+  await vi.waitFor(async () =>
+    expect((await run(target, child?.childRunId as string)).state).toBe("failed"),
+  );
+  expect(
+    (
+      await post(`/api/bots/personal/collaboration/${target}`, {
+        requestId: "deny-retry-direction",
+        mode: "deny",
+      })
+    ).status,
+  ).toBe(201);
+  expect((await run(target, child?.childRunId as string)).outcome).toMatchObject({
+    kind: "failed",
+    reply: "Child failed before revocation",
+  });
+  expect(
+    (
+      await post(`/api/bots/${target}/runs/${child?.childRunId}/retry`, {
+        requestId: "retry-after-revocation",
+      })
+    ).status,
+  ).toBe(409);
+  expect((await get(`/api/bots/${target}/thread`)).tasks[0].runs).toHaveLength(1);
+});
+
+it("revokes live descendants and decisions through an already uncertain child without resolving its outcome", async () => {
+  const driver = new MailboxDriver();
+  const handles = new Map<string, SessionHandle>();
+  const originalStart = driver.start.bind(driver);
+  driver.start = async (material, signal) => {
+    const handle = await originalStart(material, signal);
+    handles.set(material.key.sessionId, handle);
+    return handle;
+  };
+  driver.respond = async (input, _material, signal) => {
+    if (input.content === "Unrelated") return "Unrelated completed";
+    await untilAbort(signal);
+    return "unused";
+  };
+  await start(driver);
+  const specialist = await bot("Specialist");
+  const reviewer = await bot("Reviewer");
+  await allow("personal", specialist);
+  await allow(specialist, reviewer);
+  const source = await (
+    await post("/api/bots/personal/thread/tasks", {
+      requestId: "uncertain-source",
+      text: "Root",
+    })
+  ).json();
+  const sourceMailbox = await mailbox(driver, source.runId);
+  const middle = (
+    await ask(sourceMailbox, "uncertain-middle", "delegate", {
+      requestId: "uncertain-middle",
+      targetBotId: specialist,
+      text: "Middle",
+    })
+  ).result;
+  await wait(sourceMailbox, "personal", source.runId);
+  const middleId = middle?.childRunId as string;
+  const middleMailbox = await mailbox(driver, middleId);
+  const leaf = (
+    await ask(middleMailbox, "still-live-leaf", "delegate", {
+      requestId: "still-live-leaf",
+      targetBotId: reviewer,
+      text: "Leaf",
+    })
+  ).result;
+  await mailbox(driver, leaf?.childRunId as string);
+  await ask(middleMailbox, "uncertain-question", "ask_question", {
+    requestId: "uncertain-question",
+    text: "What should I do next?",
+  });
+  await post(`/api/bots/${specialist}/collaboration/${reviewer}`, {
+    requestId: "ask-after-child",
+    mode: "ask-each-time",
+  });
+  await ask(middleMailbox, "uncertain-approval", "delegate", {
+    requestId: "uncertain-approval",
+    targetBotId: reviewer,
+    text: "Another review",
+  });
+  // External executor exits after a final acknowledgement but before a durable wait/result.
+  const input = (await host.inspect(middleId)).inputs[0];
+  if (!input) throw new Error("Missing middle input");
+  middleMailbox.acknowledge(input.id, "completed");
+  await handles.get(middleId)?.stop();
+  await vi.waitFor(async () => {
+    await host.reconcile();
+    expect((await run(specialist, middleId)).state).toBe("uncertain");
+  });
+  const before = (await run(specialist, middleId)).outcome;
+  const queued = await (
+    await post(`/api/bots/${reviewer}/thread/tasks`, {
+      requestId: "behind-live-descendant",
+      text: "Unrelated",
+    })
+  ).json();
+  expect(
+    (
+      await post(`/api/bots/personal/collaboration/${specialist}`, {
+        requestId: "revoke-uncertain-middle",
+        mode: "deny",
+      })
+    ).status,
+  ).toBe(201);
+  await vi.waitFor(async () =>
+    expect((await run(reviewer, leaf?.childRunId as string)).state).toBe("closed"),
+  );
+  await vi.waitFor(async () => expect((await run(reviewer, queued.runId)).state).toBe("succeeded"));
+  const after = await run(specialist, middleId);
+  expect(after.state).toBe("uncertain");
+  expect(after.outcome).toEqual(before);
+  expect(after.questions).toContainEqual(
+    expect.objectContaining({ id: "uncertain-question", state: "cancelled" }),
+  );
+  expect(after.delegations).toContainEqual(
+    expect.objectContaining({
+      id: "uncertain-approval",
+      state: "cancelled",
+      approval: expect.objectContaining({ state: "cancelled" }),
+    }),
+  );
+  expect(await run("personal", source.runId)).toMatchObject({ state: "waiting", held: true });
+});

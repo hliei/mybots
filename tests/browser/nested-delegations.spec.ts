@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { HostMailbox, RunnerMailbox } from "@mybots/mailbox/node";
 import { expect, test } from "@playwright/test";
 
-for (const outcome of ["cancel", "uncertain"] as const) {
+for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as const) {
   test(`shows two delegation levels after restart and handles ${outcome} work`, async ({
     page,
   }) => {
@@ -174,7 +174,111 @@ for (const outcome of ["cancel", "uncertain"] as const) {
         path: join(tmpdir(), "mybots-nested-delegation.png"),
       });
       await expect(page.locator("#chat-works")).toContainText("Origin: delegation");
-      if (outcome === "cancel") {
+      if (outcome === "revoke" || outcome === "revoke-uncertain") {
+        await page.getByRole("button", { name: "Select Reviewer" }).click();
+        await expect(
+          page.locator("#chat-works article").filter({ hasText: `Run ID: ${review.childRunId}` }),
+        ).toContainText("Execution: active", { timeout: 10000 });
+        const auth = { Authorization: `Bearer ${ready.credential}` };
+        await page.getByRole("button", { name: "Select Personal" }).click();
+        await expect(page.locator('[data-delegation-id="browser-child"]')).toBeVisible();
+        await page.getByLabel("Target Bot").selectOption(writerId);
+        await page.getByLabel("Permission").focus();
+        await page.getByLabel("Permission").selectOption("ask-each-time");
+        await page.getByRole("button", { name: "Save delegation permission" }).click();
+        await expect(page.locator("#collaboration-notice")).toContainText(
+          `to ${writerId} is ask-each-time.`,
+        );
+        const pendingSource = await (
+          await page.request.post(`${ready.url}/api/bots/personal/thread/tasks`, {
+            headers: auth,
+            data: { requestId: "revocation-proposal-source", text: "Hold chat" },
+          })
+        ).json();
+        const pendingMailbox = new RunnerMailbox(
+          join(root, "data", "sessions", "personal", pendingSource.runId),
+        );
+        await expect.poll(() => pendingMailbox.executionIncarnation()).toBeGreaterThan(0);
+        pendingMailbox.requestHistory({
+          id: "revocation-pending",
+          operation: "delegate",
+          incarnation: pendingMailbox.executionIncarnation(),
+          input: {
+            requestId: "revocation-pending",
+            targetBotId: writerId,
+            text: "Exact pending operation",
+          },
+        });
+        await expect
+          .poll(() => pendingMailbox.historyResponse("revocation-pending"))
+          .toMatchObject({ result: { approval: { state: "pending" } } });
+        const approvalCard = page.locator('[data-approval-id="revocation-pending"]');
+        await expect(approvalCard).toContainText("Exact pending operation");
+        const queued = await (
+          await page.request.post(`${ready.url}/api/bots/${reviewerId}/thread/tasks`, {
+            headers: auth,
+            data: { requestId: "unrelated-review", text: "Unrelated review" },
+          })
+        ).json();
+        const directory = join(root, "data", "sessions", reviewerId, review.childRunId);
+        const input = new HostMailbox(directory).inputs()[0];
+        if (!input) throw new Error("Reviewer input is missing");
+        if (outcome === "revoke-uncertain")
+          new RunnerMailbox(directory).acknowledge(input.id, "completed");
+        child?.send("fail-stop");
+        await page.getByLabel("Permission").focus();
+        await page.getByLabel("Permission").selectOption("deny");
+        await page.getByRole("button", { name: "Save delegation permission" }).click();
+        await expect(page.locator("#collaboration-notice")).toContainText(
+          `to ${writerId} is deny.`,
+        );
+        await expect(approvalCard).toContainText("stale");
+        await expect(approvalCard.getByRole("button", { name: "Approve action" })).toHaveCount(0);
+        await expect(page.locator('[data-delegation-id="browser-child"]')).toContainText(
+          "Collaboration revoked",
+        );
+        await page.getByRole("button", { name: "Select Writer" }).click();
+        await expect(page.locator("#chat-works")).toContainText("Owned child stop is unconfirmed.");
+        await page.getByRole("button", { name: "Select Reviewer" }).click();
+        await expect(page.locator("#chat-works")).toContainText("Execution stop unconfirmed");
+        await expect(page.locator("#chat-works")).toContainText("Execution: queued");
+        // Shutdown confirms the external executor stopped; a fresh Host settles the persisted scope.
+        child?.send("allow-stop");
+        await stop();
+        await start(Number(new URL(ready.url).port));
+        await page.reload();
+        await page.getByRole("button", { name: "Select Reviewer" }).click();
+        const leaf = page
+          .locator("#chat-works article")
+          .filter({ hasText: `Run ID: ${review.childRunId}` });
+        await expect(leaf).toContainText(
+          outcome === "revoke" ? "Execution: closed" : "Execution: uncertain",
+        );
+        // A briefly started Task may need the five-second interrupted-execution backoff.
+        await expect(
+          page.locator("#chat-works article").filter({ hasText: `Run ID: ${queued.runId}` }),
+        ).toContainText("Execution: active", { timeout: 10000 });
+        new RunnerMailbox(directory).reply(input, "Late evidence after revocation", "message");
+        await page.getByRole("button", { name: "Refresh status" }).click();
+        await expect(leaf).toContainText("Late result: Late evidence after revocation");
+        await page.getByRole("button", { name: "Select Personal" }).click();
+        await expect(page.locator('[data-delegation-id="browser-child"]')).toContainText(
+          "Collaboration revoked",
+        );
+        await expect(page.locator('[data-approval-id="revocation-pending"]')).toContainText(
+          "stale",
+        );
+        if (outcome === "revoke-uncertain") {
+          await expect(
+            page.locator("#chat-works article").filter({ hasText: `Run ID: ${ready.sessionId}` }),
+          ).toContainText("Owned child outcome is uncertain");
+        } else {
+          child?.send("complete");
+          await expect(
+            page.locator("#chat-works article").filter({ hasText: `Run ID: ${ready.sessionId}` }),
+          ).toContainText("Execution: succeeded");
+        }
+      } else if (outcome === "cancel") {
         await page.getByRole("button", { name: "Select Personal" }).click();
         await page.getByRole("button", { name: "Stop run", exact: true }).click();
         await expect(page.locator("#chat-works")).toContainText("Execution: closed");

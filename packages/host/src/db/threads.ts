@@ -383,12 +383,7 @@ export class ThreadStore {
       throw new ChatRequestError("Run is already uncertain. Retry or close it.", 409);
     if (["succeeded", "failed", "closed"].includes(run.state))
       throw new ChatRequestError("Run is already terminal.", 409);
-    this.db
-      .prepare(
-        "UPDATE owner_questions SET state = 'cancelled', resolved_at = ? WHERE run_id = ? AND state IN ('pending', 'expired')",
-      )
-      .run(now, run.id);
-    this.settleApprovals(run.id, "cancelled", "Source Run was cancelled.", now);
+    this.cancelRunDecisions(run.id, now);
     if (run.state !== "stopping")
       this.db
         .prepare(
@@ -403,6 +398,15 @@ export class ThreadStore {
       state: "stopping" as const,
     };
   }
+  private cancelRunDecisions(runId: string, now: string): void {
+    this.db
+      .prepare(
+        "UPDATE owner_questions SET state = 'cancelled', resolved_at = ? WHERE run_id = ? AND state IN ('pending', 'expired')",
+      )
+      .run(now, runId);
+    this.settleApprovals(runId, "cancelled", "Source Run was cancelled.", now);
+  }
+
   markStopUnconfirmed(id: string, error: string, now: string): void {
     this.db
       .prepare("UPDATE runs SET stop_error = ?, updated_at = ? WHERE id = ? AND state = 'stopping'")
@@ -483,6 +487,16 @@ export class ThreadStore {
       if (ownership && !["failed", "cancelled", "uncertain"].includes(ownership.state))
         throw new ChatRequestError("Owned child work has no retryable outcome.", 409);
       while (ownership) {
+        if (ownership.revokedAt)
+          throw new ChatRequestError(
+            "Collaboration was revoked. Submit a new delegation request.",
+            409,
+          );
+        if (this.collaborationMode(ownership.sourceBotId, ownership.targetBotId) === "deny")
+          throw new ChatRequestError(
+            "Current collaboration permission denies this child retry.",
+            409,
+          );
         const parent = this.run(ownership.parentRunId);
         if (!["active", "queued", "waiting"].includes(parent.state))
           throw new ChatRequestError("The owning parent no longer accepts child retries.", 409);
@@ -1669,6 +1683,7 @@ export class ThreadStore {
  VALUES (?, ?, ?, ?)
  ON CONFLICT (source_bot_id, target_bot_id) DO UPDATE SET mode = excluded.mode, updated_at = excluded.updated_at`)
           .run(sourceBotId, targetBotId, mode, now);
+        const stoppingRunIds: string[] = [];
         if (mode === "deny") {
           const requests = this.db
             .prepare(`SELECT d.id FROM delegations d JOIN action_approvals a ON a.id = d.id
@@ -1681,10 +1696,33 @@ export class ThreadStore {
               "Current collaboration permission denies this operation. A new request and decision are required.",
               now,
             );
+          for (const row of this.delegationsWhere(
+            "source_bot_id = ? AND target_bot_id = ? AND state IN ('pending', 'uncertain') AND child_run_id IS NOT NULL",
+            [sourceBotId, targetBotId],
+          )) {
+            const child = this.run(row.childRunId as string);
+            if (["succeeded", "failed", "closed"].includes(child.state)) continue;
+            this.db
+              .prepare("UPDATE delegations SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?")
+              .run(now, row.id);
+            stoppingRunIds.push(...this.markOwnedStopping(child.id, now));
+          }
         }
-        return { sourceBotId, targetBotId, mode };
+        return { sourceBotId, targetBotId, mode, stoppingRunIds };
       },
     );
+  }
+
+  /** Persist the whole cancellation scope before any executor can observe the policy change. */
+  private markOwnedStopping(runId: string, now: string): string[] {
+    const run = this.run(runId);
+    if (["succeeded", "failed", "closed"].includes(run.state)) return [];
+    if (run.state === "uncertain") this.cancelRunDecisions(runId, now);
+    else this.markStopping(run, now);
+    return [
+      ...(run.state === "uncertain" ? [] : [runId]),
+      ...this.childRunIds(runId).flatMap((childId) => this.markOwnedStopping(childId, now)),
+    ];
   }
 
   delegation(id: string) {
@@ -2031,12 +2069,13 @@ export class ThreadStore {
         : child.state === "failed"
           ? "failed"
           : "cancelled";
-    const result =
+    const childResult =
       typeof outcome.reply === "string"
         ? outcome.reply
         : uncertain
           ? "Owned child outcome is uncertain."
           : child.state;
+    const result = delegation.revokedAt ? `Collaboration revoked. ${childResult}` : childResult;
     this.db
       .prepare(
         `UPDATE delegations SET state = ?, result = ?, resolved_at = ?
@@ -2145,7 +2184,7 @@ export class ThreadStore {
       .prepare(`SELECT id, source_bot_id AS sourceBotId, target_bot_id AS targetBotId,
  parent_task_id AS parentTaskId, parent_run_id AS parentRunId, parent_attempt_id AS parentAttemptId,
  originating_run_id AS originatingRunId, child_task_id AS childTaskId, child_run_id AS childRunId,
- text, state, result, created_at AS createdAt, resolved_at AS resolvedAt
+ text, state, result, created_at AS createdAt, resolved_at AS resolvedAt, revoked_at AS revokedAt
  FROM delegations WHERE ${clause} ORDER BY rowid`)
       .all(...values) as unknown as {
       id: string;
@@ -2162,6 +2201,7 @@ export class ThreadStore {
       result: string | null;
       createdAt: string;
       resolvedAt: string | null;
+      revokedAt: string | null;
     }[];
     return rows.map((row) => ({ ...row, approval: this.approval(row.id) }));
   }

@@ -676,7 +676,7 @@ it("upgrades a reset-enabled store without losing selected originals or Run boun
   });
   const upgraded = new DatabaseSync(join(root, "data", "host.db"));
   try {
-    expect(upgraded.prepare("PRAGMA user_version").get()?.user_version).toBe(22);
+    expect(upgraded.prepare("PRAGMA user_version").get()?.user_version).toBe(23);
     expect(upgraded.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(
       upgraded.prepare("SELECT selected_message_ids FROM runs WHERE id = ?").get(selected.runId),

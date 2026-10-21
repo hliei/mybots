@@ -34,6 +34,7 @@ import { cronRoutineSchema } from "./migrations/019-cron-routines.ts";
 import { routineLifecycleSchema } from "./migrations/020-routine-lifecycle.ts";
 import { delegationSchema } from "./migrations/021-delegations.ts";
 import { actionApprovalSchema } from "./migrations/022-action-approvals.ts";
+import { collaborationRevocationSchema } from "./migrations/023-collaboration-revocation.ts";
 import { RoutineStore } from "./routines.ts";
 import { ThreadStore } from "./threads.ts";
 
@@ -105,7 +106,7 @@ export class HostStore {
       const { user_version } = this.db.prepare("PRAGMA user_version").get() as {
         user_version: number;
       };
-      if (user_version > 22) throw new Error("Unsupported host schema version");
+      if (user_version > 23) throw new Error("Unsupported host schema version");
       if (
         user_version > 0 &&
         user_version < 8 &&
@@ -136,6 +137,7 @@ export class HostStore {
       if (user_version <= 19) this.db.exec(routineLifecycleSchema);
       if (user_version <= 20) this.db.exec(delegationSchema);
       if (user_version <= 21) this.db.exec(actionApprovalSchema);
+      if (user_version <= 22) this.db.exec(collaborationRevocationSchema);
       this.routines = new RoutineStore(this.db);
       this.seed(configuration, dirname(dirname(file)));
       this.threads = new ThreadStore(this.db);
