@@ -310,7 +310,9 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await page.getByLabel("Search original history").fill("Research");
     await showFeature(page, "search");
     await page.getByRole("button", { name: "Search history", exact: true }).click();
-    await expect(page.locator("#thread-messages")).toContainText("Research first");
+    await expect(page.getByRole("region", { name: "Conversation search results" })).toContainText(
+      "Research first",
+    );
     await showFeature(page, "search");
     await page.getByRole("button", { name: "Latest originals", exact: true }).click();
     await expect(page.locator("#thread-messages")).toContainText("Independent work");

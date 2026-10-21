@@ -3,6 +3,7 @@ import { showCollaboration } from "./collaboration.ts";
 import {
   clearBackgroundSelection,
   selectedBackgroundIds,
+  selectHistoryBot,
   setBackgroundBoundary,
   showHistory,
   showRunHistory,
@@ -532,6 +533,13 @@ function showTarget(): void {
         : "";
   controls();
 }
+document.addEventListener("background-selection", (event) => {
+  if ((event as CustomEvent<number>).detail > 0) {
+    target.value = "new-task";
+    saveDraft();
+  }
+  showTarget();
+});
 target.addEventListener("change", () => {
   saveDraft();
   showTarget();
@@ -614,8 +622,10 @@ function controls(): void {
     button.disabled ||=
       !text.value.trim() ||
       !text.validity.valid ||
-      target.selectedOptions[0]?.dataset.unavailable === "true";
+      target.selectedOptions[0]?.dataset.unavailable === "true" ||
+      (selectedBackgroundIds().length > 0 && target.value !== "new-task");
   resetBackground.disabled = !admitting || sending || !!pending;
+  element<HTMLButtonElement>("confirm-reset").disabled = resetBackground.disabled;
   retry.hidden = !pending;
   retry.disabled = sending || !hostAvailable;
   chatStop.hidden = !!target.value || !chatExecution;
@@ -638,8 +648,10 @@ export async function showChat(
     delete chatStop.dataset.target;
     chatExecution = undefined;
     element("run-history").replaceChildren();
+    element<HTMLDialogElement>("reset-confirmation").close();
     clearBackgroundSelection();
     botId = selectedBotId;
+    selectHistoryBot(botId);
     text.value = selectedBotId ? readDraft(selectedBotId).text : "";
     growDraft();
     closeComposerMenu();
@@ -1519,8 +1531,17 @@ form.addEventListener("submit", (event) => {
   if (!pending) void submit();
 });
 retry.addEventListener("click", () => void submit());
+const resetConfirmation = element<HTMLDialogElement>("reset-confirmation");
 resetBackground.addEventListener("click", () => {
+  if (resetBackground.disabled) return;
+  resetConfirmation.showModal();
+  element("cancel-reset").focus();
+});
+element("cancel-reset").addEventListener("click", () => resetConfirmation.close());
+resetConfirmation.addEventListener("close", () => element("bot-menu").focus());
+element("confirm-reset").addEventListener("click", () => {
   if (!botId || !hostAvailable || availability !== "active" || sending || pending) return;
+  resetConfirmation.close();
   pending = { botId, requestId: crypto.randomUUID(), operation: "reset", text: "" };
   localStorage.setItem(pendingKey, JSON.stringify(pending));
   void submit();

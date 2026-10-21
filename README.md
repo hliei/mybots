@@ -109,8 +109,12 @@ method candidate confirmation does not send. Choose Message actions → New task
 for independent work, or select an active, queued or waiting Task as the input
 target. The composer names the selected Task and offers Return to Thread;
 unavailable targets require a deliberate selection. Reset chat background
-from the Bot menu while other Runs continue, and choose earlier messages for the
-next Run. Inspect Task/Run identity,
+from the Bot menu and confirm its future-Run scope while other Runs continue.
+The conversation marks the current boundary. Search conversation finds this Bot’s
+originals on either side of that boundary; read a result in context, then return
+to your prior reading position or close the panel. Select up to seven earlier
+originals to switch the composer to New task; viewing a result selects nothing.
+Inspect Task/Run identity,
 queue state, Attempts and final outcomes. The Host prints the URL at startup. Copy the locally
 generated `data/client-credential` into the pairing form once; the browser keeps
 an HttpOnly connection cookie for later visits. Each new Bot has its own role,

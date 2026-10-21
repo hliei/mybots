@@ -1,5 +1,11 @@
 import { copyButton, markdown } from "./markdown.ts";
-import { restoreReadingPosition, selectReadingBot } from "./reading-position.ts";
+import {
+  type Position,
+  restoreReadingPosition,
+  saveReadingPosition,
+  selectReadingBot,
+  setReadingPosition,
+} from "./reading-position.ts";
 import { openDetail } from "./shell.ts";
 
 interface Original {
@@ -55,7 +61,8 @@ export function setBackgroundBoundary(value: number): void {
   if (boundary === value) return;
   boundary = value;
   boundaryChanged = true;
-  for (const id of chosen) chosen.delete(id);
+  chosen.clear();
+  updateBackgroundSelection();
 }
 export function selectedBackgroundIds(): string[] {
   return [...chosen];
@@ -63,10 +70,30 @@ export function selectedBackgroundIds(): string[] {
 export function clearBackgroundSelection(): void {
   if (!chosen.size) return;
   chosen.clear();
+  updateBackgroundSelection();
   boundaryChanged = true;
+}
+function updateBackgroundSelection(): void {
+  const summary = node("background-selection");
+  summary.hidden = chosen.size === 0;
+  node("background-selection-count").textContent =
+    `${chosen.size} of 7 earlier originals selected for New task background. Existing Runs keep their background.`;
+  for (const box of document.querySelectorAll<HTMLInputElement>("input[data-background-id]")) {
+    box.checked = chosen.has(box.dataset.backgroundId as string);
+    box.disabled = chosen.size >= 7 && !box.checked;
+  }
 }
 let params: Record<string, string> = {};
 let continuedOriginal: Original | undefined;
+let searchRevision = 0;
+let readingReturn:
+  | {
+      params: Record<string, string>;
+      loaded: Map<string, Original>;
+      position: Position;
+      continuedOriginal: Original | undefined;
+    }
+  | undefined;
 let generation = 0;
 let revision = 0;
 let runRevision = 0;
@@ -231,9 +258,19 @@ async function originals(next = params, prepend = false): Promise<void> {
             : "No messages yet. Send a message to start this conversation.",
         ),
       );
+    let dividerShown = false;
+    const divider = () => {
+      const marker = paragraph("Current chat background starts here");
+      marker.className = "background-divider";
+      marker.setAttribute("role", "separator");
+      marker.setAttribute("aria-label", "Current chat background starts here");
+      container.append(marker);
+      dividerShown = true;
+    };
     let dateGroup = "";
     const path = prefix();
     for (const message of params.query ? messages : [...messages].sort((a, b) => a.seq - b.seq)) {
+      if (boundary > 0 && !dividerShown && message.seq >= boundary) divider();
       const date = new Date(message.createdAt);
       const day = date.toLocaleDateString(undefined, { dateStyle: "long" });
       if (day !== dateGroup) {
@@ -280,9 +317,13 @@ async function originals(next = params, prepend = false): Promise<void> {
         const box = document.createElement("input");
         box.type = "checkbox";
         box.checked = chosen.has(message.id);
+        box.dataset.backgroundId = message.id;
+        box.title = "Use as background for new work only (up to seven originals)";
         box.addEventListener("change", () => {
-          if (box.checked) chosen.add(message.id);
+          if (box.checked && chosen.size < 7) chosen.add(message.id);
           else chosen.delete(message.id);
+          updateBackgroundSelection();
+          document.dispatchEvent(new CustomEvent("background-selection", { detail: chosen.size }));
         });
         label.append(box, ` Use in next Run background: ${message.text}`);
         article.append(label);
@@ -302,6 +343,8 @@ async function originals(next = params, prepend = false): Promise<void> {
       article.append(evidence);
       container.append(article);
     }
+    if (boundary > 0 && !dividerShown && !params.beforeSeq && !params.messageId && !params.query)
+      divider();
     const nav = node("history-navigation");
     nav.replaceChildren();
     if (page.nextBeforeSeq !== null && !params.messageId)
@@ -331,6 +374,7 @@ async function originals(next = params, prepend = false): Promise<void> {
       if (article.dataset.live && !loaded.has(article.dataset.messageId ?? ""))
         container.append(article);
     }
+    updateBackgroundSelection();
     renderLive();
     restoreReadingPosition();
   } catch (error) {
@@ -476,12 +520,13 @@ function connect() {
     if (botId) reconnect = window.setTimeout(connect, 1000);
   });
 }
-export async function showHistory(
-  selectedBotId: string | undefined,
-  activeRuns: string[],
-  conversationRuns: string[] = activeRuns,
-): Promise<void> {
+export function selectHistoryBot(selectedBotId: string | undefined): void {
   if (botId !== selectedBotId) {
+    if (readingReturn) {
+      params = readingReturn.params;
+      loaded = readingReturn.loaded;
+      setReadingPosition(readingReturn.position);
+    }
     if (botId) pages.set(botId, { params, loaded });
     botId = selectedBotId;
     selectReadingBot(botId);
@@ -491,11 +536,24 @@ export async function showHistory(
     params = (botId && pages.get(botId)?.params) || {};
     loaded = (botId && pages.get(botId)?.loaded) || new Map();
     continuedOriginal = undefined;
+    readingReturn = undefined;
+    searchRevision++;
+    node("search-results").replaceChildren();
+    node("search-navigation").replaceChildren();
+    (node("history-query") as HTMLInputElement).value = "";
+    node("history-return").hidden = true;
     live.clear();
     node("run-history").replaceChildren();
     node("thread-messages").replaceChildren();
     node("history-navigation").replaceChildren();
   }
+}
+export async function showHistory(
+  selectedBotId: string | undefined,
+  activeRuns: string[],
+  conversationRuns: string[] = activeRuns,
+): Promise<void> {
+  selectHistoryBot(selectedBotId);
   if (!botId) {
     window.clearTimeout(reconnect);
     socket?.close();
@@ -520,13 +578,90 @@ export async function showHistory(
     await originals(params, loaded.size > 0);
   } else renderLive();
 }
+async function locateOriginal(message: Original): Promise<void> {
+  const position = saveReadingPosition();
+  if (!readingReturn && position)
+    readingReturn = { params, loaded: new Map(loaded), position, continuedOriginal };
+  node("history-return").hidden = !readingReturn;
+  setReadingPosition({ follow: false, top: 0, anchor: message.id, offset: 20 });
+  await originals({ messageId: message.id });
+}
+function returnToReading(): void {
+  const saved = readingReturn;
+  if (!saved) return;
+  readingReturn = undefined;
+  node("history-return").hidden = true;
+  params = saved.params;
+  loaded = saved.loaded;
+  continuedOriginal = saved.continuedOriginal;
+  setReadingPosition(saved.position);
+  void originals(params, true);
+}
+async function searchOriginals(query: string, beforeSeq?: number): Promise<void> {
+  const selected = botId;
+  if (!selected) return;
+  const current = ++searchRevision;
+  const next = { query, ...(beforeSeq === undefined ? {} : { beforeSeq: String(beforeSeq) }) };
+  try {
+    const page = await get(`${prefix()}/thread/history?${new URLSearchParams(next)}`, isPage);
+    if (selected !== botId || current !== searchRevision) return;
+    const results = node("search-results");
+    results.replaceChildren(
+      paragraph(page.messages.length ? "Matching originals" : "No matching originals."),
+    );
+    for (const message of page.messages) {
+      const result = document.createElement("article");
+      result.append(
+        paragraph(
+          `${message.role === "user" ? "You" : "Bot"} · ${new Date(message.createdAt).toLocaleString()}`,
+        ),
+        paragraph(message.text),
+        ...(message.truncated
+          ? [paragraph("Excerpt · read the original for the remaining text.")]
+          : []),
+        button("Read surrounding originals", () => void locateOriginal(message)),
+      );
+      results.append(result);
+    }
+    const navigation = node("search-navigation");
+    navigation.replaceChildren();
+    if (page.nextBeforeSeq !== null)
+      navigation.append(
+        button(
+          "More search results",
+          () => void searchOriginals(query, page.nextBeforeSeq as number),
+        ),
+      );
+  } catch (error) {
+    if (selected === botId && current === searchRevision)
+      node("search-results").textContent = (error as Error).message;
+  }
+}
 (node("history-search") as HTMLFormElement).addEventListener("submit", (event) => {
   event.preventDefault();
   const query = (node("history-query") as HTMLInputElement).value.trim();
-  void originals(query ? { query } : {});
+  if (query) void searchOriginals(query);
+  else {
+    searchRevision++;
+    node("search-results").replaceChildren(
+      paragraph("Enter words to search this Bot’s conversation."),
+    );
+    node("search-navigation").replaceChildren();
+  }
 });
-node("history-latest").addEventListener("click", () => void originals({}));
-
-document.addEventListener("history-latest", () => {
+node("history-return").addEventListener("click", returnToReading);
+document.addEventListener("detail-mode", (event) => {
+  if ((event as CustomEvent).detail !== "search") returnToReading();
+});
+function latestOriginals(): void {
+  readingReturn = undefined;
+  node("history-return").hidden = true;
   void originals({});
+}
+node("history-latest").addEventListener("click", latestOriginals);
+document.addEventListener("history-latest", latestOriginals);
+
+node("clear-background-selection").addEventListener("click", () => {
+  clearBackgroundSelection();
+  document.dispatchEvent(new CustomEvent("background-selection", { detail: 0 }));
 });

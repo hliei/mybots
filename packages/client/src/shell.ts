@@ -25,6 +25,7 @@ export function openDetail(mode: Detail, trigger = document.activeElement): void
   if (!currentBot) return;
   if (trigger instanceof HTMLElement && !node("detail-surface").contains(trigger))
     detailReturn = trigger;
+  document.dispatchEvent(new CustomEvent("detail-mode", { detail: mode }));
   node("detail-surface").hidden = false;
   for (const mount of document.querySelectorAll<HTMLElement>("[data-detail-mount]"))
     mount.hidden = mount.dataset.detailMount !== mode;
@@ -39,6 +40,7 @@ export function openDetail(mode: Detail, trigger = document.activeElement): void
   node(mode === "search" ? "history-query" : "close-detail").focus();
 }
 function closeDetail(): void {
+  document.dispatchEvent(new CustomEvent("detail-mode", { detail: null }));
   node("detail-surface").hidden = true;
   resolveBotTrigger(detailReturn, "bot-identity").focus();
 }

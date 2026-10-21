@@ -126,7 +126,14 @@ test("real Pi history, lost live frames, reload and Host restart preserve usable
     await page.getByLabel("Search original history").fill("火星项目");
     await showFeature(page, "search");
     await page.getByRole("button", { name: "Search history", exact: true }).click();
-    await expect(page.locator("#thread-messages")).toContainText("火星项目");
+    await expect(page.getByRole("region", { name: "Conversation search results" })).toContainText(
+      "火星项目",
+    );
+    const boundedResults = page.getByRole("region", { name: "Conversation search results" });
+    await expect(boundedResults.locator("article")).toHaveCount(5);
+    await page.getByRole("button", { name: "More search results" }).click();
+    await expect(boundedResults.locator("article")).toHaveCount(1);
+    await expect(boundedResults).toContainText("original 0");
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.locator("#chat-heading").scrollIntoViewIfNeeded();
     await page.screenshot({ path: "/tmp/mybots-history-desktop.png" });
@@ -156,6 +163,34 @@ test("real Pi history, lost live frames, reload and Host restart preserve usable
     const longReply = page.locator("#thread-messages article.assistant").last();
     const originalId = await longReply.getAttribute("data-message-id");
     expect(originalId).toBeTruthy();
+    await longReply.evaluate((element) => {
+      const timeline = element.closest(".timeline") as HTMLElement;
+      timeline.scrollTop +=
+        element.getBoundingClientRect().top - timeline.getBoundingClientRect().top + 80;
+    });
+    await expect(page.getByRole("button", { name: "Back to latest" })).toBeVisible();
+    const readingOffset = await longReply.evaluate(
+      (element) => element.getBoundingClientRect().top,
+    );
+    await showFeature(page, "search");
+    await page.getByLabel("Search original history").fill("original 0");
+    await page.getByRole("button", { name: "Search history", exact: true }).click();
+    const results = page.getByRole("region", { name: "Conversation search results" });
+    await expect(results).toContainText("original 0");
+    await expect(page.locator("#thread-messages")).toContainText("Long original begins");
+    await results.getByRole("button", { name: "Read surrounding originals" }).first().click();
+    await expect(page.locator("#thread-messages")).toContainText("original 0");
+    await page.getByRole("button", { name: "Close details" }).click();
+    await expect(page.locator("#thread-messages")).toContainText("Long original begins");
+    await expect
+      .poll(async () =>
+        Math.abs(
+          (await longReply.evaluate((element) => element.getBoundingClientRect().top)) -
+            readingOffset,
+        ),
+      )
+      .toBeLessThan(5);
+
     for (const viewport of [
       { width: 1280, height: 900 },
       { width: 1440, height: 900 },
@@ -200,6 +235,26 @@ test("real Pi history, lost live frames, reload and Host restart preserve usable
     }
     await expect(page.locator("#thread-messages")).toContainText("Long original ends 🪐");
     await expect(page.locator("#thread-messages pre code")).toHaveText(longCodeOriginal);
+    await showFeature(page, "search");
+    await page.getByLabel("Search original history").fill("Long original begins");
+    await page.getByRole("button", { name: "Search history", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Conversation search results" })).toContainText(
+      "Long original begins",
+    );
+    await page
+      .getByRole("region", { name: "Conversation search results" })
+      .getByRole("button", { name: "Read surrounding originals" })
+      .click();
+    await longReply.getByRole("button", { name: "Continue original text", exact: true }).click();
+    await expect
+      .poll(async () => (await longReply.locator(".message-content").innerText()).length)
+      .toBeGreaterThan(3000);
+    await expect(longReply.locator(".message-content")).not.toContainText("Long original ends 🪐");
+    await page.getByRole("button", { name: "Close details" }).click();
+    await expect(longReply.locator(".message-content")).toContainText(
+      /Long original begins[\s\S]*Long original ends 🪐/,
+    );
+
     const afterCopy = await page.evaluate(async () =>
       (await fetch("/api/bots/personal/thread/history")).json(),
     );

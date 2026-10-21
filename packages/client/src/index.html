@@ -49,7 +49,7 @@
             <div class="composer-actions"><button id="message-actions" type="button" aria-label="Message actions" aria-expanded="false" aria-controls="composer-menu" class="icon-button">+</button><div id="composer-menu" hidden><button id="new-task" type="button">New task</button></div></div>
             <button type="submit" aria-label="Send message" title="Send message" class="icon-button">↑</button>
 
-          </form><div id="chat-stop"></div><p id="chat-message" aria-live="polite"></p><button id="retry-chat" type="button" hidden="">Retry chat request</button></div>
+          </form><div id="background-selection" hidden><span id="background-selection-count" aria-live="polite"></span><button id="clear-background-selection" type="button">Clear selection</button></div><div id="chat-stop"></div><p id="chat-message" aria-live="polite"></p><button id="retry-chat" type="button" hidden="">Retry chat request</button></div>
           </section>
         </section>
         <aside id="detail-surface" class="right-panel" aria-label="Bot details" hidden>
@@ -57,7 +57,7 @@
           <p class="current-bot" id="detail-bot"></p>
           <nav class="detail-nav" aria-label="Bot detail views"><button type="button" data-detail="overview">Overview</button><button type="button" data-detail="files">Files</button><button type="button" data-detail="tasks">Task activity</button><button type="button" data-detail="search">History search</button></nav>
           <div class="panel-content">
-            <div data-detail-mount="overview"><article id="selected-bot" aria-label="Selected Bot" hidden=""></article><div id="host-execution"></div><button id="bot-settings" type="button">Bot settings</button><button id="reset-background" type="button">Reset chat background</button></div>
+            <div data-detail-mount="overview"><article id="selected-bot" aria-label="Selected Bot" hidden=""></article><div id="host-execution"></div><button id="bot-settings" type="button">Bot settings</button><button id="reset-background" type="button" hidden>Reset chat background</button></div>
             <div data-detail-mount="files" hidden><section id="attachments">
             <h3>Task attachments</h3>
             <p>An upload belongs to the selected Task and is not given to every Task in this Thread. Save a file into the Bot workspace when other Tasks of this Bot should reuse it. The Host stores and downloads the bytes; it does not interpret, preview, or edit the file format.</p>
@@ -80,7 +80,7 @@
             <input id="history-query" maxlength="500" type="search">
             <button type="submit">Search history</button>
             <button id="history-latest" type="button">Latest originals</button>
-          </form><p>Results appear in the conversation. Reading history does not change the chat background.</p></div>
+          </form><p>Only this Bot’s chat originals, including earlier background. Reading does not select background.</p><button id="history-return" type="button" hidden>Return to reading position</button><div id="search-results" role="region" aria-label="Conversation search results"></div><div id="search-navigation"></div></div>
           </div>
         </aside>
       </div>
@@ -226,6 +226,12 @@
           </form>
           <p id="create-message" aria-live="polite"></p>
         </section></dialog>
+    <dialog id="reset-confirmation" aria-labelledby="reset-title">
+      <h2 id="reset-title">Reset chat background?</h2>
+      <p>This changes the background for future conversational Runs. Existing active, queued and waiting Runs keep their captured background. History remains readable and searchable; memory, files and work are preserved.</p>
+      <button id="cancel-reset" type="button">Cancel</button>
+      <button id="confirm-reset" type="button">Reset background</button>
+    </dialog>
     <dialog id="bot-actions" aria-labelledby="bot-actions-heading"></dialog>
     <dialog id="delete-surface" aria-labelledby="delete-heading">
       <h2 id="delete-heading">Logically delete Bot?</h2>

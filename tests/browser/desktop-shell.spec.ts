@@ -42,7 +42,10 @@ test("desktop shell pairs, sends to a real Thread and returns focus from shared 
     await page.getByRole("button", { name: "Search conversation", exact: true }).click();
     await page.getByLabel("Search original history").fill("no-matching-desktop-original");
     await page.getByRole("button", { name: "Search history", exact: true }).click();
-    await expect(page.locator("#thread-messages")).toContainText("No matching originals.");
+    await expect(page.getByRole("region", { name: "Conversation search results" })).toContainText(
+      "No matching originals.",
+    );
+    await expect(page.locator("#thread-messages")).toContainText("Final: Desktop shell round trip");
     await page.getByRole("button", { name: "Latest originals", exact: true }).click();
     await page.getByRole("button", { name: "Close details", exact: true }).click();
     await page.getByRole("button", { name: "Bot details: Personal", exact: true }).click();
