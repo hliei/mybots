@@ -203,6 +203,12 @@ Actual DeepSeek/Telegram acceptance is a separate, explicitly selected operation
 see [runtime acceptance](docs/runtime-acceptance.md). Offline and infrastructure
 results do not establish a real-service deployment.
 
+The [Multi-Bot controlled acceptance record](docs/multi-bot-acceptance.md) maps
+functional and failure coverage and documents the reproducible built-client
+Researcher/Writer journey, Host restarts, immutable report download and
+independent topic delivery. It keeps offline, real-SDK, actual-container and
+actual-service evidence separate.
+
 CI runs `npm run verify` and isolated Git workflow tests on Node.js 24.21.0.
 
 ## Commands

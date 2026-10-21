@@ -128,7 +128,8 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
         provider: "controlled",
         id: "controlled-model",
         baseUrl: "https://model.test:8443/v1",
-        contextWindow: 32768,
+        // Leave room for the production Host tool schemas and multiple exchanges.
+        contextWindow: 65536,
         maxTokens: 4096,
       },
     });
@@ -325,7 +326,7 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
           provider: "controlled",
           id: "controlled-model",
           baseUrl: "https://model.test:8443/v1",
-          contextWindow: 32768,
+          contextWindow: 65536,
           maxTokens: 4096,
         },
       });
@@ -366,7 +367,7 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
         provider: "controlled",
         id: "controlled-model",
         baseUrl: "https://model.test:8443/v1",
-        contextWindow: 32768,
+        contextWindow: 65536,
         maxTokens: 4096,
       },
     });
@@ -443,7 +444,7 @@ test("actual mounted runner records and reopens a Run-local ledger through the c
             provider: "controlled",
             id: "controlled-model",
             baseUrl: "https://model.test:8443/v1",
-            contextWindow: 32768,
+            contextWindow: 65536,
             maxTokens: 4096,
           },
         },
