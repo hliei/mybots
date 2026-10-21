@@ -1,15 +1,15 @@
 import type { TelegramFailureKind, TelegramRequestError } from "./channels/telegram-api.ts";
 
-/** Total platform sends for one question notice, including the first. */
-export const QUESTION_NOTICE_ATTEMPTS = 3;
+/** Total platform sends for one notice, including the first. */
+export const NOTICE_ATTEMPTS = 3;
 
 /** Ordinary waits after the first and second failed send. A longer retry-after wins. */
-export function questionNoticeWaitMs(attempts: number, retryAfterMs = 0): number | null {
-  if (attempts >= QUESTION_NOTICE_ATTEMPTS) return null;
+export function noticeWaitMs(attempts: number, retryAfterMs = 0): number | null {
+  if (attempts >= NOTICE_ATTEMPTS) return null;
   return Math.max(attempts === 1 ? 5000 : 30000, retryAfterMs);
 }
 
-export function conciseQuestion(text: string): string {
+export function conciseNotice(text: string): string {
   const flat = text.replace(/\s+/gu, " ").trim();
   const chars = Array.from(flat);
   if (chars.length <= 240) return flat;
@@ -21,27 +21,31 @@ export function telegramTopicName(name: string, botId: string): string {
   return Array.from(trimmed).slice(0, 128).join("");
 }
 
-export function questionNoticeText(notice: {
-  botName: string;
-  botId: string;
-  taskId: string;
-  runId: string;
-  questionId: string;
-  summary: string;
-  locator: string;
-}): string {
+export function noticeText(notice: import("./db/threads.ts").Notice & { botName: string }): string {
   return [
-    "Question needs an answer",
+    notice.kind === "question"
+      ? "Question needs an answer"
+      : notice.kind === "approval"
+        ? "Action approval required"
+        : notice.kind === "uncertain"
+          ? "Outcome uncertain: owner attention required"
+          : "Work outcome",
     `Bot: ${notice.botName} (${notice.botId})`,
+    ...(notice.routineId ? [`Routine: ${notice.routineId}`] : []),
     `Task: ${notice.taskId}`,
     `Run: ${notice.runId}`,
-    `Request: ${notice.questionId}`,
+    ...(notice.priorRunId ? [`Explicit retry of Run: ${notice.priorRunId}`] : []),
+    ...(notice.requestId ? [`Request: ${notice.requestId}`] : []),
     `Local client: ${notice.locator}`,
+    ...notice.sourceChain.map(
+      (source) =>
+        `Source Bot: ${source.botId} · Task: ${source.taskId} · Run: ${source.runId} · Delegation: ${source.delegationId} · Local client: ${source.locator}`,
+    ),
     notice.summary,
   ].join("\n");
 }
 
-export function questionNoticeFailure(error: TelegramRequestError): string {
+export function noticeFailure(error: TelegramRequestError): string {
   if (error.kind === "topic-missing") return "Telegram topic was deleted.";
   if (error.kind === "topic-mode") return "Private topic mode is unavailable.";
   if (error.kind === "authority") return "Telegram chat authority is unavailable.";

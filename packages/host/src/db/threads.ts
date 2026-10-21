@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { InboundMessage, OutboundMessage, ProcessingAck } from "@mybots/mailbox";
 import { type BotAvailability, isBotAvailability } from "../bots.ts";
 import { ChatRequestError, rejectInactiveBot } from "../chat.ts";
-import { questionNoticeWaitMs } from "../question-notices.ts";
+import { conciseNotice, noticeWaitMs } from "../notifications.ts";
 import { history } from "./history.ts";
 import type { SavedSession } from "./index.ts";
 import { type Routine, routineBusy } from "./routines.ts";
@@ -572,7 +572,7 @@ export class ThreadStore {
         "UPDATE owner_questions SET state = 'cancelled', resolved_at = ? WHERE run_id = ? AND state IN ('pending', 'expired')",
       )
       .run(now, runId);
-    this.suppressUnsentQuestionNotices(now);
+    this.suppressUnsentNotices(now);
     this.settleApprovals(runId, "cancelled", "Source Run was cancelled.", now);
   }
 
@@ -717,6 +717,11 @@ export class ThreadStore {
           now,
           run.id,
         );
+      this.db
+        .prepare(
+          `UPDATE runs SET collaboration_waited = (SELECT collaboration_waited FROM runs WHERE id = ?) WHERE id = ?`,
+        )
+        .run(run.id, newRunId);
       this.enqueue(newRunId, botId, now);
       this.db
         .prepare(
@@ -1264,8 +1269,10 @@ export class ThreadStore {
         return;
       }
       this.db
-        .prepare("UPDATE runs SET state = 'waiting', wait_reason = ?, updated_at = ? WHERE id = ?")
-        .run(reason.slice(0, 200), now, runId);
+        .prepare(
+          "UPDATE runs SET state = 'waiting', collaboration_waited = CASE WHEN ? = 'delegation' OR EXISTS (SELECT 1 FROM delegations WHERE parent_run_id = ? AND state IN ('pending', 'uncertain')) THEN 1 ELSE collaboration_waited END, wait_reason = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(reason, runId, reason.slice(0, 200), now, runId);
       this.endAttempt(runId, now);
       this.db.prepare("UPDATE attempts SET steer_through_rowid = NULL WHERE run_id = ?").run(runId);
       this.db.prepare("DELETE FROM execution_reservations WHERE run_id = ?").run(runId);
@@ -1645,7 +1652,7 @@ export class ThreadStore {
         "UPDATE owner_questions SET state = 'expired', resolved_at = ? WHERE state = 'pending' AND deadline <= ?",
       )
       .run(now, now);
-    this.suppressUnsentQuestionNotices(now);
+    this.suppressUnsentNotices(now);
   }
 
   answerQuestion(
@@ -1671,7 +1678,7 @@ export class ThreadStore {
             "UPDATE owner_questions SET state = 'answered', answer = ?, resolved_at = ? WHERE id = ?",
           )
           .run(text, now, questionId);
-        this.suppressUnsentQuestionNotices(now);
+        this.suppressUnsentNotices(now);
         return { botId, taskId: run.task_id, runId, questionId };
       },
     );
@@ -1760,7 +1767,7 @@ export class ThreadStore {
       }));
     return {
       admission: { activeLimit: admission.activeLimit, activeCount: admission.activeCount },
-      notices: this.questionNotices(botId),
+      notices: this.notices(botId),
       telegramTopic: this.telegramTopic(botId),
       thread: {
         id: thread.id,
@@ -2619,72 +2626,213 @@ export class ThreadStore {
     return row?.name ?? botId;
   }
 
-  recordQuestionNotice(input: {
-    questionId: string;
+  recordNotice(input: {
+    id: string;
+    kind: Notice["kind"];
+    questionId?: string;
+    requestId?: string;
     botId: string;
     taskId: string;
     runId: string;
     summary: string;
     locator: string;
     now: string;
+    routineId?: string | null;
+    priorRunId?: string | null;
   }): void {
+    const metadata = this.db
+      .prepare(`SELECT r.prior_run_id AS priorRunId, o.routine_id AS routineId
+ FROM runs r LEFT JOIN routine_occurrences o ON o.task_id = r.task_id WHERE r.id = ?`)
+      .get(input.runId) as { priorRunId: string | null; routineId: string | null };
+    const sourceChain: Notice["sourceChain"] = [];
+    let runId = input.runId;
+    for (let depth = 0; depth < 2; depth += 1) {
+      const parent = this.db
+        .prepare(`SELECT source_bot_id AS botId, parent_task_id AS taskId,
+ parent_run_id AS runId, id AS delegationId FROM delegations WHERE child_run_id = ?`)
+        .get(runId) as Notice["sourceChain"][number] | undefined;
+      if (!parent) break;
+      sourceChain.push({
+        ...parent,
+        locator: this.workLocator(parent.botId, parent.runId, parent.taskId),
+      });
+      runId = parent.runId;
+    }
     this.db
-      .prepare(`INSERT OR IGNORE INTO question_notices (
- question_id, bot_id, task_id, run_id, summary, locator, eligibility, state, attempts, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, 'eligible', 'pending', 0, ?, ?)`)
+      .prepare(`INSERT OR IGNORE INTO notices (
+ id, kind, question_id, request_id, routine_id, prior_run_id, source_chain,
+ bot_id, task_id, run_id, summary, locator, eligibility, state, attempts, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'eligible', 'pending', 0, ?, ?)`)
       .run(
-        input.questionId,
+        input.id,
+        input.kind,
+        input.questionId ?? null,
+        input.requestId ?? null,
+        input.routineId ?? metadata.routineId,
+        input.priorRunId ?? metadata.priorRunId,
+        JSON.stringify(sourceChain),
         input.botId,
         input.taskId,
         input.runId,
-        input.summary,
+        conciseNotice(input.summary),
         input.locator,
         input.now,
         input.now,
       );
   }
 
-  /** Drop notices that were never accepted after the question left pending. */
-  suppressUnsentQuestionNotices(now: string): void {
-    this.db
-      .prepare(`UPDATE question_notices SET eligibility = 'suppressed', state = 'suppressed',
- next_attempt_at = NULL, updated_at = ?
- WHERE state IN ('pending', 'failed') AND question_id IN (
-   SELECT id FROM owner_questions WHERE state != 'pending'
- )`)
-      .run(now);
+  private workLocator(botId: string, runId: string, taskId: string): string {
+    return `/?bot=${encodeURIComponent(botId)}&run=${encodeURIComponent(runId)}#task-${encodeURIComponent(taskId)}`;
   }
 
-  questionNotices(botId: string) {
-    return this.db
-      .prepare(`SELECT question_id AS questionId, bot_id AS botId, task_id AS taskId, run_id AS runId,
- summary, locator, eligibility, state, attempts, next_attempt_at AS nextAttemptAt,
- last_error AS lastError, accepted_at AS acceptedAt
- FROM question_notices WHERE bot_id = ? ORDER BY created_at, question_id`)
-      .all(botId) as unknown as QuestionNotice[];
-  }
-
-  dueQuestionNotices(now: string) {
-    this.db
-      .prepare(`UPDATE question_notices SET state = 'failed', next_attempt_at = NULL, updated_at = ?
- WHERE state = 'pending' AND attempts >= 3`)
-      .run(now);
-    return this.db
-      .prepare(`SELECT question_id AS questionId, bot_id AS botId, task_id AS taskId, run_id AS runId,
- summary, locator, attempts
- FROM question_notices
- WHERE state = 'pending' AND eligibility = 'eligible' AND attempts < 3
-   AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
- ORDER BY created_at, question_id`)
-      .all(now) as unknown as {
-      questionId: string;
+  /** Discover durable eligible facts independently of the platform connection. */
+  recordPolicyNotices(now: string): void {
+    const uncertain = this.db
+      .prepare(`SELECT r.id AS runId, r.task_id AS taskId, th.bot_id AS botId,
+ r.outcome, r.prior_run_id AS priorRunId, o.routine_id AS routineId
+ FROM runs r JOIN tasks t ON t.id = r.task_id JOIN threads th ON th.id = t.thread_id
+ LEFT JOIN routine_occurrences o ON o.task_id = t.id
+ WHERE r.state = 'uncertain' AND NOT EXISTS (SELECT 1 FROM notices n WHERE n.id = 'uncertain:' || r.id)`)
+      .all() as unknown as {
+      runId: string;
+      taskId: string;
+      botId: string;
+      outcome: string | null;
+      priorRunId: string | null;
+      routineId: string | null;
+    }[];
+    for (const row of uncertain) {
+      const outcome = row.outcome ? (JSON.parse(row.outcome) as { reply?: string }) : null;
+      this.recordNotice({
+        ...row,
+        id: `uncertain:${row.runId}`,
+        kind: "uncertain",
+        summary:
+          outcome?.reply ??
+          "Final evidence is missing. Inspect before retrying or closing this Run.",
+        locator: this.workLocator(row.botId, row.runId, row.taskId),
+        now,
+      });
+    }
+    const approvals = this.db
+      .prepare(`SELECT a.id, d.source_bot_id AS botId, d.parent_task_id AS taskId,
+ d.parent_run_id AS runId, a.text FROM action_approvals a JOIN delegations d ON d.id = a.id
+ WHERE a.state = 'pending' AND d.state = 'pending'
+ AND NOT EXISTS (SELECT 1 FROM notices n WHERE n.id = 'approval:' || a.id)`)
+      .all() as unknown as {
+      id: string;
       botId: string;
       taskId: string;
       runId: string;
-      summary: string;
-      locator: string;
-      attempts: number;
+      text: string;
     }[];
+    for (const approval of approvals)
+      this.recordNotice({
+        ...approval,
+        id: `approval:${approval.id}`,
+        requestId: approval.id,
+        kind: "approval",
+        summary: `Approve delegation: ${approval.text}`,
+        locator: `/?bot=${encodeURIComponent(approval.botId)}&run=${encodeURIComponent(approval.runId)}#approval-${encodeURIComponent(approval.id)}`,
+        now,
+      });
+    const outcomes = this.db
+      .prepare(`SELECT r.id AS runId, r.task_id AS taskId, th.bot_id AS botId,
+ r.outcome, r.prior_run_id AS priorRunId, o.routine_id AS routineId, r.state
+ FROM runs r JOIN tasks t ON t.id = r.task_id JOIN threads th ON th.id = t.thread_id
+ LEFT JOIN routine_occurrences o ON o.task_id = t.id
+ WHERE (r.state IN ('succeeded', 'failed') OR (r.state = 'closed' AND json_extract(r.outcome, '$.kind') = 'failed')) AND t.origin != 'delegation'
+ AND (t.origin = 'routine' OR r.collaboration_waited = 1)
+ AND NOT EXISTS (SELECT 1 FROM notices n WHERE n.id = 'outcome:' || r.id)`)
+      .all() as unknown as {
+      runId: string;
+      taskId: string;
+      botId: string;
+      outcome: string | null;
+      priorRunId: string | null;
+      routineId: string | null;
+      state: string;
+    }[];
+    for (const row of outcomes) {
+      const outcome = row.outcome
+        ? (JSON.parse(row.outcome) as { kind: string; reply?: string })
+        : null;
+      const counts = this.db
+        .prepare(
+          `SELECT state, COUNT(*) AS total FROM delegations WHERE originating_run_id = ? GROUP BY state ORDER BY CASE state WHEN 'succeeded' THEN 0 ELSE 1 END, state`,
+        )
+        .all(row.runId) as unknown as { state: string; total: number }[];
+      const children = counts.length
+        ? `Children: ${counts.map((child) => `${child.total} ${child.state}`).join(", ")}. `
+        : "";
+      this.recordNotice({
+        ...row,
+        id: `outcome:${row.runId}`,
+        kind: "outcome",
+        summary: `Work ${outcome?.kind ?? row.state}. ${children}${outcome?.reply ?? ""}`,
+        locator: this.workLocator(row.botId, row.runId, row.taskId),
+        now,
+      });
+    }
+  }
+
+  noticeCurrent(notice: Pick<Notice, "kind" | "requestId" | "runId">, now: string): boolean {
+    if (notice.kind === "question")
+      return !!this.db
+        .prepare(
+          "SELECT id FROM owner_questions WHERE id = ? AND run_id = ? AND state = 'pending' AND (deadline IS NULL OR deadline > ?)",
+        )
+        .get(notice.requestId, notice.runId, now);
+    if (notice.kind === "approval")
+      return !!this.db
+        .prepare(
+          "SELECT a.id FROM action_approvals a JOIN delegations d ON d.id = a.id WHERE a.id = ? AND d.parent_run_id = ? AND a.state = 'pending' AND d.state = 'pending' AND (a.deadline IS NULL OR a.deadline > ?)",
+        )
+        .get(notice.requestId, notice.runId, now);
+    if (notice.kind === "uncertain") return this.run(notice.runId).state === "uncertain";
+    return true;
+  }
+
+  /** Suppress obsolete decisions, including failed notices awaiting manual resend. */
+  suppressUnsentNotices(now: string): void {
+    this.db
+      .prepare(`UPDATE notices SET eligibility = 'suppressed', state = 'suppressed',
+ next_attempt_at = NULL, updated_at = ? WHERE state IN ('pending', 'failed') AND (
+ (kind = 'question' AND NOT EXISTS (SELECT 1 FROM owner_questions q WHERE q.id = notices.request_id AND q.state = 'pending' AND (q.deadline IS NULL OR q.deadline > ?))) OR
+ (kind = 'uncertain' AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = notices.run_id AND r.state = 'uncertain')) OR
+ (kind = 'approval' AND NOT EXISTS (SELECT 1 FROM action_approvals a JOIN delegations d ON d.id = a.id WHERE a.id = notices.request_id AND a.state = 'pending' AND d.state = 'pending' AND (a.deadline IS NULL OR a.deadline > ?)))
+ )`)
+      .run(now, now, now);
+  }
+
+  notices(botId: string): Notice[] {
+    return this.readNotices("WHERE bot_id = ? ORDER BY created_at, id", botId);
+  }
+
+  private readNotices(clause: string, ...values: string[]): Notice[] {
+    const rows = this.db
+      .prepare(`SELECT id, kind, question_id AS questionId, request_id AS requestId,
+ routine_id AS routineId, prior_run_id AS priorRunId, source_chain AS sourceChain,
+ bot_id AS botId, task_id AS taskId, run_id AS runId,
+ summary, locator, eligibility, state, attempts, next_attempt_at AS nextAttemptAt,
+ last_error AS lastError, accepted_at AS acceptedAt FROM notices ${clause}`)
+      .all(...values) as unknown as (Omit<Notice, "sourceChain"> & { sourceChain: string })[];
+    return rows.map((row) => ({
+      ...row,
+      sourceChain: JSON.parse(row.sourceChain) as Notice["sourceChain"],
+    }));
+  }
+
+  dueNotices(now: string): Notice[] {
+    this.db
+      .prepare(`UPDATE notices SET state = 'failed', next_attempt_at = NULL, updated_at = ?
+ WHERE state = 'pending' AND attempts >= 3`)
+      .run(now);
+    return this.readNotices(
+      `WHERE state = 'pending' AND eligibility = 'eligible' AND attempts < 3
+ AND (next_attempt_at IS NULL OR next_attempt_at <= ?) ORDER BY created_at, id`,
+      now,
+    );
   }
 
   telegramTopic(botId: string): TelegramTopic | null {
@@ -2719,29 +2867,29 @@ export class ThreadStore {
     };
   }
 
-  failQuestionNotice(questionId: string, now: string, error: string): void {
+  failNotice(id: string, now: string, error: string): void {
     this.db
-      .prepare(`UPDATE question_notices SET state = 'failed', last_error = ?, next_attempt_at = NULL, updated_at = ?
- WHERE question_id = ? AND state = 'pending'`)
-      .run(error, now, questionId);
+      .prepare(`UPDATE notices SET state = 'failed', last_error = ?, next_attempt_at = NULL, updated_at = ?
+ WHERE id = ? AND state = 'pending'`)
+      .run(error, now, id);
   }
 
   /** Reserve a platform send before its acceptance can become uncertain. */
-  beginQuestionNoticeAttempt(questionId: string, now: string): boolean {
-    const notice = this.db
-      .prepare("SELECT attempts, state FROM question_notices WHERE question_id = ?")
-      .get(questionId) as { attempts: number; state: string } | undefined;
+  beginNoticeAttempt(id: string, now: string): boolean {
+    const notice = this.db.prepare("SELECT attempts, state FROM notices WHERE id = ?").get(id) as
+      | { attempts: number; state: string }
+      | undefined;
     if (notice?.state !== "pending" || notice.attempts >= 3) return false;
-    const wait = questionNoticeWaitMs(notice.attempts + 1);
+    const wait = noticeWaitMs(notice.attempts + 1);
     this.db
-      .prepare(`UPDATE question_notices SET attempts = attempts + 1, next_attempt_at = ?,
- last_error = 'Delivery acceptance is unconfirmed.', updated_at = ? WHERE question_id = ?`)
-      .run(wait === null ? null : new Date(Date.parse(now) + wait).toISOString(), now, questionId);
+      .prepare(`UPDATE notices SET attempts = attempts + 1, next_attempt_at = ?,
+ last_error = 'Delivery acceptance is unconfirmed.', updated_at = ? WHERE id = ?`)
+      .run(wait === null ? null : new Date(Date.parse(now) + wait).toISOString(), now, id);
     return true;
   }
 
-  recordQuestionNoticeAttempt(input: {
-    questionId: string;
+  recordNoticeAttempt(input: {
+    id: string;
     now: string;
     delivered: boolean;
     error: string | null;
@@ -2752,22 +2900,20 @@ export class ThreadStore {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const row = this.db
-        .prepare("SELECT attempts, state FROM question_notices WHERE question_id = ?")
-        .get(input.questionId) as { attempts: number; state: string } | undefined;
+        .prepare("SELECT attempts, state FROM notices WHERE id = ?")
+        .get(input.id) as { attempts: number; state: string } | undefined;
       if (row?.state !== "pending") {
         this.db.exec("COMMIT");
         return;
       }
       const attempts = row.attempts + (input.reserved ? 0 : 1);
       const wait =
-        input.delivered || input.terminal
-          ? null
-          : questionNoticeWaitMs(attempts, input.retryAfterMs ?? 0);
+        input.delivered || input.terminal ? null : noticeWaitMs(attempts, input.retryAfterMs ?? 0);
       const state = input.delivered ? "delivered" : wait === null ? "failed" : "pending";
       const next = wait === null ? null : new Date(Date.parse(input.now) + wait).toISOString();
       this.db
-        .prepare(`UPDATE question_notices SET attempts = ?, state = ?, next_attempt_at = ?,
- last_error = ?, accepted_at = ?, updated_at = ? WHERE question_id = ?`)
+        .prepare(`UPDATE notices SET attempts = ?, state = ?, next_attempt_at = ?,
+ last_error = ?, accepted_at = ?, updated_at = ? WHERE id = ?`)
         .run(
           attempts,
           state,
@@ -2775,7 +2921,7 @@ export class ThreadStore {
           input.delivered ? null : input.error,
           input.delivered ? input.now : null,
           input.now,
-          input.questionId,
+          input.id,
         );
       this.db.exec("COMMIT");
     } catch (error) {
@@ -2798,30 +2944,24 @@ export class ThreadStore {
     return this.admit(requestId, payload, () => result);
   }
 
-  resendQuestionNotice(botId: string, questionId: string, requestId: string, now: string) {
-    return this.admit(requestId, { operation: "resend-question-notice", botId, questionId }, () => {
-      const question = this.db
-        .prepare("SELECT bot_id, task_id, run_id, state FROM owner_questions WHERE id = ?")
-        .get(questionId) as
-        | { bot_id: string; task_id: string; run_id: string; state: string }
-        | undefined;
-      if (!question || question.bot_id !== botId)
-        throw new ChatRequestError("Question notice not found.", 404);
-      if (question.state !== "pending")
-        throw new ChatRequestError("Question no longer needs a notice.", 409);
-      const notice = this.questionNotices(botId).find((row) => row.questionId === questionId);
-      if (!notice) throw new ChatRequestError("Question notice not found.", 404);
+  resendNotice(botId: string, id: string, requestId: string, now: string) {
+    return this.admit(requestId, { operation: "resend-notice", botId, id }, () => {
+      const notice = this.notices(botId).find((row) => row.id === id);
+      if (!notice) throw new ChatRequestError("Notice not found.", 404);
+      if (!this.noticeCurrent(notice, now))
+        throw new ChatRequestError("Request no longer needs a notice.", 409);
       if (notice.state !== "failed" || notice.eligibility !== "eligible")
         throw new ChatRequestError("Only a failed notice can be resent.", 409);
       this.db
-        .prepare(`UPDATE question_notices SET state = 'pending', attempts = 0, next_attempt_at = NULL,
- last_error = NULL, accepted_at = NULL, updated_at = ? WHERE question_id = ?`)
-        .run(now, questionId);
+        .prepare(`UPDATE notices SET state = 'pending', attempts = 0, next_attempt_at = NULL,
+ last_error = NULL, accepted_at = NULL, updated_at = ? WHERE id = ?`)
+        .run(now, id);
       return {
         botId,
-        taskId: question.task_id,
-        runId: question.run_id,
-        questionId,
+        taskId: notice.taskId,
+        runId: notice.runId,
+        id,
+        questionId: notice.questionId,
         state: "pending" as const,
         attempts: 0,
       };
@@ -2829,8 +2969,20 @@ export class ThreadStore {
   }
 }
 
-export interface QuestionNotice {
-  questionId: string;
+export interface Notice {
+  id: string;
+  kind: "question" | "approval" | "outcome" | "uncertain";
+  questionId: string | null;
+  requestId: string | null;
+  routineId: string | null;
+  priorRunId: string | null;
+  sourceChain: {
+    botId: string;
+    taskId: string;
+    runId: string;
+    delegationId: string;
+    locator: string;
+  }[];
   botId: string;
   taskId: string;
   runId: string;

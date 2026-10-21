@@ -73,6 +73,7 @@ test("repairs a Bot topic and resends the question notice without changing the R
     child?.send("telegram-mode:ready");
     await page.getByRole("button", { name: "Repair Telegram topic" }).click();
     await expect(works).toContainText("Telegram topic: mapped · 71");
+    await expect(works).toContainText("Telegram topic: mapped");
     await page.getByRole("button", { name: "Resend Telegram notice" }).click();
     await expect(works).toContainText("Telegram notice: delivered · 1 of 3 attempts");
     await expect(works).toContainText("This is not a read receipt");
@@ -109,6 +110,157 @@ test("repairs a Bot topic and resends the question notice without changing the R
     expect(errors).toEqual([]);
   } finally {
     if (child) await stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("inspects and resends a Routine outcome notice and follows its work locator", async ({
+  page,
+}) => {
+  const root = await mkdtemp(join(tmpdir(), "mybots-outcome-browser-"));
+  const child = fork(
+    fileURLToPath(new URL("../../scripts/client-browser-host.mjs", import.meta.url)),
+    [root, "0"],
+    {
+      silent: true,
+      env: { ...process.env, MYBOTS_TELEGRAM_FIXTURE: "1" },
+    },
+  );
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("exit", resolve);
+    child.once("error", reject);
+  });
+  const ready = await Promise.race([
+    new Promise<{ url: string; credential: string }>((resolve) =>
+      child.once("message", (message) => resolve(message as { url: string; credential: string })),
+    ),
+    exited.then(() => {
+      throw new Error("Browser Host stopped before ready");
+    }),
+  ]);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  try {
+    const response = await page.request.post(`${ready.url}/api/bots/personal/routines`, {
+      headers: { Authorization: `Bearer ${ready.credential}` },
+      data: {
+        requestId: "browser-routine",
+        text: "Check archive",
+        runAt: new Date().toISOString(),
+        timezone: "UTC",
+      },
+    });
+    expect(response.status()).toBe(201);
+    const routine = await response.json();
+    child.send("complete");
+    await page.goto(ready.url);
+    await page.getByLabel("Connection credential").fill(ready.credential);
+    await page.getByRole("button", { name: "Pair with Host" }).click();
+    await page.getByRole("button", { name: "Select Personal" }).click();
+    const works = page.locator("#chat-works");
+    await expect(works).toContainText(`Routine: ${routine.id}`);
+    await expect(works).toContainText("Work succeeded.");
+    await expect(works).toContainText("Telegram notice: failed");
+    child.send("telegram-mode:ready");
+    await page.getByRole("button", { name: "Repair Telegram topic" }).click();
+    await expect(works).toContainText("Telegram topic: mapped");
+    await page.getByRole("button", { name: "Resend Telegram notice" }).click();
+    await expect(works).toContainText("Telegram notice: delivered · 1 of 3 attempts");
+    await expect(works).toContainText("This is not a read receipt");
+    const sent = JSON.parse(await readFile(join(root, "data", "telegram-sends.json"), "utf8")) as {
+      method: string;
+      text?: string;
+    }[];
+    const text = sent.find((row) => row.method === "sendMessage")?.text;
+    const locator = text?.match(/Local client: (.+)/)?.[1];
+    expect(locator).toBeTruthy();
+    await page.goto(new URL(locator as string, ready.url).href);
+    await expect(
+      page.locator("[data-task-id]").filter({ hasText: `Routine: ${routine.id}` }),
+    ).toBeFocused();
+    const headers = { Authorization: `Bearer ${ready.credential}` };
+    async function post(path: string, data: unknown) {
+      const response = await page.request.post(`${ready.url}${path}`, { headers, data });
+      expect(response.ok()).toBe(true);
+      return response.json();
+    }
+    const specialist = (
+      await post("/api/bots", {
+        requestId: "specialist",
+        name: "Specialist",
+        instructions: "Analyze",
+        model: { provider: "deepseek", id: "deepseek-chat" },
+        tools: ["read"],
+      })
+    ).bot.id;
+    const reviewer = (
+      await post("/api/bots", {
+        requestId: "reviewer",
+        name: "Reviewer",
+        instructions: "Review",
+        model: { provider: "deepseek", id: "deepseek-chat" },
+        tools: ["read"],
+      })
+    ).bot.id;
+    await post(`/api/bots/personal/collaboration/${specialist}`, {
+      requestId: "grant-specialist",
+      mode: "allow",
+    });
+    await post(`/api/bots/${specialist}/collaboration/${reviewer}`, {
+      requestId: "ask-reviewer",
+      mode: "ask-each-time",
+    });
+    const source = await post("/api/bots/personal/thread/messages", {
+      requestId: "source",
+      text: "Hold slot",
+    });
+    const parentMailbox = new RunnerMailbox(
+      join(root, "data", "sessions", "personal", source.runId),
+    );
+    await expect.poll(() => parentMailbox.executionIncarnation()).toBeGreaterThan(0);
+    parentMailbox.requestHistory({
+      id: "delegate-specialist",
+      operation: "delegate",
+      incarnation: parentMailbox.executionIncarnation(),
+      input: { requestId: "delegate-specialist", targetBotId: specialist, text: "Hold slot" },
+    });
+    await expect
+      .poll(() => parentMailbox.historyResponse("delegate-specialist"))
+      .toMatchObject({ result: { state: "pending" } });
+    const childRunId = (
+      parentMailbox.historyResponse("delegate-specialist")?.result as { childRunId: string }
+    )?.childRunId;
+    parentMailbox.requestDurableWait("delegation");
+    const worker = new RunnerMailbox(join(root, "data", "sessions", specialist, childRunId));
+    await expect.poll(() => worker.executionIncarnation()).toBeGreaterThan(0);
+    worker.requestHistory({
+      id: "review",
+      operation: "delegate",
+      incarnation: worker.executionIncarnation(),
+      input: { requestId: "review", targetBotId: reviewer, text: "Check analysis" },
+    });
+    await expect
+      .poll(() => worker.historyResponse("review"))
+      .toMatchObject({ result: { state: "pending", approval: { state: "pending" } } });
+    worker.requestDurableWait("delegation");
+    const approvalLocator = `/?bot=${specialist}&run=${childRunId}#approval-review`;
+    await page.goto(new URL(approvalLocator, ready.url).href);
+    const approval = page.locator('[data-approval-id="review"]');
+    await expect(approval).toBeFocused();
+    await expect(works).toContainText("Notice: approval");
+    await expect(works).toContainText("Telegram notice: delivered");
+    await expect(works.getByRole("link", { name: /Source Bot: personal/ })).toHaveAttribute(
+      "href",
+      `/?bot=personal&run=${source.runId}#task-${source.taskId}`,
+    );
+    await approval.getByRole("button", { name: "Deny action" }).click();
+    await expect(works).toContainText("Owner decision: deny");
+    await works.getByRole("link", { name: /Source Bot: personal/ }).click();
+    await expect(page.locator(`[data-task-id="${source.taskId}"]`)).toBeFocused();
+    expect(errors).toEqual([]);
+  } finally {
+    child.kill("SIGTERM");
+    expect(await exited).toBe(0);
     await rm(root, { recursive: true, force: true });
   }
 });

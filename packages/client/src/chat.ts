@@ -36,8 +36,20 @@ interface Question {
   answer: string | null;
   deadline: string | null;
 }
-interface QuestionNotice {
-  questionId: string;
+interface Notice {
+  id: string;
+  kind: "question" | "approval" | "outcome" | "uncertain";
+  questionId: string | null;
+  requestId: string | null;
+  routineId: string | null;
+  priorRunId: string | null;
+  sourceChain: {
+    botId: string;
+    taskId: string;
+    runId: string;
+    delegationId: string;
+    locator: string;
+  }[];
   botId: string;
   taskId: string;
   runId: string;
@@ -126,7 +138,7 @@ interface Task {
 interface Detail {
   admission: { activeLimit: number; activeCount: number };
   collaboration: { targetBotId: string; name: string; mode: "deny" | "ask-each-time" | "allow" }[];
-  notices: QuestionNotice[];
+  notices: Notice[];
   telegramTopic: TelegramTopic | null;
   thread: { id: string; botId: string; backgroundBoundary: number };
   tasks: Task[];
@@ -149,6 +161,7 @@ interface Pending {
     | "repair";
   text: string;
   questionId?: string;
+  noticeId?: string;
   approval?: Approval;
   files?: DelegationFile[];
   decision?: "approve" | "deny";
@@ -159,11 +172,23 @@ interface Pending {
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function validNotice(value: unknown): value is QuestionNotice {
+function validNotice(value: unknown): value is Notice {
   return (
     record(value) &&
-    [value.questionId, value.botId, value.taskId, value.runId, value.summary, value.locator].every(
+    [value.id, value.botId, value.taskId, value.runId, value.summary, value.locator].every(
       (item) => typeof item === "string",
+    ) &&
+    ["question", "approval", "outcome", "uncertain"].includes(value.kind as string) &&
+    [value.questionId, value.requestId, value.routineId, value.priorRunId].every(
+      (item) => item === null || typeof item === "string",
+    ) &&
+    Array.isArray(value.sourceChain) &&
+    value.sourceChain.every(
+      (source) =>
+        record(source) &&
+        [source.botId, source.taskId, source.runId, source.delegationId, source.locator].every(
+          (item) => typeof item === "string",
+        ),
     ) &&
     (value.eligibility === "eligible" || value.eligibility === "suppressed") &&
     ["pending", "delivered", "failed", "suppressed"].includes(value.state as string) &&
@@ -366,7 +391,7 @@ function isPending(value: unknown): value is Pending {
       "resend",
       "repair",
     ].includes(value.operation as string) &&
-    (value.operation !== "resend" || typeof value.questionId === "string") &&
+    (value.operation !== "resend" || typeof value.noticeId === "string") &&
     (value.selectedMessageIds === undefined ||
       (Array.isArray(value.selectedMessageIds) &&
         value.selectedMessageIds.every((id: unknown) => typeof id === "string"))) &&
@@ -579,6 +604,10 @@ export async function showChat(
                 detail.notices.find((notice) => notice.questionId === question.id),
               ),
             );
+          for (const notice of detail.notices.filter(
+            (notice) => notice.runId === run.id && notice.kind !== "question",
+          ))
+            article.append(noticeCard(notice));
           for (const delegation of run.delegations) article.append(delegationCard(run, delegation));
           if (run.outcome)
             article.append(
@@ -662,9 +691,11 @@ export async function showChat(
       }),
     );
     if (!locatedQuestion && location.hash) {
-      const target = [...works.querySelectorAll<HTMLElement>("[data-question-id]")].find(
-        (section) => location.hash === `#${encodeURIComponent(section.id)}`,
-      );
+      const target = [
+        ...works.querySelectorAll<HTMLElement>(
+          "[data-question-id], [data-approval-id], [data-task-id]",
+        ),
+      ].find((section) => location.hash === `#${encodeURIComponent(section.id)}`);
       if (target) {
         target.tabIndex = -1;
         target.focus();
@@ -674,6 +705,7 @@ export async function showChat(
     if (
       current === version &&
       (pendingRoutine ||
+        detail.notices.some((notice) => notice.state === "pending") ||
         detail.tasks.some((task) =>
           task.runs.some((run) => ["active", "queued", "stopping", "waiting"].includes(run.state)),
         ))
@@ -723,6 +755,7 @@ function delegationCard(run: Run, delegation: Delegation): HTMLElement {
 function approvalCard(source: Delegation, approval: Approval, run: Run): HTMLElement {
   const section = document.createElement("section");
   section.dataset.approvalId = approval.id;
+  section.id = `approval-${approval.id}`;
   section.append(
     paragraph(`Action approval ${approval.id} · ${approval.state}`),
     paragraph(`Operation: ${approval.operation} · Target Bot: ${approval.targetBotId}`),
@@ -803,11 +836,65 @@ function topicPanel(topic: TelegramTopic): HTMLElement {
   }
   return section;
 }
+function noticeCard(notice: Notice): HTMLElement {
+  const section = document.createElement("section");
+  section.dataset.noticeState = notice.state;
+  section.dataset.noticeId = notice.id;
+  section.append(paragraph(`Notice: ${notice.kind} · ${notice.summary}`));
+  if (notice.routineId) section.append(paragraph(`Routine: ${notice.routineId}`));
+  if (notice.priorRunId) section.append(paragraph(`Explicit retry of Run: ${notice.priorRunId}`));
+  for (const source of notice.sourceChain) {
+    const link = document.createElement("a");
+    link.href = source.locator;
+    link.textContent = `Source Bot: ${source.botId} · Task: ${source.taskId} · Run: ${source.runId} · Delegation: ${source.delegationId}`;
+    const row = document.createElement("p");
+    row.append(link);
+    section.append(row);
+  }
+  section.append(
+    paragraph(
+      `Telegram notice: ${notice.state} · ${notice.attempts} of 3 attempts${notice.nextAttemptAt ? ` · next ${notice.nextAttemptAt}` : ""}`,
+    ),
+    paragraph(
+      `Bot: ${notice.botId} · Task: ${notice.taskId} · Run: ${notice.runId}${notice.requestId ? ` · Request: ${notice.requestId}` : ""}`,
+    ),
+    paragraph(`Local client: ${notice.locator}`),
+  );
+  if (notice.lastError) section.append(paragraph(notice.lastError));
+  if (notice.acceptedAt)
+    section.append(
+      paragraph(
+        `Accepted by Telegram at ${notice.acceptedAt}. This is not a read receipt and does not promise a single copy.`,
+      ),
+    );
+  if (notice.state === "failed" && notice.eligibility === "eligible") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Resend Telegram notice";
+    button.disabled = sending || !!pending || availability === "deleted";
+    button.addEventListener("click", () => {
+      if (!botId || sending || pending) return;
+      pending = {
+        botId,
+        requestId: crypto.randomUUID(),
+        operation: "resend",
+        noticeId: notice.id,
+        taskId: notice.taskId,
+        runId: notice.runId,
+        text: "",
+      };
+      localStorage.setItem(pendingKey, JSON.stringify(pending));
+      void submit();
+    });
+    section.append(button);
+  }
+  return section;
+}
 function questionCard(
   taskId: string,
   run: Run,
   question: Question,
-  notice: QuestionNotice | undefined,
+  notice: Notice | undefined,
 ): HTMLElement {
   const section = document.createElement("section");
   section.dataset.questionId = question.id;
@@ -818,43 +905,7 @@ function questionCard(
   );
   if (notice) {
     section.dataset.noticeState = notice.state;
-    section.append(
-      paragraph(
-        `Telegram notice: ${notice.state} · ${notice.attempts} of 3 attempts${notice.nextAttemptAt ? ` · next ${notice.nextAttemptAt}` : ""}`,
-      ),
-      paragraph(
-        `Bot: ${notice.botId} · Task: ${notice.taskId} · Run: ${notice.runId} · Request: ${notice.questionId}`,
-      ),
-      paragraph(`Local client: ${notice.locator}`),
-    );
-    if (notice.lastError) section.append(paragraph(notice.lastError));
-    if (notice.acceptedAt)
-      section.append(
-        paragraph(
-          `Accepted by Telegram at ${notice.acceptedAt}. This is not a read receipt and does not promise a single copy.`,
-        ),
-      );
-    if (notice.state === "failed" && notice.eligibility === "eligible") {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = "Resend Telegram notice";
-      button.disabled = sending || !!pending;
-      button.addEventListener("click", () => {
-        if (!botId || sending || pending) return;
-        pending = {
-          botId,
-          requestId: crypto.randomUUID(),
-          operation: "resend",
-          questionId: question.id,
-          taskId,
-          runId: run.id,
-          text: "",
-        };
-        localStorage.setItem(pendingKey, JSON.stringify(pending));
-        void submit();
-      });
-      section.append(button);
-    }
+    section.append(noticeCard(notice));
   }
   if (question.deadline) section.append(paragraph(`Deadline: ${question.deadline}`));
   if (question.state === "answered") section.append(paragraph(`Owner answer: ${question.answer}`));
@@ -938,7 +989,7 @@ async function submit(newTask = false): Promise<void> {
     const noticeOperation = admitted.operation === "resend" || admitted.operation === "repair";
     const path =
       admitted.operation === "resend"
-        ? `${prefix}/questions/${encodeURIComponent(admitted.questionId as string)}/notice/resend`
+        ? `${prefix}/notices/${encodeURIComponent(admitted.noticeId as string)}/resend`
         : admitted.operation === "repair"
           ? `${prefix}/telegram-topic/repair`
           : admitted.operation === "decision"
@@ -998,7 +1049,7 @@ async function submit(newTask = false): Promise<void> {
     if (admitted.operation === "repair") {
       if (result.state !== "mapped" && result.state !== "repairable") throw new Error();
     } else if (admitted.operation === "resend") {
-      if (result.questionId !== admitted.questionId) throw new Error();
+      if (result.id !== admitted.noticeId) throw new Error();
     } else if (
       admitted.operation === "reset"
         ? typeof result.backgroundBoundary !== "number"
@@ -1030,7 +1081,7 @@ async function submit(newTask = false): Promise<void> {
           ? `Telegram topic ${String(result.topicId)} is mapped for this Bot. Work outcome stays unchanged.`
           : `Telegram topic still needs repair. ${typeof result.failure === "string" ? result.failure : ""}`
         : admitted.operation === "resend"
-          ? `Question notice ${admitted.questionId} will be sent again. Work outcome stays unchanged.`
+          ? `Notice ${admitted.noticeId} will be sent again. Work outcome stays unchanged.`
           : admitted.operation === "decision"
             ? `Decision recorded for action ${admitted.approval?.id}. The same Run continues from correlated evidence.`
             : admitted.operation === "answer"
