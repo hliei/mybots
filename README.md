@@ -209,6 +209,10 @@ Researcher/Writer journey, Host restarts, immutable report download and
 independent topic delivery. It keeps offline, real-SDK, actual-container and
 actual-service evidence separate.
 
+The [Multi-Bot actual-service procedure](docs/multi-bot-service-acceptance.md)
+defines the separate owner-participating macOS/provider/Telegram journey and
+records its current deployment prerequisites and unverified gates.
+
 CI runs `npm run verify` and isolated Git workflow tests on Node.js 24.21.0.
 
 ## Commands

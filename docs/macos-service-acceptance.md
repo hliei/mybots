@@ -1,5 +1,12 @@
 # macOS actual-service acceptance
 
+For the current Bot/Thread/Task/Run product gate, use the
+[Multi-Bot actual-service procedure](multi-bot-service-acceptance.md). The
+CLI/Telegram conversation checks below cover the earlier single-Agent runtime;
+Telegram now receives notifications and does not admit ordinary conversation
+or approval decisions. Those earlier checks cannot establish current product
+acceptance.
+
 This procedure validates the owner's deployed host, Docker runner, OneCLI,
 DeepSeek and Telegram, with CLI and local WebSocket access. It is opt-in: run
 it only after an explicit request to use the real services and send messages to
