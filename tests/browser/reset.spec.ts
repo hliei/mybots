@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
-import { showFeature } from "./navigation.ts";
+import { sendNewTask, showFeature } from "./navigation.ts";
 
 interface Ready {
   url: string;
@@ -77,13 +77,13 @@ test("reset chat background while a Run continues, then select an earlier messag
     await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Selected topic");
     await showFeature(page, "chat");
-    await page.getByRole("button", { name: "New task", exact: true }).click();
+    await sendNewTask(page);
     await expect(page.locator("#chat-works")).toContainText("Execution: queued");
     await expect(page.locator("#chat-works")).toContainText("Run background: Hold chat");
     await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Unselected topic");
     await showFeature(page, "chat");
-    await page.getByRole("button", { name: "New task", exact: true }).click();
+    await sendNewTask(page);
     const unselected = page.locator("#chat-works article").filter({ hasText: "Unselected topic" });
     await expect(unselected).toContainText("Run background: Selected topic");
     await expect(unselected).not.toContainText("Hold chat");
@@ -108,7 +108,7 @@ test("reset chat background while a Run continues, then select an earlier messag
     await page.getByLabel("Message", { exact: true }).fill("Independent writing");
     const admission = page.waitForResponse((response) => response.url().endsWith("/thread/tasks"));
     await showFeature(page, "chat");
-    await page.getByRole("button", { name: "New task", exact: true }).click();
+    await sendNewTask(page);
     expect((await admission).status()).toBe(202);
     expect(errors).toEqual([]);
   } finally {

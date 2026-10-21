@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
-import { showFeature } from "./navigation.ts";
+import { sendNewTask, showFeature } from "./navigation.ts";
 
 interface Ready {
   url: string;
@@ -97,7 +97,7 @@ test("stop a Run, inspect late evidence, and keep an unconfirmed stop from block
     await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Hold chat");
     await showFeature(page, "chat");
-    await page.getByRole("button", { name: "New task", exact: true }).click();
+    await sendNewTask(page);
     await expect(page.locator("#chat-works article").nth(2)).toContainText("Execution: active");
     child?.send("fail-stop");
     await showFeature(page, "tasks");
@@ -110,7 +110,7 @@ test("stop a Run, inspect late evidence, and keep an unconfirmed stop from block
     await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Still queued");
     await showFeature(page, "chat");
-    await page.getByRole("button", { name: "New task", exact: true }).click();
+    await sendNewTask(page);
     await expect(page.locator("#chat-works article").nth(3)).toContainText("Execution: queued");
     await showFeature(page, "create");
     await page.getByLabel("Bot name").fill("Writer");

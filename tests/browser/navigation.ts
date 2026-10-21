@@ -44,3 +44,10 @@ export async function showFeature(page: Page, feature: Feature): Promise<void> {
       await page.getByRole("button", { name: "Search conversation", exact: true }).click();
   }
 }
+
+/** Start independent work through the composer action menu. */
+export async function sendNewTask(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Message actions", exact: true }).click();
+  await page.getByRole("button", { name: "New task", exact: true }).click();
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+}

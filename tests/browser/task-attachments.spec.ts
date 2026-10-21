@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
-import { showFeature } from "./navigation.ts";
+import { sendNewTask, showFeature } from "./navigation.ts";
 
 test("uploads bytes to the selected Task and deliberately saves them for that Bot", async ({
   page,
@@ -69,9 +69,9 @@ test("uploads bytes to the selected Task and deliberately saves them for that Bo
     );
 
     await showFeature(page, "chat");
-    await page.getByLabel("Message").fill("Second task");
+    await page.getByLabel("Message", { exact: true }).fill("Second task");
     await showFeature(page, "chat");
-    await page.getByRole("button", { name: "New task" }).click();
+    await sendNewTask(page);
     await expect(tasks.locator("option")).toHaveCount(2);
     const second = await tasks.locator("option").nth(1).getAttribute("value");
     await showFeature(page, "files");

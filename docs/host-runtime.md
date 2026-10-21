@@ -455,7 +455,7 @@ response loss or reload. The old `/api/sessions` operations return 404.
 | `GET /api/bots/<id>/thread` | `{ thread, tasks, messages }` with original message IDs and linked Run IDs. |
 | `POST /api/bots/<id>/thread/messages` | `{ requestId, text }`; 202 with `{ requestId, botId, threadId, taskId, runId, messageId, replayed }`. |
 | `POST /api/bots/<id>/thread/tasks` | Same payload/response; always creates independent work. |
-| `POST /api/bots/<id>/tasks/<taskId>/inputs` | Same payload/response; appends only to that Bot's eligible Task. |
+| `POST /api/bots/<id>/tasks/<taskId>/inputs` | Same payload/response, with optional `expectedRunId`; appends only to that Bot's eligible Task. A different latest Run returns 409; an already admitted request still replays its original association. |
 | `POST /api/bots/<id>/runs/<runId>/stop` | `{ requestId }`; 202 acknowledges a stop. The Run stays `stopping` until termination is confirmed. |
 | `POST /api/bots/<id>/tasks/<taskId>/stop` | Same payload; stops that Task's unfinished Run. |
 | `POST /api/bots/<id>/runs/<runId>/retry` | `{ requestId }`; confirms stop, preserves the old outcome, and admits a linked Run under the same Task. |

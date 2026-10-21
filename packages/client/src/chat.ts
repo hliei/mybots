@@ -169,6 +169,7 @@ interface Pending {
   taskId?: string;
   runId?: string;
   selectedMessageIds?: string[];
+  draftRevision?: string;
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -392,6 +393,8 @@ function isPending(value: unknown): value is Pending {
       "resend",
       "repair",
     ].includes(value.operation as string) &&
+    (value.runId === undefined || typeof value.runId === "string") &&
+    (value.draftRevision === undefined || typeof value.draftRevision === "string") &&
     (value.operation !== "resend" || typeof value.noticeId === "string") &&
     (value.selectedMessageIds === undefined ||
       (Array.isArray(value.selectedMessageIds) &&
@@ -426,6 +429,149 @@ const target = element<HTMLSelectElement>("input-target");
 const retry = element<HTMLButtonElement>("retry-chat");
 const resetBackground = element<HTMLButtonElement>("reset-background");
 const pendingKey = "mybots.pending-thread-input";
+interface Draft {
+  text: string;
+  revision: string;
+  target: string;
+  runId?: string;
+}
+const drafts = new Map<string, Draft>();
+const draftKey = (id: string) => `mybots.composer-draft.${id}`;
+function readDraft(id: string): Draft {
+  const current = drafts.get(id);
+  if (current) return current;
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(draftKey(id)) ?? "null");
+    if (record(saved) && typeof saved.text === "string" && typeof saved.revision === "string") {
+      const draft = {
+        text: saved.text,
+        revision: saved.revision,
+        target: typeof saved.target === "string" ? saved.target : "",
+        ...(typeof saved.runId === "string" ? { runId: saved.runId } : {}),
+      };
+      drafts.set(id, draft);
+      return draft;
+    }
+  } catch {
+    /* An unreadable draft must not prevent conversation inspection. */
+  }
+  return { text: "", revision: "", target: "" };
+}
+function writeDraft(id: string, draft: Draft): void {
+  drafts.set(id, draft);
+  try {
+    localStorage.setItem(draftKey(id), JSON.stringify(draft));
+  } catch {
+    notice.textContent = "Could not save this draft in browser storage. Keep this page open.";
+  }
+}
+function saveDraft(): void {
+  if (!botId) return;
+  writeDraft(botId, {
+    text: text.value,
+    revision: crypto.randomUUID(),
+    target: target.value,
+    runId: target.selectedOptions[0]?.dataset.runId,
+  });
+}
+function growDraft(): void {
+  text.style.height = "auto";
+  text.style.height = `${Math.min(180, text.scrollHeight)}px`;
+}
+let composerWidth = 0;
+new ResizeObserver(([entry]) => {
+  if (entry && entry.contentRect.width !== composerWidth) {
+    composerWidth = entry.contentRect.width;
+    growDraft();
+  }
+}).observe(form);
+text.addEventListener("input", () => {
+  saveDraft();
+  growDraft();
+  controls();
+});
+const targetLabel = element("composer-target-label");
+const menu = element("composer-menu");
+const actions = element<HTMLButtonElement>("message-actions");
+function closeComposerMenu(): void {
+  menu.hidden = true;
+  actions.setAttribute("aria-expanded", "false");
+}
+function resetTargets(): void {
+  target.replaceChildren(
+    Object.assign(document.createElement("option"), {
+      value: "",
+      textContent: "Thread — continue chat",
+    }),
+    Object.assign(document.createElement("option"), {
+      value: "new-task",
+      textContent: "New independent task",
+    }),
+  );
+}
+function showTarget(): void {
+  element("composer-target").hidden = !target.value;
+  const option = target.selectedOptions[0];
+  targetLabel.textContent =
+    target.value === "new-task"
+      ? "New independent task"
+      : target.value
+        ? `Add to ${option?.textContent ?? target.value}`
+        : "";
+  controls();
+}
+target.addEventListener("change", () => {
+  saveDraft();
+  showTarget();
+});
+actions.addEventListener("click", () => {
+  menu.hidden = !menu.hidden;
+  actions.setAttribute("aria-expanded", String(!menu.hidden));
+  if (!menu.hidden) element("new-task").focus();
+});
+element("new-task").addEventListener("click", () => {
+  target.value = "new-task";
+  saveDraft();
+  showTarget();
+  closeComposerMenu();
+  text.focus();
+});
+element("return-thread").addEventListener("click", () => {
+  target.value = "";
+  saveDraft();
+  showTarget();
+  text.focus();
+});
+document.addEventListener("click", (event) => {
+  if (event.target instanceof Node && !event.target.parentElement?.closest(".composer-actions"))
+    closeComposerMenu();
+});
+form.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !menu.hidden) {
+    closeComposerMenu();
+    actions.focus();
+    event.stopPropagation();
+  }
+});
+let composing = false;
+text.addEventListener("compositionstart", () => {
+  composing = true;
+});
+text.addEventListener("compositionend", () => {
+  composing = false;
+});
+text.addEventListener("keydown", (event) => {
+  if (
+    event.key !== "Enter" ||
+    event.shiftKey ||
+    event.isComposing ||
+    composing ||
+    event.keyCode === 229
+  )
+    return;
+  event.preventDefault();
+  form.requestSubmit();
+});
 let botId: string | undefined;
 let availability: "active" | "disabled" | "deleted" = "active";
 let version = 0;
@@ -451,10 +597,15 @@ function controls(): void {
     HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement
   >("input, textarea, select, button"))
     node.disabled = !admitting || sending || !!pending;
-  if (availability === "active" && !sending && !pending) text.disabled = false;
+  text.disabled = !botId || availability !== "active";
+  for (const button of form.querySelectorAll<HTMLButtonElement>('button[type="submit"]'))
+    button.disabled ||=
+      !text.value.trim() ||
+      !text.validity.valid ||
+      target.selectedOptions[0]?.dataset.unavailable === "true";
   resetBackground.disabled = !admitting || sending || !!pending;
   retry.hidden = !pending;
-  retry.disabled = sending || !admitting;
+  retry.disabled = sending || !hostAvailable;
 }
 export async function showChat(
   selectedBotId: string | undefined,
@@ -466,13 +617,28 @@ export async function showChat(
   if (botId !== selectedBotId) {
     clearBackgroundSelection();
     botId = selectedBotId;
-    text.value = "";
-    target.replaceChildren();
+    text.value = selectedBotId ? readDraft(selectedBotId).text : "";
+    growDraft();
+    closeComposerMenu();
+    const draft = selectedBotId ? readDraft(selectedBotId) : undefined;
+    resetTargets();
+    if (draft?.target && draft.target !== "new-task") {
+      const option = Object.assign(document.createElement("option"), {
+        value: draft.target,
+        textContent: `Task ${draft.target} · unavailable — checking target`,
+      });
+      option.dataset.unavailable = "true";
+      if (draft.runId) option.dataset.runId = draft.runId;
+      target.append(option);
+    }
+    target.value = draft?.target ?? "";
+    showTarget();
     works.replaceChildren();
     messages.replaceChildren(paragraph("Loading conversation…"));
     selected.textContent = "";
   }
   panel.hidden = !botId;
+  growDraft();
   if (!botId) {
     showCollaboration(undefined, [], () => undefined);
     await showHistory(undefined, []);
@@ -516,22 +682,34 @@ export async function showChat(
     setBackgroundBoundary(detail.thread.backgroundBoundary);
     selected.textContent = `Thread ID: ${detail.thread.id} · Chat background boundary: ${detail.thread.backgroundBoundary}. Host execution: ${detail.admission.activeCount} of ${detail.admission.activeLimit} active.`;
     const priorTarget = target.value;
-    target.replaceChildren(
-      Object.assign(document.createElement("option"), {
-        value: "",
-        textContent: "Thread — continue chat",
-      }),
-    );
-    for (const task of detail.tasks)
-      if (task.runs.some((run) => ["queued", "active", "waiting"].includes(run.state)))
-        target.append(
-          Object.assign(document.createElement("option"), {
-            value: task.id,
-            textContent: `Task ${task.id}`,
-          }),
-        );
-    if ([...target.options].some((option) => option.value === priorTarget))
-      target.value = priorTarget;
+    const priorRun = target.selectedOptions[0]?.dataset.runId;
+    resetTargets();
+    for (const task of detail.tasks) {
+      const run = task.runs.at(-1);
+      if (run && ["queued", "active", "waiting"].includes(run.state)) {
+        const option = Object.assign(document.createElement("option"), {
+          value: task.id,
+          textContent: `Task ${task.id}`,
+        });
+        option.dataset.runId = run.id;
+        target.append(option);
+      }
+    }
+    if (priorTarget && priorTarget !== "new-task") {
+      let option = [...target.options].find((option) => option.value === priorTarget);
+      if (!option || (priorRun && priorRun !== option.dataset.runId)) {
+        option?.remove();
+        option = Object.assign(document.createElement("option"), {
+          value: priorTarget,
+          textContent: `Task ${priorTarget} · unavailable — select a target again`,
+        });
+        option.dataset.unavailable = "true";
+        if (priorRun) option.dataset.runId = priorRun;
+        target.append(option);
+      }
+    }
+    target.value = priorTarget;
+    showTarget();
     await showHistory(
       botId,
       detail.tasks.flatMap((task) =>
@@ -972,17 +1150,28 @@ function runButton(
   });
   return button;
 }
-async function submit(newTask = false): Promise<void> {
-  if (sending || !botId || !hostAvailable) return;
+async function submit(): Promise<void> {
+  if (sending || !hostAvailable || (!pending && (!botId || availability !== "active"))) return;
+  if (
+    !pending &&
+    (!text.value.trim() ||
+      !form.reportValidity() ||
+      target.selectedOptions[0]?.dataset.unavailable === "true")
+  )
+    return;
   sending = true;
   try {
     if (!pending) {
+      if (!botId) return;
       const draft: Pending = {
         botId,
         requestId: crypto.randomUUID(),
         text: text.value,
-        operation: newTask ? "new-task" : target.value ? "task" : "message",
-        ...(target.value && !newTask ? { taskId: target.value } : {}),
+        draftRevision: readDraft(botId).revision,
+        operation: target.value === "new-task" ? "new-task" : target.value ? "task" : "message",
+        ...(target.value && target.value !== "new-task"
+          ? { taskId: target.value, runId: target.selectedOptions[0]?.dataset.runId }
+          : {}),
         ...(selectedBackgroundIds().length ? { selectedMessageIds: selectedBackgroundIds() } : {}),
       };
       localStorage.setItem(pendingKey, JSON.stringify(draft));
@@ -1036,6 +1225,9 @@ async function submit(newTask = false): Promise<void> {
             : {
                 requestId: admitted.requestId,
                 text: admitted.text,
+                ...(admitted.operation === "task" && admitted.runId
+                  ? { expectedRunId: admitted.runId }
+                  : {}),
                 ...(admitted.selectedMessageIds
                   ? { selectedMessageIds: admitted.selectedMessageIds }
                   : {}),
@@ -1055,6 +1247,11 @@ async function submit(newTask = false): Promise<void> {
       return;
     }
     if (!record(result) || result.requestId !== admitted.requestId) throw new Error();
+    if (
+      admitted.operation === "task" &&
+      (result.taskId !== admitted.taskId || (admitted.runId && result.runId !== admitted.runId))
+    )
+      throw new Error();
     if (admitted.operation === "repair") {
       if (result.state !== "mapped" && result.state !== "repairable") throw new Error();
     } else if (admitted.operation === "resend") {
@@ -1075,15 +1272,30 @@ async function submit(newTask = false): Promise<void> {
     if (admitted.questionId) answerDrafts.delete(admitted.questionId);
     if (admitted.selectedMessageIds?.length) clearBackgroundSelection();
     if (
-      admitted.botId === botId &&
       !runOperation &&
       admitted.operation !== "reset" &&
       admitted.operation !== "answer" &&
       admitted.operation !== "decision" &&
       admitted.operation !== "resend" &&
       admitted.operation !== "repair"
-    )
-      text.value = "";
+    ) {
+      const draft = readDraft(admitted.botId);
+      if (draft.revision === admitted.draftRevision) {
+        const nextTarget = draft.target === "new-task" ? "" : draft.target;
+        writeDraft(admitted.botId, {
+          ...draft,
+          text: "",
+          target: nextTarget,
+          revision: crypto.randomUUID(),
+        });
+        if (admitted.botId === botId) {
+          text.value = "";
+          target.value = nextTarget;
+          growDraft();
+          showTarget();
+        }
+      }
+    }
     notice.textContent =
       admitted.operation === "repair"
         ? result.state === "mapped"
@@ -1112,7 +1324,7 @@ async function submit(newTask = false): Promise<void> {
 }
 form.addEventListener("submit", (event) => {
   event.preventDefault();
-  void submit((event.submitter as HTMLElement | null)?.id === "new-task");
+  if (!pending) void submit();
 });
 retry.addEventListener("click", () => void submit());
 resetBackground.addEventListener("click", () => {

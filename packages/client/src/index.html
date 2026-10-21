@@ -44,9 +44,10 @@
             <label for="input-target">Input target</label>
             <select id="input-target"><option value="">Thread — continue chat</option></select>
             <label for="message-text">Message</label>
-            <textarea id="message-text" required="" maxlength="32000" rows="2" placeholder="Message your Bot…"></textarea>
-            <button type="submit">Send message</button>
-            <button id="new-task" type="submit">New task</button>
+            <div id="composer-target" hidden><span id="composer-target-label"></span><button id="return-thread" type="button" aria-label="Return to Thread">×</button></div>
+            <textarea id="message-text" required="" maxlength="32000" rows="1" placeholder="Message your Bot…"></textarea>
+            <div class="composer-actions"><button id="message-actions" type="button" aria-label="Message actions" aria-expanded="false" aria-controls="composer-menu" class="icon-button">+</button><div id="composer-menu" hidden><button id="new-task" type="button">New task</button></div></div>
+            <button type="submit" aria-label="Send message" title="Send message" class="icon-button">↑</button>
 
           </form><p id="chat-message" aria-live="polite"></p><button id="retry-chat" type="button" hidden="">Retry chat request</button></div>
           </section>

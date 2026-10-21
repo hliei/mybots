@@ -89,14 +89,19 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .copy-status { font-size: 12px; color: var(--secondary); margin: 0 8px; }
 .message button { font-size: 11px; padding: 6px 8px; margin: 4px 4px 0 0; }
 .composer-area { padding: 9px 26px 17px; flex-shrink: 0; }
-#message-form { max-width: 940px; margin: 0 auto; border: 1px solid #303030; border-radius: 30px; background: var(--raised); padding: 12px; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+#message-form { max-width: 940px; margin: 0 auto; border: 1px solid #303030; border-radius: 30px; background: var(--raised); padding: 9px; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: end; }
 #message-form label { font-size: 12px; color: var(--secondary); }
-#message-form label[for="message-text"] { display: none; }
-#message-text { grid-column: 1 / -1; resize: none; background: transparent; border: 0; min-height: 64px; max-height: 180px; font-size: 17px; padding: 8px; }
-#message-text:focus-visible { outline-offset: 0; }
-#message-form button[type="submit"] { border-radius: 24px; font-size: 12px; }
-#message-form button[type="submit"]:first-of-type { background: #eee; color: #141414; }
-#input-target { font-size: 12px; padding: 6px; width: 100%; }
+#message-form label[for="message-text"], #message-form label[for="input-target"] { display: none; }
+#message-text { grid-column: 2; grid-row: 3; resize: none; background: transparent; border: 0; min-height: 42px; max-height: 180px; font-size: 17px; line-height: 1.5; padding: 8px 4px; border-radius: 0; }
+#message-text:focus-visible { outline: none; }
+#message-form:focus-within { border-color: #555; }
+#message-form button[type="submit"] { grid-column: 3; grid-row: 3; border-radius: 50%; background: #eee; color: #141414; }
+#input-target { grid-column: 1 / -1; font-size: 12px; padding: 4px 8px; width: 100%; border: 0; background: transparent; color: var(--secondary); }
+#composer-target { grid-column: 1 / -1; font-size: 12px; color: var(--secondary); display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 0 8px; overflow-wrap: anywhere; }
+#return-thread { padding: 4px 8px; }
+.composer-actions { grid-column: 1; grid-row: 3; position: relative; }
+#composer-menu { position: absolute; bottom: calc(100% + 12px); left: 0; min-width: 180px; padding: 6px; background: var(--raised); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 30px #0008; z-index: 3; }
+#composer-menu button { width: 100%; text-align: left; }
 #chat-message { color: var(--secondary); font-size: 12px; max-height: 70px; overflow: auto; margin: 8px 0 0; }
 #chat-message:empty { display: none; }
 #live-execution { white-space: pre-wrap; overflow-wrap: anywhere; }

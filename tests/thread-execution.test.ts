@@ -146,7 +146,11 @@ it("recovers lost-response admissions and queued Task additions through a fresh 
   const queued = await (
     await post(`${path}/tasks`, { requestId: "queue", text: "Queued work" })
   ).json();
-  const addition = { requestId: "queued-addition", text: "Keep my target" };
+  const addition = {
+    requestId: "queued-addition",
+    text: "Keep my target",
+    expectedRunId: queued.runId,
+  };
   const added = await (
     await post(`/api/bots/personal/tasks/${queued.taskId}/inputs`, addition)
   ).json();
@@ -1168,4 +1172,45 @@ it("requires fresh records for the old execution model while retaining deploymen
     "preserved-connection-credential",
   );
   expect(await readFile(join(root, ".env"), "utf8")).toBe("MODEL_CONFIGURATION=preserved\n");
+});
+
+it("pins explicit Task additions to the selected Run while replaying admitted identity", async () => {
+  const driver = new MailboxDriver();
+  driver.respond = async (_input, _material, signal) => {
+    await new Promise<void>((resolve) => {
+      if (signal.aborted) resolve();
+      else signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    return "Stopped";
+  };
+  await start(driver);
+  const first = await (
+    await post("/api/bots/personal/thread/messages", { requestId: "pinned-first", text: "Hold" })
+  ).json();
+  const path = `/api/bots/personal/tasks/${first.taskId}/inputs`;
+  expect(
+    (
+      await post(path, {
+        requestId: "wrong-run",
+        text: "Never retarget",
+        expectedRunId: "stale-run",
+      })
+    ).status,
+  ).toBe(409);
+  const input = {
+    requestId: "pinned-addition",
+    text: "Pinned addition",
+    expectedRunId: first.runId,
+  };
+  const response = await post(path, input);
+  expect(response.status).toBe(202);
+  const admitted = await response.json();
+  expect(admitted).toMatchObject({ taskId: first.taskId, runId: first.runId });
+  await post(`/api/bots/personal/runs/${first.runId}/stop`, { requestId: "stop-pinned" });
+  const retried = await (
+    await post(`/api/bots/personal/runs/${first.runId}/retry`, { requestId: "retry-pinned" })
+  ).json();
+  expect(retried.runId).not.toBe(first.runId);
+  expect((await post(path, { ...input, requestId: "stale-addition" })).status).toBe(409);
+  expect(await (await post(path, input)).json()).toEqual({ ...admitted, replayed: true });
 });

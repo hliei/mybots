@@ -104,8 +104,11 @@ later conversational Runs. Existing Runs, Thread history, workspace files and
 memory stay. Other slash input is ordinary Agent text.
 
 Open `http://127.0.0.1:8787/` on the Host computer to create and select Bots and
-use the Bot's direct Thread. Send ordinary chat, choose New task for independent
-work, or select an active/queued Task as the input target. Reset chat background
+use the Bot's direct Thread. Enter sends and Shift+Enter inserts a newline; input-
+method candidate confirmation does not send. Choose Message actions → New task
+for independent work, or select an active, queued or waiting Task as the input
+target. The composer names the selected Task and offers Return to Thread;
+unavailable targets require a deliberate selection. Reset chat background
 from the Bot menu while other Runs continue, and choose earlier messages for the
 next Run. Inspect Task/Run identity,
 queue state, Attempts and final outcomes. The Host prints the URL at startup. Copy the locally
@@ -119,6 +122,14 @@ Settings in the sidebar or Bot overview opens the current Bot's configuration,
 memory, Skills, collaboration and Routines. Close settings or press Escape to
 return to the conversation. The page refreshes status while visible. The Host
 must stay running, and desktop localhost is not reachable from a phone. See [local client access](docs/host-runtime.md#local-client-access).
+
+Unsent drafts and their selected targets are saved per Bot in this browser across
+switching and reload. Drafts remain editable during submission and Host outages.
+Submission stays unavailable while the Host is unreachable; reconnecting does
+not send drafts automatically. An unconfirmed request keeps its original Bot,
+operation, Task/Run and request identity. Retry chat request recovers that saved
+admission, even after switching Bots or restarting the Host, without discarding a
+newer draft. Losing live observation alone does not disable HTTP submission.
 
 Settings → Routines creates one-shot Routines from an absolute instant with offset
 and an IANA timezone, or recurring Routines from common cron choices or a custom

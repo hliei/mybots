@@ -84,7 +84,8 @@ test("one-shot Routine survives overdue restart and accepts targeted occurrence 
       routines.first().getByRole("link", { name: /Inspect occurrence Task/ }),
     ).toBeVisible();
     await showFeature(page, "chat");
-    await page.getByLabel("Input target", { exact: true }).selectOption({ index: 1 });
+    const taskId = await work.getAttribute("data-task-id");
+    await page.getByLabel("Input target", { exact: true }).selectOption(taskId as string);
     await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Only shelf 3");
     await showFeature(page, "chat");

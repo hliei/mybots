@@ -2163,7 +2163,12 @@ export class Host {
     mode: "message" | "new-task" = "message",
     taskId?: string,
   ) {
-    const input = chatInput(value, ["text"]);
+    const input = chatInput(value, [
+      "text",
+      ...(taskId && value && typeof value === "object" && "expectedRunId" in value
+        ? ["expectedRunId"]
+        : []),
+    ]);
     await this.threadDetail(botId);
     if (this.stopped) throw new Error("Host is stopped");
     const admitted = this.store.threads.send(
@@ -2173,6 +2178,7 @@ export class Host {
         text: input.text as string,
         newTask: mode === "new-task",
         ...(taskId ? { taskId } : {}),
+        ...(input.expectedRunId ? { expectedRunId: input.expectedRunId } : {}),
         ...(input.selectedMessageIds ? { selectedMessageIds: input.selectedMessageIds } : {}),
       },
       this.timestamp(),

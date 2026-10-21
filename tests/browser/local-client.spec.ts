@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
-import { showFeature } from "./navigation.ts";
+import { sendNewTask, showFeature } from "./navigation.ts";
 
 interface Ready {
   url: string;
@@ -147,12 +147,12 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Hold chat");
     await showFeature(page, "chat");
-    await page.getByRole("button", { name: "New task", exact: true }).click();
+    await sendNewTask(page);
     await expect(page.locator("#chat-works article").nth(1)).toContainText("Execution: active");
     await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Independent work");
     await showFeature(page, "chat");
-    await page.getByRole("button", { name: "New task", exact: true }).click();
+    await sendNewTask(page);
     await expect(page.locator("#chat-works article").nth(2)).toContainText("Execution: queued");
     await expect(page.locator("#chat-works article").nth(2)).toContainText("interactive");
     await expect(page.locator("#chat-works article").nth(2)).toContainText("position 1");
