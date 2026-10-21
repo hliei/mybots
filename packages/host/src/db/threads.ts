@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { InboundMessage, OutboundMessage, ProcessingAck } from "@mybots/mailbox";
 import { type BotAvailability, isBotAvailability } from "../bots.ts";
 import { ChatRequestError, rejectInactiveBot } from "../chat.ts";
+import { questionNoticeWaitMs } from "../question-notices.ts";
 import { history } from "./history.ts";
 import type { SavedSession } from "./index.ts";
 import { type Routine, routineBusy } from "./routines.ts";
@@ -571,6 +572,7 @@ export class ThreadStore {
         "UPDATE owner_questions SET state = 'cancelled', resolved_at = ? WHERE run_id = ? AND state IN ('pending', 'expired')",
       )
       .run(now, runId);
+    this.suppressUnsentQuestionNotices(now);
     this.settleApprovals(runId, "cancelled", "Source Run was cancelled.", now);
   }
 
@@ -1643,6 +1645,7 @@ export class ThreadStore {
         "UPDATE owner_questions SET state = 'expired', resolved_at = ? WHERE state = 'pending' AND deadline <= ?",
       )
       .run(now, now);
+    this.suppressUnsentQuestionNotices(now);
   }
 
   answerQuestion(
@@ -1668,6 +1671,7 @@ export class ThreadStore {
             "UPDATE owner_questions SET state = 'answered', answer = ?, resolved_at = ? WHERE id = ?",
           )
           .run(text, now, questionId);
+        this.suppressUnsentQuestionNotices(now);
         return { botId, taskId: run.task_id, runId, questionId };
       },
     );
@@ -1756,6 +1760,8 @@ export class ThreadStore {
       }));
     return {
       admission: { activeLimit: admission.activeLimit, activeCount: admission.activeCount },
+      notices: this.questionNotices(botId),
+      telegramTopic: this.telegramTopic(botId),
       thread: {
         id: thread.id,
         botId,
@@ -2578,4 +2584,269 @@ export class ThreadStore {
       );
     }
   }
+
+  pendingQuestions(): {
+    id: string;
+    botId: string;
+    taskId: string;
+    runId: string;
+    text: string;
+  }[] {
+    const rows = this.db
+      .prepare(
+        "SELECT id, bot_id, task_id, run_id, text FROM owner_questions WHERE state = 'pending'",
+      )
+      .all() as {
+      id: string;
+      bot_id: string;
+      task_id: string;
+      run_id: string;
+      text: string;
+    }[];
+    return rows.map((row) => ({
+      id: row.id,
+      botId: row.bot_id,
+      taskId: row.task_id,
+      runId: row.run_id,
+      text: row.text,
+    }));
+  }
+
+  botName(botId: string): string {
+    const row = this.db.prepare("SELECT name FROM agent_groups WHERE id = ?").get(botId) as
+      | { name: string }
+      | undefined;
+    return row?.name ?? botId;
+  }
+
+  recordQuestionNotice(input: {
+    questionId: string;
+    botId: string;
+    taskId: string;
+    runId: string;
+    summary: string;
+    locator: string;
+    now: string;
+  }): void {
+    this.db
+      .prepare(`INSERT OR IGNORE INTO question_notices (
+ question_id, bot_id, task_id, run_id, summary, locator, eligibility, state, attempts, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, 'eligible', 'pending', 0, ?, ?)`)
+      .run(
+        input.questionId,
+        input.botId,
+        input.taskId,
+        input.runId,
+        input.summary,
+        input.locator,
+        input.now,
+        input.now,
+      );
+  }
+
+  /** Drop notices that were never accepted after the question left pending. */
+  suppressUnsentQuestionNotices(now: string): void {
+    this.db
+      .prepare(`UPDATE question_notices SET eligibility = 'suppressed', state = 'suppressed',
+ next_attempt_at = NULL, updated_at = ?
+ WHERE state IN ('pending', 'failed') AND question_id IN (
+   SELECT id FROM owner_questions WHERE state != 'pending'
+ )`)
+      .run(now);
+  }
+
+  questionNotices(botId: string) {
+    return this.db
+      .prepare(`SELECT question_id AS questionId, bot_id AS botId, task_id AS taskId, run_id AS runId,
+ summary, locator, eligibility, state, attempts, next_attempt_at AS nextAttemptAt,
+ last_error AS lastError, accepted_at AS acceptedAt
+ FROM question_notices WHERE bot_id = ? ORDER BY created_at, question_id`)
+      .all(botId) as unknown as QuestionNotice[];
+  }
+
+  dueQuestionNotices(now: string) {
+    this.db
+      .prepare(`UPDATE question_notices SET state = 'failed', next_attempt_at = NULL, updated_at = ?
+ WHERE state = 'pending' AND attempts >= 3`)
+      .run(now);
+    return this.db
+      .prepare(`SELECT question_id AS questionId, bot_id AS botId, task_id AS taskId, run_id AS runId,
+ summary, locator, attempts
+ FROM question_notices
+ WHERE state = 'pending' AND eligibility = 'eligible' AND attempts < 3
+   AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+ ORDER BY created_at, question_id`)
+      .all(now) as unknown as {
+      questionId: string;
+      botId: string;
+      taskId: string;
+      runId: string;
+      summary: string;
+      locator: string;
+      attempts: number;
+    }[];
+  }
+
+  telegramTopic(botId: string): TelegramTopic | null {
+    return (
+      (this.db
+        .prepare(`SELECT chat_id AS chatId, topic_id AS topicId, state, failure
+ FROM telegram_topics WHERE bot_id = ?`)
+        .get(botId) as unknown as TelegramTopic | undefined) ?? null
+    );
+  }
+
+  saveTelegramTopic(input: {
+    botId: string;
+    chatId: string;
+    topicId: string | null;
+    state: "mapped" | "repairable";
+    failure: string | null;
+    now: string;
+  }): TelegramTopic & { botId: string } {
+    this.db
+      .prepare(`INSERT INTO telegram_topics (bot_id, chat_id, topic_id, state, failure, updated_at)
+ VALUES (?, ?, ?, ?, ?, ?)
+ ON CONFLICT(bot_id) DO UPDATE SET chat_id = excluded.chat_id, topic_id = excluded.topic_id,
+   state = excluded.state, failure = excluded.failure, updated_at = excluded.updated_at`)
+      .run(input.botId, input.chatId, input.topicId, input.state, input.failure, input.now);
+    return {
+      botId: input.botId,
+      chatId: input.chatId,
+      topicId: input.topicId,
+      state: input.state,
+      failure: input.failure,
+    };
+  }
+
+  failQuestionNotice(questionId: string, now: string, error: string): void {
+    this.db
+      .prepare(`UPDATE question_notices SET state = 'failed', last_error = ?, next_attempt_at = NULL, updated_at = ?
+ WHERE question_id = ? AND state = 'pending'`)
+      .run(error, now, questionId);
+  }
+
+  /** Reserve a platform send before its acceptance can become uncertain. */
+  beginQuestionNoticeAttempt(questionId: string, now: string): boolean {
+    const notice = this.db
+      .prepare("SELECT attempts, state FROM question_notices WHERE question_id = ?")
+      .get(questionId) as { attempts: number; state: string } | undefined;
+    if (notice?.state !== "pending" || notice.attempts >= 3) return false;
+    const wait = questionNoticeWaitMs(notice.attempts + 1);
+    this.db
+      .prepare(`UPDATE question_notices SET attempts = attempts + 1, next_attempt_at = ?,
+ last_error = 'Delivery acceptance is unconfirmed.', updated_at = ? WHERE question_id = ?`)
+      .run(wait === null ? null : new Date(Date.parse(now) + wait).toISOString(), now, questionId);
+    return true;
+  }
+
+  recordQuestionNoticeAttempt(input: {
+    questionId: string;
+    now: string;
+    delivered: boolean;
+    error: string | null;
+    retryAfterMs?: number;
+    terminal?: boolean;
+    reserved?: boolean;
+  }): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.db
+        .prepare("SELECT attempts, state FROM question_notices WHERE question_id = ?")
+        .get(input.questionId) as { attempts: number; state: string } | undefined;
+      if (row?.state !== "pending") {
+        this.db.exec("COMMIT");
+        return;
+      }
+      const attempts = row.attempts + (input.reserved ? 0 : 1);
+      const wait =
+        input.delivered || input.terminal
+          ? null
+          : questionNoticeWaitMs(attempts, input.retryAfterMs ?? 0);
+      const state = input.delivered ? "delivered" : wait === null ? "failed" : "pending";
+      const next = wait === null ? null : new Date(Date.parse(input.now) + wait).toISOString();
+      this.db
+        .prepare(`UPDATE question_notices SET attempts = ?, state = ?, next_attempt_at = ?,
+ last_error = ?, accepted_at = ?, updated_at = ? WHERE question_id = ?`)
+        .run(
+          attempts,
+          state,
+          next,
+          input.delivered ? null : input.error,
+          input.delivered ? input.now : null,
+          input.now,
+          input.questionId,
+        );
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  peekAdmission(requestId: string, payload: object): Record<string, unknown> | undefined {
+    const saved = this.db
+      .prepare("SELECT payload, response FROM input_admissions WHERE request_id = ?")
+      .get(requestId) as { payload: string; response: string } | undefined;
+    if (!saved) return undefined;
+    if (saved.payload !== JSON.stringify(payload))
+      throw new ChatRequestError("This requestId belongs to another operation.", 409);
+    return { requestId, ...(JSON.parse(saved.response) as object), replayed: true };
+  }
+
+  commitAdmission<T extends object>(requestId: string, payload: object, result: T) {
+    return this.admit(requestId, payload, () => result);
+  }
+
+  resendQuestionNotice(botId: string, questionId: string, requestId: string, now: string) {
+    return this.admit(requestId, { operation: "resend-question-notice", botId, questionId }, () => {
+      const question = this.db
+        .prepare("SELECT bot_id, task_id, run_id, state FROM owner_questions WHERE id = ?")
+        .get(questionId) as
+        | { bot_id: string; task_id: string; run_id: string; state: string }
+        | undefined;
+      if (!question || question.bot_id !== botId)
+        throw new ChatRequestError("Question notice not found.", 404);
+      if (question.state !== "pending")
+        throw new ChatRequestError("Question no longer needs a notice.", 409);
+      const notice = this.questionNotices(botId).find((row) => row.questionId === questionId);
+      if (!notice) throw new ChatRequestError("Question notice not found.", 404);
+      if (notice.state !== "failed" || notice.eligibility !== "eligible")
+        throw new ChatRequestError("Only a failed notice can be resent.", 409);
+      this.db
+        .prepare(`UPDATE question_notices SET state = 'pending', attempts = 0, next_attempt_at = NULL,
+ last_error = NULL, accepted_at = NULL, updated_at = ? WHERE question_id = ?`)
+        .run(now, questionId);
+      return {
+        botId,
+        taskId: question.task_id,
+        runId: question.run_id,
+        questionId,
+        state: "pending" as const,
+        attempts: 0,
+      };
+    });
+  }
+}
+
+export interface QuestionNotice {
+  questionId: string;
+  botId: string;
+  taskId: string;
+  runId: string;
+  summary: string;
+  locator: string;
+  eligibility: "eligible" | "suppressed";
+  state: "pending" | "delivered" | "failed" | "suppressed";
+  attempts: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+  acceptedAt: string | null;
+}
+
+export interface TelegramTopic {
+  chatId: string;
+  topicId: string | null;
+  state: "mapped" | "repairable";
+  failure: string | null;
 }

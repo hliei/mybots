@@ -149,12 +149,23 @@ the token fails startup. Before pairing, unknown private chats, groups, and
 other updates create no Agent work. A wrong code invalidates the attempt.
 
 The channel normalizes raw updates at the Bot API boundary, ignores non-text
-updates, non-private chats, unknown senders and unconfigured chats, and advances
-the polling offset past every returned update. Accepted input follows the same
-host/mailbox/runner path as CLI and replies to its own chat, split at Telegram's
-4096-code-point limit. Telegram and CLI enter the same Bot Thread and admission path. Telegram
-notification-only behavior remains a later capability. Polling retries a failed long poll and stops
-with the host, aborting in-flight requests and awaiting dispatches.
+updates, callbacks, topic messages, non-private chats, unknown senders and
+unconfigured chats, and advances the polling offset past every returned update.
+Ordinary Telegram text does not enter a Thread or answer a question. Pairing is
+the only private message that changes Host state, and that code is not Agent input.
+
+A pending owner question creates a notice for its Bot. Private topic mode comes
+from `getMe` `has_topics_enabled`, including for a question that is already
+pending when the owner chat is attached. The Host keeps that Bot's private-chat
+topic, the notice's eligibility, attempt count, retry time and delivery outcome
+apart from the Run. It sends at most three times, waiting five
+seconds and then thirty, or longer when Telegram states `retry_after`. Restart
+does not revive an exhausted notice. The owner can repair a deleted topic or
+unavailable topic mode from the client and resend a failed notice. Acceptance by
+Telegram is not a read receipt and does not promise that only one copy arrived.
+A delivery failure does not change the Run outcome. An unsent notice is
+suppressed once the question is answered, expires or is cancelled. Polling
+retries a failed long poll and stops with the host, aborting in-flight requests.
 
 `container.image` and `container.network` select an existing runner image and
 internal Docker network. `gateway.url` is the host's OneCLI management endpoint;
@@ -709,8 +720,8 @@ without accessing the underlying socket. The connection stays open for interacti
 chat; EOF, quit or Ctrl+C disconnect it while host-side Agent work continues.
 `WebSocketChannel.listen` and `close` own the owner-local WebSocket listener, its
 clients and their bounded frames. `TelegramChannel.listen`, `start` and `stop` own
-host delivery and Bot API polling for one Telegram instance; `dispatch` routes a
-single normalized update. `runHost` starts the Telegram channel when `telegram`
+Bot API polling for one Telegram instance and attach question-notice delivery;
+`dispatch` ignores ordinary text, topic messages and callbacks. `runHost` starts the Telegram channel when `telegram`
 settings are present. Importing these modules starts no services. Observers cannot
 prevent persistence;
 channels must settle delivery on shutdown cancellation.
@@ -731,10 +742,11 @@ mailbox driver fixture. It shows an input/reply, CLI reconnect and host restart
 with one retained Thread and independent Run contexts. `verify` includes the same
 bounded demonstration and executable help/configuration-failure checks. Host
 integration tests use real central/session SQLite and the same driver boundary.
-`tests/host-telegram.test.ts` drives the channel with a controlled Bot API: owner
-routing, unknown-sender and unsupported-input rejection, chat splitting, offset
-advance, cancellation, restart affinity, token containment and entry-point
-wiring. No test contacts Telegram or uses a real token. These checks do not
+`tests/host-telegram.test.ts` drives the channel with a controlled Bot API:
+ignored text, topic messages and callbacks, offset advance, cancellation,
+restart, token containment and entry-point wiring. `tests/question-notices.test.ts`
+drives question notices through that HTTP boundary. No test contacts Telegram
+or uses a real token. These checks do not
 establish Docker, gateway, CA or live provider behavior. The
 opt-in infrastructure suite and actual-service acceptance remain separate.
 

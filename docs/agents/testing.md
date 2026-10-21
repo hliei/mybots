@@ -221,15 +221,27 @@ Current contracts use host/channel and real Pi SDK tests. Independent Bot API
 normalization and transport cases remain in `tests/telegram-api.test.ts`.
 
 `tests/host-telegram.test.ts` connects `TelegramChannel` and `runHost` to the real
-host/store/mailbox path with a controlled Bot API. It covers owner routing,
-unknown-sender and non-private/unconfigured-chat rejection, ordered message
-splitting at the Telegram limit, polling-offset advance and ignored updates,
-cancellation and bounded shutdown, Telegram/CLI admissions to the Bot's direct
-Thread, stable Thread identity across restart, token containment outside
+host/store/mailbox path with a controlled Bot API. It covers unknown-sender and
+non-private/unconfigured-chat rejection, polling-offset advance, ignored text,
+topic messages and callbacks, cancellation and bounded shutdown, CLI Thread
+identity across restart without Telegram chat admission, token containment outside
 runner material, coherent `telegram` settings and entry-point start/stop. The
 `createTelegramApi` boundary is exercised separately with a mock `fetch`; no test
 contacts Telegram or uses a real token. Live Telegram acceptance remains part of
 the separate actual-service pass.
+
+## Question notices
+
+`tests/question-notices.test.ts` uses authenticated HTTP, real SQLite and a
+controlled Telegram HTTP server. A pending question sends one topic notice that
+names the Bot, Task, Run, request and local-client locator. Delivery waits five
+then thirty seconds, honors a longer retry-after, and stops after three attempts.
+Restart leaves an exhausted notice failed until manual resend. Deleted topics and
+missing topic mode or chat authority stay visible and repairable. An answered
+question suppresses a notice that has not been accepted. A later Run can succeed
+while the notice stays failed or suppressed. `tests/browser/question-notices.spec.ts`
+repairs a topic and resends the notice in the built client without changing the
+waiting Run. These checks do not use a real Telegram account.
 
 `tests/websocket-channel.test.ts` binds the owner-local WebSocket channel to a
 real host, central store and per-session mailboxes with the controlled mailbox

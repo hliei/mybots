@@ -19,7 +19,6 @@ test("three channels use one Thread while delivery and restart retain input rout
   const { configuration } = await loadHostSettings("examples/host/host-telegram.json");
   const executionStarted = Promise.withResolvers<void>();
   const releaseExecution = Promise.withResolvers<void>();
-  const sending = Promise.withResolvers<void>();
   let host: Host | undefined;
   let cli: CliChannel | undefined;
   let web: WebSocketChannel | undefined;
@@ -32,23 +31,19 @@ test("three channels use one Thread while delivery and restart retain input rout
   const sends: string[] = [];
   const api: TelegramApi = {
     async getMe() {
-      return { id: "1" };
+      return { id: "1", topicsEnabled: false };
     },
     async getUpdates(offset) {
       return { updates: [], nextOffset: offset };
     },
-    async sendMessage(chatId, text, signal) {
+    async getChat() {
+      return { isForum: true };
+    },
+    async createForumTopic() {
+      return { topicId: "1" };
+    },
+    async sendMessage(chatId, text) {
       expect(chatId).toBe("123456789");
-      sending.resolve();
-      // The first host cannot finish sending before it is stopped.
-      if (sends.length === 0) {
-        sends.push("blocked");
-        await new Promise<void>((resolve) => {
-          if (signal.aborted) resolve();
-          else signal.addEventListener("abort", () => resolve(), { once: true });
-        });
-        throw new Error("Controlled platform interruption");
-      }
       sends.push(text);
     },
   };
@@ -125,27 +120,24 @@ test("three channels use one Thread while delivery and restart retain input rout
     await vi.waitFor(() =>
       expect(frames).toContainEqual(expect.objectContaining({ content: "Saved amber orchard" })),
     );
-    const accepted = await telegram?.dispatch({
-      updateId: 2,
-      userId: "123456789",
-      chatId: "123456789",
-      text: "Read shared material",
-    });
-    expect(accepted).toBeDefined();
-    await waitForCheckpoint(sending.promise, "blocked Telegram delivery");
-    await vi.waitFor(() =>
-      expect(frames).toContainEqual(
-        expect.objectContaining({
-          type: "outbound",
-          destination: "owner-chat",
-          content: "Read amber orchard",
-          in_reply_to: accepted?.messageId,
-        }),
-      ),
-    );
-    const pending = await host?.inspect(accepted?.sessionId ?? "");
-    expect(pending?.inputs[0].status).toBe("completed");
-    expect(pending?.deliveries).toContainEqual(expect.objectContaining({ status: undefined }));
+    expect(
+      await telegram?.dispatch({
+        updateId: 2,
+        userId: "123456789",
+        chatId: "123456789",
+        text: "Read shared material",
+      }),
+    ).toBeUndefined();
+    expect(
+      await telegram?.dispatch({
+        updateId: 4,
+        userId: "123456789",
+        chatId: "123456789",
+        text: "approve",
+        threadId: "3",
+      }),
+    ).toBeUndefined();
+    expect(sends).toEqual([]);
     expect(terminal).toContain("Terminal completed");
     releaseExecution.resolve();
     await vi.waitFor(() => expect(terminal).toContain("Terminal completed"));
@@ -170,8 +162,7 @@ test("three channels use one Thread while delivery and restart retain input rout
 
     driver = new MailboxDriver();
     await open();
-    await vi.waitFor(() => expect(sends).toEqual(["blocked", "Read amber orchard"]));
-    // Persisted output is delivered without restarting model execution.
+    expect(sends).toEqual([]);
     expect(driver.launches).toHaveLength(0);
     expect(
       host
@@ -179,25 +170,21 @@ test("three channels use one Thread while delivery and restart retain input rout
         .map((session) => session.id)
         .sort(),
     ).toEqual(sessions.map((session) => session.id).sort());
-    expect((await host?.inspect(accepted?.sessionId ?? ""))?.deliveries).toEqual(
-      expect.arrayContaining([expect.objectContaining({ status: "delivered" })]),
-    );
     socket?.write(`${JSON.stringify({ text: "Continue terminal" })}\n`);
     observer?.send(
       JSON.stringify({ type: "input", destination: "desktop", content: "Continue desktop" }),
     );
-    const resumed = await telegram?.dispatch({
-      updateId: 3,
-      userId: "123456789",
-      chatId: "123456789",
-      text: "Continue chat",
-    });
-    expect(resumed?.sessionId).not.toBe(accepted?.sessionId);
+    expect(
+      await telegram?.dispatch({
+        updateId: 3,
+        userId: "123456789",
+        chatId: "123456789",
+        text: "Continue chat",
+      }),
+    ).toBeUndefined();
     await vi.waitFor(() => expect(driver.launches.length).toBeGreaterThanOrEqual(1));
     for (const launch of driver.launches) expect(launch.continuation).toBeUndefined();
-    await vi.waitFor(() =>
-      expect(sends).toEqual(["blocked", "Read amber orchard", "Reply: Continue chat"]),
-    );
+    expect(sends).toEqual([]);
     await vi.waitFor(() => expect(terminal).toContain("Reply: Continue terminal"));
     await vi.waitFor(() =>
       expect(frames).toContainEqual(

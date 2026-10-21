@@ -1,6 +1,8 @@
+import { writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { HostMailbox, RunnerMailbox } from "@mybots/mailbox/node";
+import { TelegramRequestError } from "../packages/host/dist/channels/telegram-api.js";
 import { WebSocketChannel } from "../packages/host/dist/channels/websocket.js";
 import { loadHostSettings } from "../packages/host/dist/config/host.js";
 import { Host } from "../packages/host/dist/host.js";
@@ -18,6 +20,18 @@ configuration.approvedModels = [
 ];
 if (process.env.MYBOTS_MAX_ATTACHMENT_BYTES) {
   configuration.files = { maxBytes: Number(process.env.MYBOTS_MAX_ATTACHMENT_BYTES) };
+}
+if (process.env.MYBOTS_TELEGRAM_FIXTURE === "1") {
+  configuration.owners = [...configuration.owners, "telegram:123456789"];
+  configuration.destinations = [
+    ...configuration.destinations,
+    {
+      id: "owner-chat",
+      channelType: "telegram",
+      platformId: "123456789",
+      instance: "telegram",
+    },
+  ];
 }
 const driver = new MailboxDriver();
 const started = Promise.withResolvers();
@@ -75,6 +89,52 @@ const host = await Host.start({
   driver: execution,
   now: () => Date.now() + clockOffset,
 });
+let telegramMode = "missing-mode";
+const telegramLog = [];
+let topicSerial = 70;
+function remember(entry) {
+  telegramLog.push(entry);
+  writeFileSync(join(root, "data", "telegram-sends.json"), JSON.stringify(telegramLog));
+}
+if (process.env.MYBOTS_TELEGRAM_FIXTURE === "1") {
+  host.attachTelegramNotices(
+    {
+      async getMe() {
+        return {
+          id: "1",
+          username: "fixture_bot",
+          topicsEnabled: telegramMode !== "missing-mode",
+        };
+      },
+      async getUpdates(offset) {
+        return { updates: [], nextOffset: offset };
+      },
+      async getChat() {
+        if (telegramMode === "forbidden")
+          throw new TelegramRequestError("Forbidden: bot was blocked by the user", "authority");
+        return { isForum: false };
+      },
+      async createForumTopic(_chatId, name) {
+        topicSerial += 1;
+        const topicId = String(topicSerial);
+        remember({ method: "createForumTopic", name, topicId });
+        return { topicId };
+      },
+      async sendMessage(chatId, text, _signal, topicId) {
+        if (telegramMode === "deleted") {
+          remember({ method: "sendMessage", chatId, text, topicId, error: "topic-missing" });
+          throw new TelegramRequestError("Bad Request: message thread not found", "topic-missing");
+        }
+        if (telegramMode === "fail") {
+          remember({ method: "sendMessage", chatId, text, topicId, error: "fail" });
+          throw new TelegramRequestError("Telegram sendMessage failed: unavailable", "retryable");
+        }
+        remember({ method: "sendMessage", chatId, text, topicId });
+      },
+    },
+    "123456789",
+  );
+}
 let channel;
 try {
   channel = await WebSocketChannel.listen({ root, host, configuration, port });
@@ -96,6 +156,8 @@ try {
     process.once("SIGTERM", resolve);
     process.once("disconnect", resolve);
     process.on("message", (message) => {
+      if (typeof message === "string" && message.startsWith("telegram-mode:"))
+        telegramMode = message.slice("telegram-mode:".length);
       if (message === "exhaust-budget") clockOffset += 60 * 60 * 1000;
       if (message === "complete") release.resolve();
       if (message === "complete-chat") chatRelease.resolve();

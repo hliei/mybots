@@ -36,6 +36,26 @@ interface Question {
   answer: string | null;
   deadline: string | null;
 }
+interface QuestionNotice {
+  questionId: string;
+  botId: string;
+  taskId: string;
+  runId: string;
+  summary: string;
+  locator: string;
+  eligibility: "eligible" | "suppressed";
+  state: "pending" | "delivered" | "failed" | "suppressed";
+  attempts: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+  acceptedAt: string | null;
+}
+interface TelegramTopic {
+  chatId: string;
+  topicId: string | null;
+  state: "mapped" | "repairable";
+  failure: string | null;
+}
 interface DelegationFile {
   kind: "attachment" | "artifact";
   id: string;
@@ -106,6 +126,8 @@ interface Task {
 interface Detail {
   admission: { activeLimit: number; activeCount: number };
   collaboration: { targetBotId: string; name: string; mode: "deny" | "ask-each-time" | "allow" }[];
+  notices: QuestionNotice[];
+  telegramTopic: TelegramTopic | null;
   thread: { id: string; botId: string; backgroundBoundary: number };
   tasks: Task[];
   messages: { id: string; runId: string; role: string; content: string }[];
@@ -122,7 +144,9 @@ interface Pending {
     | "close"
     | "reset"
     | "answer"
-    | "decision";
+    | "decision"
+    | "resend"
+    | "repair";
   text: string;
   questionId?: string;
   approval?: Approval;
@@ -134,6 +158,29 @@ interface Pending {
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function validNotice(value: unknown): value is QuestionNotice {
+  return (
+    record(value) &&
+    [value.questionId, value.botId, value.taskId, value.runId, value.summary, value.locator].every(
+      (item) => typeof item === "string",
+    ) &&
+    (value.eligibility === "eligible" || value.eligibility === "suppressed") &&
+    ["pending", "delivered", "failed", "suppressed"].includes(value.state as string) &&
+    typeof value.attempts === "number" &&
+    (value.nextAttemptAt === null || typeof value.nextAttemptAt === "string") &&
+    (value.lastError === null || typeof value.lastError === "string") &&
+    (value.acceptedAt === null || typeof value.acceptedAt === "string")
+  );
+}
+function validTopic(value: unknown): value is TelegramTopic {
+  return (
+    record(value) &&
+    typeof value.chatId === "string" &&
+    (value.topicId === null || typeof value.topicId === "string") &&
+    (value.state === "mapped" || value.state === "repairable") &&
+    (value.failure === null || typeof value.failure === "string")
+  );
 }
 function validDelegationFile(value: unknown): value is DelegationFile {
   return (
@@ -188,6 +235,9 @@ function isDetail(value: unknown): value is Detail {
     ) &&
     typeof value.thread.id === "string" &&
     typeof value.thread.backgroundBoundary === "number" &&
+    Array.isArray(value.notices) &&
+    value.notices.every(validNotice) &&
+    (value.telegramTopic === null || validTopic(value.telegramTopic)) &&
     Array.isArray(value.messages) &&
     value.messages.every(
       (message: unknown) =>
@@ -313,7 +363,10 @@ function isPending(value: unknown): value is Pending {
       "reset",
       "answer",
       "decision",
+      "resend",
+      "repair",
     ].includes(value.operation as string) &&
+    (value.operation !== "resend" || typeof value.questionId === "string") &&
     (value.selectedMessageIds === undefined ||
       (Array.isArray(value.selectedMessageIds) &&
         value.selectedMessageIds.every((id: unknown) => typeof id === "string"))) &&
@@ -351,6 +404,7 @@ let botId: string | undefined;
 let availability: "active" | "disabled" | "deleted" = "active";
 let version = 0;
 let refreshTimer = 0;
+let locatedQuestion = false;
 let sending = false;
 let pending: Pending | undefined;
 const answerDrafts = new Map<string, string>();
@@ -467,6 +521,7 @@ export async function showChat(
       return;
     }
     works.replaceChildren(
+      ...(detail.telegramTopic ? [topicPanel(detail.telegramTopic)] : []),
       ...detail.tasks.map((task) => {
         const article = document.createElement("article");
         article.id = `task-${task.id}`;
@@ -516,7 +571,14 @@ export async function showChat(
             paragraph(`Outcome: ${run.outcome?.kind ?? "unresolved"}`),
           );
           for (const question of run.questions)
-            article.append(questionCard(task.id, run, question));
+            article.append(
+              questionCard(
+                task.id,
+                run,
+                question,
+                detail.notices.find((notice) => notice.questionId === question.id),
+              ),
+            );
           for (const delegation of run.delegations) article.append(delegationCard(run, delegation));
           if (run.outcome)
             article.append(
@@ -599,6 +661,16 @@ export async function showChat(
         return article;
       }),
     );
+    if (!locatedQuestion && location.hash) {
+      const target = [...works.querySelectorAll<HTMLElement>("[data-question-id]")].find(
+        (section) => location.hash === `#${encodeURIComponent(section.id)}`,
+      );
+      if (target) {
+        target.tabIndex = -1;
+        target.focus();
+        locatedQuestion = true;
+      }
+    }
     if (
       current === version &&
       (pendingRoutine ||
@@ -707,13 +779,83 @@ function approvalCard(source: Delegation, approval: Approval, run: Run): HTMLEle
   return section;
 }
 
-function questionCard(taskId: string, run: Run, question: Question): HTMLElement {
+function topicPanel(topic: TelegramTopic): HTMLElement {
+  const section = document.createElement("section");
+  section.dataset.telegramTopic = topic.state;
+  section.append(
+    paragraph(
+      `Telegram topic: ${topic.state}${topic.topicId ? ` · ${topic.topicId}` : ""}${topic.chatId ? ` · chat ${topic.chatId}` : ""}`,
+    ),
+  );
+  if (topic.failure) section.append(paragraph(topic.failure));
+  if (topic.state === "repairable") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Repair Telegram topic";
+    button.disabled = sending || !!pending || availability === "deleted";
+    button.addEventListener("click", () => {
+      if (!botId || sending || pending) return;
+      pending = { botId, requestId: crypto.randomUUID(), operation: "repair", text: "" };
+      localStorage.setItem(pendingKey, JSON.stringify(pending));
+      void submit();
+    });
+    section.append(button);
+  }
+  return section;
+}
+function questionCard(
+  taskId: string,
+  run: Run,
+  question: Question,
+  notice: QuestionNotice | undefined,
+): HTMLElement {
   const section = document.createElement("section");
   section.dataset.questionId = question.id;
+  section.id = `question-${question.id}`;
   section.append(
     paragraph(`Question: ${question.text}`),
     paragraph(`Request: ${question.id} · ${question.state}`),
   );
+  if (notice) {
+    section.dataset.noticeState = notice.state;
+    section.append(
+      paragraph(
+        `Telegram notice: ${notice.state} · ${notice.attempts} of 3 attempts${notice.nextAttemptAt ? ` · next ${notice.nextAttemptAt}` : ""}`,
+      ),
+      paragraph(
+        `Bot: ${notice.botId} · Task: ${notice.taskId} · Run: ${notice.runId} · Request: ${notice.questionId}`,
+      ),
+      paragraph(`Local client: ${notice.locator}`),
+    );
+    if (notice.lastError) section.append(paragraph(notice.lastError));
+    if (notice.acceptedAt)
+      section.append(
+        paragraph(
+          `Accepted by Telegram at ${notice.acceptedAt}. This is not a read receipt and does not promise a single copy.`,
+        ),
+      );
+    if (notice.state === "failed" && notice.eligibility === "eligible") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Resend Telegram notice";
+      button.disabled = sending || !!pending;
+      button.addEventListener("click", () => {
+        if (!botId || sending || pending) return;
+        pending = {
+          botId,
+          requestId: crypto.randomUUID(),
+          operation: "resend",
+          questionId: question.id,
+          taskId,
+          runId: run.id,
+          text: "",
+        };
+        localStorage.setItem(pendingKey, JSON.stringify(pending));
+        void submit();
+      });
+      section.append(button);
+    }
+  }
   if (question.deadline) section.append(paragraph(`Deadline: ${question.deadline}`));
   if (question.state === "answered") section.append(paragraph(`Owner answer: ${question.answer}`));
   if (question.state === "expired")
@@ -793,18 +935,23 @@ async function submit(newTask = false): Promise<void> {
       admitted.operation === "stop" ||
       admitted.operation === "retry" ||
       admitted.operation === "close";
+    const noticeOperation = admitted.operation === "resend" || admitted.operation === "repair";
     const path =
-      admitted.operation === "decision"
-        ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/approvals/${encodeURIComponent(admitted.approval?.id as string)}/decision`
-        : admitted.operation === "answer"
-          ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/questions/${encodeURIComponent(admitted.questionId as string)}/answer`
-          : admitted.operation === "reset"
-            ? `${prefix}/thread/reset`
-            : runOperation
-              ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/${admitted.operation}`
-              : admitted.operation === "task"
-                ? `${prefix}/tasks/${encodeURIComponent(admitted.taskId as string)}/inputs`
-                : `${prefix}/thread/${admitted.operation === "new-task" ? "tasks" : "messages"}`;
+      admitted.operation === "resend"
+        ? `${prefix}/questions/${encodeURIComponent(admitted.questionId as string)}/notice/resend`
+        : admitted.operation === "repair"
+          ? `${prefix}/telegram-topic/repair`
+          : admitted.operation === "decision"
+            ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/approvals/${encodeURIComponent(admitted.approval?.id as string)}/decision`
+            : admitted.operation === "answer"
+              ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/questions/${encodeURIComponent(admitted.questionId as string)}/answer`
+              : admitted.operation === "reset"
+                ? `${prefix}/thread/reset`
+                : runOperation
+                  ? `${prefix}/runs/${encodeURIComponent(admitted.runId as string)}/${admitted.operation}`
+                  : admitted.operation === "task"
+                    ? `${prefix}/tasks/${encodeURIComponent(admitted.taskId as string)}/inputs`
+                    : `${prefix}/thread/${admitted.operation === "new-task" ? "tasks" : "messages"}`;
     const response = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -824,7 +971,7 @@ async function submit(newTask = false): Promise<void> {
                 bytes: file.bytes,
               })),
             }
-          : admitted.operation === "reset" || runOperation
+          : admitted.operation === "reset" || runOperation || noticeOperation
             ? { requestId: admitted.requestId }
             : {
                 requestId: admitted.requestId,
@@ -847,17 +994,20 @@ async function submit(newTask = false): Promise<void> {
           : "Input unavailable. Retry the same request.";
       return;
     }
-    if (
-      !record(result) ||
-      result.requestId !== admitted.requestId ||
-      (admitted.operation === "reset"
+    if (!record(result) || result.requestId !== admitted.requestId) throw new Error();
+    if (admitted.operation === "repair") {
+      if (result.state !== "mapped" && result.state !== "repairable") throw new Error();
+    } else if (admitted.operation === "resend") {
+      if (result.questionId !== admitted.questionId) throw new Error();
+    } else if (
+      admitted.operation === "reset"
         ? typeof result.backgroundBoundary !== "number"
         : typeof result.taskId !== "string" ||
           typeof result.runId !== "string" ||
           (!runOperation &&
             admitted.operation !== "answer" &&
             admitted.operation !== "decision" &&
-            typeof result.messageId !== "string"))
+            typeof result.messageId !== "string")
     )
       throw new Error();
     localStorage.removeItem(pendingKey);
@@ -869,19 +1019,27 @@ async function submit(newTask = false): Promise<void> {
       !runOperation &&
       admitted.operation !== "reset" &&
       admitted.operation !== "answer" &&
-      admitted.operation !== "decision"
+      admitted.operation !== "decision" &&
+      admitted.operation !== "resend" &&
+      admitted.operation !== "repair"
     )
       text.value = "";
     notice.textContent =
-      admitted.operation === "decision"
-        ? `Decision recorded for action ${admitted.approval?.id}. The same Run continues from correlated evidence.`
-        : admitted.operation === "answer"
-          ? `Answer recorded for question ${admitted.questionId}. The same Run continues when capacity is available.`
-          : admitted.operation === "reset"
-            ? `Chat background boundary is ${result.backgroundBoundary}. Existing Runs keep their captured background.`
-            : runOperation
-              ? `Recorded ${admitted.operation} for Run ${result.runId}. Refresh after the Run state changes.`
-              : `Admitted to Task ${result.taskId}, Run ${result.runId}. Await its durable outcome.`;
+      admitted.operation === "repair"
+        ? result.state === "mapped"
+          ? `Telegram topic ${String(result.topicId)} is mapped for this Bot. Work outcome stays unchanged.`
+          : `Telegram topic still needs repair. ${typeof result.failure === "string" ? result.failure : ""}`
+        : admitted.operation === "resend"
+          ? `Question notice ${admitted.questionId} will be sent again. Work outcome stays unchanged.`
+          : admitted.operation === "decision"
+            ? `Decision recorded for action ${admitted.approval?.id}. The same Run continues from correlated evidence.`
+            : admitted.operation === "answer"
+              ? `Answer recorded for question ${admitted.questionId}. The same Run continues when capacity is available.`
+              : admitted.operation === "reset"
+                ? `Chat background boundary is ${result.backgroundBoundary}. Existing Runs keep their captured background.`
+                : runOperation
+                  ? `Recorded ${admitted.operation} for Run ${result.runId}. Refresh after the Run state changes.`
+                  : `Admitted to Task ${result.taskId}, Run ${result.runId}. Await its durable outcome.`;
     await showChat(botId);
   } catch {
     notice.textContent = pending

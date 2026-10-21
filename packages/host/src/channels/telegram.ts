@@ -1,13 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
-import type { OutboundMessage } from "@mybots/mailbox";
 import type { Host } from "../host.ts";
-import { chunkContent } from "./chunk-content.ts";
-import {
-  TELEGRAM_CHUNK_LIMIT,
-  type TelegramApi,
-  type TelegramPollResult,
-  type TelegramUpdate,
-} from "./telegram-api.ts";
+import type { TelegramApi, TelegramPollResult, TelegramUpdate } from "./telegram-api.ts";
 import { markPairingCompleted, takePairingAttempt } from "./telegram-pairing.ts";
 
 export interface TelegramDestination {
@@ -33,19 +26,19 @@ export interface TelegramChannelOptions {
 }
 
 /**
- * Owner-only Telegram private-chat channel for the persistent host.
+ * Owner-only Telegram private-chat channel for question notices.
  *
- * Construction attaches host delivery for the channel instance; `start` owns
- * Bot API polling and `stop` aborts in-flight requests and awaits dispatches.
- * Updates are normalized at the Bot API boundary; unknown senders, non-private
- * chats and unconfigured chats are ignored without reaching host work.
+ * One account and one private chat receive per-Bot topic notices. Polling still
+ * advances the update offset, but topic messages, free text and callbacks do
+ * not admit chat or owner decisions. Pairing remains the only accepted private
+ * message, and it is not Agent input. `start` owns Bot API polling and `stop`
+ * aborts in-flight requests.
  */
 export class TelegramChannel {
   private readonly controller = new AbortController();
   private readonly destinations: Map<string, TelegramDestination>;
   private readonly telegramOwners: Set<string>;
   private readonly options: TelegramChannelOptions;
-  private detach?: () => void;
   private runTask?: Promise<void>;
 
   private constructor(options: TelegramChannelOptions) {
@@ -69,16 +62,16 @@ export class TelegramChannel {
     this.telegramOwners.clear();
     this.telegramOwners.add(platformId);
     this.destinations.set(platformId, { id: "owner-chat", platformId });
+    this.options.host.attachTelegramNotices(this.options.api, platformId);
   }
 
-  /** Attach host delivery; opens no Bot API connection until `start`. */
+  /** Attach question-notice delivery; opens no Bot API connection until `start`. */
   static listen(options: TelegramChannelOptions): TelegramChannel {
     const channel = new TelegramChannel(options);
-    channel.detach = options.host.attachChannel({
-      channelType: "telegram",
-      instance: options.instance,
-      deliver: (message, signal) => channel.deliver(message, signal),
-    });
+    const chat =
+      options.destinations.find((destination) => destination.id === "owner-chat") ??
+      (options.destinations.length === 1 ? options.destinations[0] : undefined);
+    if (chat) options.host.attachTelegramNotices(options.api, chat.platformId);
     return channel;
   }
 
@@ -99,17 +92,17 @@ export class TelegramChannel {
   /** Stop polling and settle dispatches; safe before `start`. */
   async stop(): Promise<void> {
     this.controller.abort();
-    this.detach?.();
-    this.detach = undefined;
     await this.runTask?.catch(() => {});
   }
 
-  /** Route one normalized update; unauthorized or unsupported input resolves to `undefined`. */
-  async dispatch(
-    update: TelegramUpdate,
-  ): Promise<{ sessionId: string; messageId: string } | undefined> {
+  /**
+   * Consume one normalized update. Topic messages, callbacks and ordinary text
+   * never become Thread input or owner decisions. A pairing code in the private
+   * chat root is the only message that changes Host state.
+   */
+  async dispatch(update: TelegramUpdate): Promise<undefined> {
     if (this.controller.signal.aborted) throw new Error("Telegram channel is stopping.");
-    if (update.chatId !== update.userId) return undefined;
+    if (update.threadId || update.chatId !== update.userId) return undefined;
     if (this.options.pairingRoot && update.text.trim()) {
       const attempt = await takePairingAttempt(this.options.pairingRoot, update.text);
       if (attempt.kind === "matched") {
@@ -121,31 +114,9 @@ export class TelegramChannel {
           "Pairing success!",
           this.controller.signal,
         );
-        return undefined;
       }
-      if (attempt.kind === "replaced" || attempt.kind === "exhausted") return undefined;
     }
-    if (!this.telegramOwners.has(update.userId)) return undefined;
-    // Telegram private chats expose the peer user ID as the chat ID; groups are out of scope.
-    if (update.chatId !== update.userId) return undefined;
-    const destination = this.destinations.get(update.chatId);
-    if (!destination) return undefined;
-    return await this.options.host.accept({
-      destinationId: destination.id,
-      userId: `telegram:${update.userId}`,
-      text: update.text,
-    });
-  }
-
-  private async deliver(message: OutboundMessage, signal: AbortSignal): Promise<void> {
-    if (message.channel_type !== "telegram") throw new Error("Telegram delivery requires Telegram");
-    if (!this.destinations.has(message.platform_id))
-      throw new Error("Telegram delivery requires a configured private chat");
-    const text = message.kind === "error" ? `Error: ${message.content}` : message.content;
-    for (const chunk of chunkContent(text, TELEGRAM_CHUNK_LIMIT)) {
-      signal.throwIfAborted();
-      await this.options.api.sendMessage(message.platform_id, chunk, signal);
-    }
+    return undefined;
   }
 
   private report(error: unknown): void {

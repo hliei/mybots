@@ -49,9 +49,10 @@ details and scope. See
   is `packages/host/src/cli/client.ts`: it parses arguments and starts `chat.ts` for terminal
   interaction. `socket-client.ts` owns the CLI socket protocol; `socket-server.ts`
   owns the host-side CLI listener. All four modules live under `packages/host/src/cli/`.
-  The Telegram Bot API boundary in `packages/host/src/channels/telegram-api.ts` serves the
-  owner-only private-chat channel, which routes accepted input through the common
-  host path and keeps the token host-side.
+  The Telegram Bot API boundary in `packages/host/src/channels/telegram-api.ts` sends
+  question notices to one owner-private chat, one topic per Bot. Topic messages, free
+  text and callbacks do not admit chat or decisions. Pairing still registers the owner.
+  The token stays host-side.
 - Keep platform SDK details at the platform boundary and model SDK details at
   the model boundary. Core behavior must be testable without live credentials.
 - Prefer explicit types at module boundaries. Use `unknown` for unvalidated
