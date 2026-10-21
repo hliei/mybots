@@ -46,8 +46,8 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .avatar { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: #eee; color: #151515; font: 650 29px Georgia, serif; flex-shrink: 0; }
 .bot-row h3 { margin: 2px 0 0; font-size: 17px; }
 .bot-row p { margin: 0; color: var(--secondary); font-size: 12px; }
-.bot-row button { position: absolute; inset: 0; width: 100%; border: 0; border-radius: 16px; background: transparent; }
-.bot-row button:hover { background: transparent; }
+.bot-row .choose-bot { position: absolute; inset: 0; width: 100%; border: 0; border-radius: 16px; background: transparent; }
+.bot-row .choose-bot:hover { background: transparent; }
 #open-settings { text-align: left; border-radius: 28px; margin-top: 16px; }
 #connection { color: var(--secondary); font-size: 12px; margin: 14px 6px 6px; }
 #refresh { align-self: flex-start; background: transparent; padding: 6px; font-size: 12px; color: var(--secondary); }
@@ -119,3 +119,21 @@ dialog::backdrop { background: #0009; }
 #memory-topics { display: flex; flex-wrap: wrap; gap: 8px; }
 #skill-library { overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; } }
+
+#bot-filter { margin: 0 4px 18px; border-radius: 22px; font-size: 14px; }
+.bot-group { color: var(--muted); font-size: 12px; margin: 20px 12px 8px; }
+.bot-row { padding-right: 38px; }
+.bot-row .avatar { grid-row: span 3; }
+.bot-row h3, .bot-preview { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bot-state { color: var(--secondary); font-size: 10px; }
+.bot-state:empty { display: none; }
+.bot-row .row-menu { position: absolute; top: 14px; right: 4px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; font-size: 22px; }
+#bot-actions { width: 260px; margin: 0; padding: 8px; }
+#bot-actions::backdrop { background: transparent; }
+#bot-actions h2 { font-size: 13px; color: var(--secondary); padding: 8px 12px; margin: 0; }
+#bot-actions button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 10px 12px; font-size: 14px; }
+#bot-actions button:hover { background: #303030; }
+#bot-actions hr { border: 0; border-top: 1px solid var(--line); }
+
+#lifecycle-message { font-size: 12px; color: var(--secondary); max-height: 110px; overflow: auto; }
+#lifecycle-message:empty { display: none; }

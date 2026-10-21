@@ -967,6 +967,10 @@ export class Host {
     };
   }
 
+  botSummaries() {
+    return this.store.botSummaries();
+  }
+
   managedBots() {
     return this.store.managedBots();
   }

@@ -1,6 +1,7 @@
+import { type BotSummary, setNavigationAvailable, showBotNavigation } from "./bot-navigation.ts";
 import { setHostAvailable, showChat } from "./chat.ts";
 import { showMemory } from "./memory.ts";
-import { closeCreation, setShellBot } from "./shell.ts";
+import { closeCreation, resolveBotTrigger, setShellBot } from "./shell.ts";
 import { type SkillSelection, selectedSkills, showSkills } from "./skills.ts";
 
 interface Snapshot {
@@ -106,6 +107,25 @@ function isBot(value: unknown): value is Bot {
     isStrings(value.effective.tools)
   );
 }
+function isSummary(value: unknown): value is BotSummary {
+  return (
+    record(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    ["active", "disabled", "deleted"].includes(value.availability as string) &&
+    typeof value.activityAt === "string" &&
+    typeof value.working === "boolean" &&
+    typeof value.attention === "boolean" &&
+    (value.latestMessage === null ||
+      (record(value.latestMessage) &&
+        [
+          value.latestMessage.id,
+          value.latestMessage.role,
+          value.latestMessage.excerpt,
+          value.latestMessage.createdAt,
+        ].every((field) => typeof field === "string")))
+  );
+}
 function isOptions(value: unknown): value is BotOptions {
   return (
     record(value) &&
@@ -126,7 +146,6 @@ function isCreation(value: unknown): value is Creation {
 const pairing = document.querySelector<HTMLElement>("#pairing") as HTMLElement;
 const status = document.querySelector<HTMLElement>("#status") as HTMLElement;
 const connection = document.querySelector<HTMLElement>("#connection") as HTMLElement;
-const bots = document.querySelector<HTMLElement>("#bots") as HTMLElement;
 const credential = document.querySelector<HTMLInputElement>("#credential") as HTMLInputElement;
 const pairButton = document.querySelector<HTMLButtonElement>(
   "#pair-form button",
@@ -268,31 +287,15 @@ function renderOptions(options: BotOptions): void {
 }
 
 function render(snapshot: Snapshot, managed: Bot[]): void {
-  bots.replaceChildren();
-  for (const bot of snapshot.bots) {
-    const article = document.createElement("article");
-    const heading = document.createElement("h3");
-    heading.textContent = bot.name;
-    article.className = "bot-row";
-    article.classList.toggle("selected", selectedId === bot.id);
-    const avatar = document.createElement("span");
-    avatar.className = "avatar";
-    avatar.setAttribute("aria-hidden", "true");
-    avatar.textContent = bot.name.slice(0, 1).toLocaleUpperCase();
-    const availability = document.createElement("p");
-    availability.textContent = `Availability: ${managed.find((item) => item.id === bot.id)?.availability ?? "active"}`;
-    article.append(avatar, heading, availability);
-    const choose = document.createElement("button");
-    choose.type = "button";
-    choose.setAttribute("aria-label", `Select ${bot.name}`);
-    choose.setAttribute("aria-pressed", String(selectedId === bot.id));
-    choose.addEventListener("click", () => {
-      selectBot(bot.id);
+  showBotNavigation(
+    summaries,
+    selectedId,
+    (id) => {
+      selectBot(id);
       render(snapshot, managed);
-    });
-    article.append(choose);
-    bots.append(article);
-  }
+    },
+    requestAvailability,
+  );
   const active = managed.find((bot) => bot.id === selectedId);
   setShellBot(active);
   selected.hidden = !active;
@@ -349,7 +352,7 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
         pendingLifecycle?.botId === active.id && pendingLifecycle.operation === name
           ? `Retry ${label}`
           : label;
-      button.addEventListener("click", () => void changeAvailability(active.id, name));
+      button.addEventListener("click", () => requestAvailability(active.id, name));
       return button;
     };
     if (active.availability === "active") actions.append(operation("disable", "Disable Bot"));
@@ -406,21 +409,76 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     void showMemory(undefined);
   }
   void showChat(active?.id, active?.availability);
-  if (snapshot.bots.length === 0) bots.textContent = "No Bots configured.";
 }
+
+const deletion = document.getElementById("delete-surface") as HTMLDialogElement;
+let deletionBot: string | undefined;
+let deletionReturn: HTMLElement | undefined;
+function requestAvailability(botId: string, operation: LifecycleDraft["operation"]): void {
+  if (lifecycleSending) return;
+  if (
+    pendingLifecycle &&
+    (pendingLifecycle.botId !== botId || pendingLifecycle.operation !== operation)
+  ) {
+    showLifecycleRecovery();
+    return;
+  }
+  if (
+    operation !== "delete" ||
+    (pendingLifecycle?.botId === botId && pendingLifecycle.operation === "delete")
+  ) {
+    void changeAvailability(botId, operation);
+    return;
+  }
+  deletionBot = botId;
+  (document.getElementById("delete-bot") as HTMLElement).textContent =
+    summaries.find((bot) => bot.id === botId)?.name ?? botId;
+  deletionReturn = document.activeElement as HTMLElement;
+  deletion.showModal();
+  document.getElementById("cancel-delete")?.focus();
+}
+document.getElementById("cancel-delete")?.addEventListener("click", () => deletion.close());
+document.getElementById("confirm-delete")?.addEventListener("click", () => {
+  const id = deletionBot;
+  deletion.close();
+  if (id) void changeAvailability(id, "delete");
+});
+deletion.addEventListener("close", () => {
+  deletionBot = undefined;
+  resolveBotTrigger(deletionReturn, "bot-identity").focus();
+});
+
+let lifecycleSending = false;
+const lifecycleMessage = document.getElementById("lifecycle-message") as HTMLElement;
+const retryLifecycle = document.getElementById("retry-lifecycle") as HTMLButtonElement;
+function showLifecycleRecovery(): void {
+  lifecycleMessage.textContent = pendingLifecycle
+    ? `Lifecycle response unconfirmed for Bot ${pendingLifecycle.botId} (${pendingLifecycle.operation}). Retry the saved request to confirm its outcome.`
+    : "";
+  retryLifecycle.hidden = !pendingLifecycle;
+  retryLifecycle.disabled = lifecycleSending;
+}
+retryLifecycle.addEventListener("click", () => {
+  if (pendingLifecycle) void changeAvailability(pendingLifecycle.botId, pendingLifecycle.operation);
+});
+showLifecycleRecovery();
 
 async function changeAvailability(
   botId: string,
   operation: LifecycleDraft["operation"],
 ): Promise<void> {
+  if (lifecycleSending) return;
+  lifecycleSending = true;
+  retryLifecycle.disabled = true;
   try {
     if (
       !pendingLifecycle ||
       pendingLifecycle.botId !== botId ||
       pendingLifecycle.operation !== operation
     ) {
-      pendingLifecycle = { botId, requestId: crypto.randomUUID(), operation };
-      localStorage.setItem(pendingLifecycleKey, JSON.stringify(pendingLifecycle));
+      const draft = { botId, requestId: crypto.randomUUID(), operation };
+      localStorage.setItem(pendingLifecycleKey, JSON.stringify(draft));
+      pendingLifecycle = draft;
     }
     const response = await fetch(`/api/bots/${encodeURIComponent(botId)}/${operation}`, {
       method: "POST",
@@ -430,13 +488,24 @@ async function changeAvailability(
     if (response.ok || (response.status >= 400 && response.status < 500)) {
       localStorage.removeItem(pendingLifecycleKey);
       pendingLifecycle = undefined;
+      if (!response.ok) {
+        const result: unknown = await response.json();
+        lifecycleMessage.textContent =
+          record(result) && typeof result.error === "string"
+            ? result.error
+            : "Lifecycle request rejected.";
+      } else lifecycleMessage.textContent = "";
     }
   } catch {
     /* Keep the saved requestId so a later click retries the same lifecycle operation. */
   }
+  lifecycleSending = false;
+  if (pendingLifecycle) showLifecycleRecovery();
+  else retryLifecycle.hidden = true;
   await load();
 }
 
+let summaries: BotSummary[] = [];
 let loading = false;
 async function load(): Promise<void> {
   if (loading) return;
@@ -446,6 +515,7 @@ async function load(): Promise<void> {
     const response = await fetch("/api/status", { cache: "no-store" });
     if (response.status === 401) {
       setHostAvailable(false);
+      setNavigationAvailable(false);
       setShellBot(undefined);
       pairing.hidden = false;
       status.hidden = true;
@@ -459,11 +529,12 @@ async function load(): Promise<void> {
         "Host returned invalid status. Displayed status may be stale. Refresh to retry.";
       return;
     }
-    const [botResponse, optionResponse] = await Promise.all([
+    const [botResponse, optionResponse, summaryResponse] = await Promise.all([
       fetch("/api/bots"),
       fetch("/api/bot-options"),
+      fetch("/api/bot-summaries"),
     ]);
-    if (!botResponse.ok || !optionResponse.ok) throw new Error();
+    if (!botResponse.ok || !optionResponse.ok || !summaryResponse.ok) throw new Error();
     const managed: unknown = await botResponse.json();
     const options: unknown = await optionResponse.json();
     if (
@@ -473,7 +544,12 @@ async function load(): Promise<void> {
       !isOptions(options)
     )
       throw new Error();
+    const summary: unknown = await summaryResponse.json();
+    if (!record(summary) || !Array.isArray(summary.bots) || !summary.bots.every(isSummary))
+      throw new Error();
+    summaries = summary.bots;
     setHostAvailable(true);
+    setNavigationAvailable(true);
     (document.getElementById("open-create") as HTMLButtonElement).disabled = false;
     renderOptions(options);
     render(snapshot, managed.bots);
@@ -484,6 +560,7 @@ async function load(): Promise<void> {
       `Last checked ${new Date().toLocaleTimeString()}`;
   } catch {
     setHostAvailable(false);
+    setNavigationAvailable(false);
     connection.textContent =
       "Host unavailable. Displayed status may be stale. Keep the Host running; this page will reconnect automatically.";
   } finally {

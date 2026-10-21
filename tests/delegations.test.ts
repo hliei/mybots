@@ -395,6 +395,9 @@ it.each([false, true])(
         }),
       ],
     });
+    expect(
+      (await get("/api/bot-summaries")).bots.find((bot: { id: string }) => bot.id === "personal"),
+    ).toMatchObject({ working: false, attention: true });
     expect((await post(path, { ...decision, requestId: "expired-late" })).status).toBe(409);
     expect((await get(`/api/bots/${targetId}/thread`)).tasks).toEqual([]);
     expect(

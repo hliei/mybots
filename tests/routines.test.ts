@@ -64,6 +64,7 @@ it("creates a durable one-shot and admits one independent occurrence after an ov
   await vi.waitFor(async () =>
     expect((await get("thread")).tasks[0].runs[0].state).toBe("succeeded"),
   );
+  const summaryBefore = await (await fetch(`${base}/api/bot-summaries`, { headers })).json();
   const response = await post("routines", definition);
   expect(response.status).toBe(201);
   const created = await response.json();
@@ -84,6 +85,9 @@ it("creates a durable one-shot and admits one independent occurrence after an ov
   await vi.waitFor(async () => expect((await get("thread")).tasks).toHaveLength(2));
   await vi.waitFor(async () =>
     expect((await get("thread")).tasks[1].runs[0].state).toBe("succeeded"),
+  );
+  expect(await (await fetch(`${base}/api/bot-summaries`, { headers })).json()).toEqual(
+    summaryBefore,
   );
   const task = (await get("thread")).tasks[1];
   expect(task.origin).toBe("routine");

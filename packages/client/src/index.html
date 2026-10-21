@@ -13,6 +13,8 @@
     <main class="app-shell">
       <nav class="sidebar" aria-label="Bots">
         <div class="sidebar-head"><h1>Mybots</h1><button id="open-create" disabled class="icon-button" aria-label="Create a Bot" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
+        <input id="bot-filter" type="search" aria-label="Filter Bots by name" placeholder="Search Bots" autocomplete="off">
+        <p id="lifecycle-message" aria-live="polite"></p><button id="retry-lifecycle" type="button" hidden>Retry lifecycle request</button>
         <div id="bots" class="bot-list"><p>Connect to see your Bots.</p></div>
         <button id="open-settings" type="button">Settings</button>
         <p id="connection" role="status">Connecting to Host…</p>
@@ -223,5 +225,14 @@
           </form>
           <p id="create-message" aria-live="polite"></p>
         </section></dialog>
+    <dialog id="bot-actions" aria-labelledby="bot-actions-heading"></dialog>
+    <dialog id="delete-surface" aria-labelledby="delete-heading">
+      <h2 id="delete-heading">Logically delete Bot?</h2>
+      <p id="delete-bot"></p>
+      <p>Logical deletion keeps this Bot's configuration, history, results, workspace, memory, and materials, including copies held by other Bots. It does not restore the Bot or permanently purge retained data.</p>
+      <p>New work is blocked and unfinished owned work is cancelled. Completed external effects are not rolled back.</p>
+      <button id="cancel-delete" type="button">Cancel</button>
+      <button id="confirm-delete" type="button">Confirm logical deletion</button>
+    </dialog>
   </body>
 </html>

@@ -30,13 +30,13 @@ export async function showFeature(page: Page, feature: Feature): Promise<void> {
       await page.getByRole("button", { name: "Create a Bot", exact: true }).click();
   } else if (feature === "overview") {
     if (!(await page.locator('[data-detail-mount="overview"]').isVisible()))
-      await page.getByRole("button", { name: "Bot menu", exact: true }).click();
+      await page.getByRole("button", { name: /^Bot details:/ }).click();
   } else if (feature === "tasks") {
     if (!(await page.locator('[data-detail-mount="tasks"]').isVisible()))
       await page.getByRole("button", { name: "Tasks", exact: true }).click();
   } else if (feature === "files") {
     if (!(await page.locator('[data-detail-mount="files"]').isVisible())) {
-      await page.getByRole("button", { name: "Bot menu", exact: true }).click();
+      await page.getByRole("button", { name: /^Bot details:/ }).click();
       await page.getByRole("button", { name: "Files", exact: true }).click();
     }
   } else if (feature === "search") {

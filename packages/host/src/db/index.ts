@@ -39,6 +39,7 @@ import { delegationFileSchema } from "./migrations/024-delegation-files.ts";
 import { botAvailabilitySchema } from "./migrations/025-bot-availability.ts";
 import { questionNoticeSchema } from "./migrations/026-question-notices.ts";
 import { workNoticeSchema } from "./migrations/027-work-notices.ts";
+import { botSummarySchema } from "./migrations/028-bot-summaries.ts";
 import { RoutineStore } from "./routines.ts";
 import { ThreadStore } from "./threads.ts";
 
@@ -110,7 +111,7 @@ export class HostStore {
       const { user_version } = this.db.prepare("PRAGMA user_version").get() as {
         user_version: number;
       };
-      if (user_version > 27) throw new Error("Unsupported host schema version");
+      if (user_version > 28) throw new Error("Unsupported host schema version");
       if (
         user_version > 0 &&
         user_version < 8 &&
@@ -146,6 +147,7 @@ export class HostStore {
       if (user_version <= 24) this.db.exec(botAvailabilitySchema);
       if (user_version <= 25) this.db.exec(questionNoticeSchema);
       if (user_version <= 26) this.db.exec(workNoticeSchema);
+      if (user_version <= 27) this.db.exec(botSummarySchema);
       this.routines = new RoutineStore(this.db);
       this.seed(configuration, dirname(dirname(file)));
       this.threads = new ThreadStore(this.db);
@@ -313,6 +315,45 @@ export class HostStore {
       })),
       tools: [...(resources?.tools ?? ["read", "write", "edit", "bash"])],
     };
+  }
+
+  botSummaries() {
+    const rows = this.db
+      .prepare(`SELECT a.id, a.name, a.availability,
+      a.created_at AS createdAt, m.id AS messageId, m.role, substr(m.content, 1, 200) AS excerpt,
+      m.created_at AS messageAt,
+      EXISTS (SELECT 1 FROM tasks t JOIN runs r ON r.task_id = t.id
+        WHERE t.thread_id = th.id AND r.state IN ('active', 'stopping')) AS working,
+      (EXISTS (SELECT 1 FROM owner_questions q WHERE q.bot_id = a.id AND q.state IN ('pending', 'expired'))
+       OR EXISTS (SELECT 1 FROM tasks t JOIN runs r ON r.task_id = t.id
+         WHERE t.thread_id = th.id AND (r.state = 'uncertain' OR r.held = 1))
+       OR EXISTS (SELECT 1 FROM delegations d JOIN action_approvals ap ON ap.id = d.id
+         WHERE d.source_bot_id = a.id AND ap.state IN ('pending', 'expired'))) AS attention
+      FROM agent_groups a LEFT JOIN threads th ON th.bot_id = a.id
+      LEFT JOIN thread_messages m ON m.seq = (
+        SELECT msg.seq FROM thread_messages msg JOIN runs r ON r.id = msg.run_id
+        JOIN tasks t ON t.id = r.task_id
+        WHERE msg.thread_id = th.id AND t.origin = 'chat' AND msg.role IN ('user', 'assistant')
+        ORDER BY msg.seq DESC LIMIT 1)
+      ORDER BY COALESCE(m.created_at, a.created_at) DESC, a.id ASC`)
+      .all();
+    return rows.map((row) => ({
+      id: row.id as string,
+      name: row.name as string,
+      availability: row.availability as ManagedBot["availability"],
+      createdAt: row.createdAt as string,
+      activityAt: (row.messageAt ?? row.createdAt) as string,
+      latestMessage: row.messageId
+        ? {
+            id: row.messageId as string,
+            role: row.role as string,
+            excerpt: (row.excerpt as string).replace(/\s+/gu, " ").trim(),
+            createdAt: row.messageAt as string,
+          }
+        : null,
+      working: row.working === 1,
+      attention: row.attention === 1,
+    }));
   }
 
   managedBots(): ManagedBot[] {

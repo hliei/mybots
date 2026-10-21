@@ -57,12 +57,28 @@ test("disable a Bot, enable it without revival, and logically delete it while ke
     await page.getByRole("button", { name: "Pair with Host" }).click();
     await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal", exact: true }).click();
+    await expect(page.locator("#bots")).toContainText("Working");
+    await page.getByRole("searchbox", { name: "Filter Bots by name" }).fill("missing");
+    await expect(page.locator("#bots")).toContainText("No Bots found.");
+    await page.getByRole("searchbox", { name: "Filter Bots by name" }).fill("PERSON");
+    await expect(page.getByRole("button", { name: "Select Personal", exact: true })).toBeVisible();
+    await page.getByRole("searchbox", { name: "Filter Bots by name" }).fill("");
     const original = (await page.locator("#selected-bot").textContent()) ?? "";
-    const originalId = original.match(/Bot ID: (\S+)/)?.[1];
+    const originalId = original.match(/Bot ID: (.*?)Workspace:/)?.[1];
     expect(originalId).toBeTruthy();
     child?.send("fail-stop");
     await showFeature(page, "overview");
-    await page.getByRole("button", { name: "Disable Bot", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Select Personal", exact: true })
+      .click({ button: "right" });
+    await expect(page.getByRole("dialog", { name: "Personal", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Close Bot menu", exact: true }).press("Escape");
+    await expect(page.getByRole("button", { name: "Personal menu", exact: true })).toBeFocused();
+    await page.getByRole("button", { name: "Personal menu", exact: true }).press("Enter");
+    await page
+      .getByRole("dialog", { name: "Personal", exact: true })
+      .getByRole("button", { name: "Disable Bot", exact: true })
+      .click();
     await expect(page.locator("#bot-lifecycle")).toContainText("This Bot is disabled");
     await expect(page.locator("#chat-works")).toContainText("Execution stop unconfirmed");
     await expect(page.getByLabel("Message", { exact: true })).toBeDisabled();
@@ -92,8 +108,28 @@ test("disable a Bot, enable it without revival, and logically delete it while ke
     await expect(page.locator("#selected-bot")).toContainText(retention);
     await showFeature(page, "overview");
     await page.getByRole("button", { name: "Logically delete Bot", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Logically delete Bot?" })).toContainText(
+      retention,
+    );
+    let deletionLost = false;
+    await page.route("**/api/bots/*/delete", async (route) => {
+      if (!deletionLost) {
+        deletionLost = true;
+        await route.fetch();
+        await route.abort();
+      } else await route.continue();
+    });
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Logically delete Bot?" })).toBeHidden();
+    await page.getByRole("button", { name: "Logically delete Bot", exact: true }).click();
+    await page.getByRole("button", { name: "Confirm logical deletion" }).click();
+    await expect(page.locator("#lifecycle-message")).toContainText("unconfirmed");
+    await page.reload();
+    await page.getByRole("button", { name: "Retry lifecycle request", exact: true }).click();
+    await expect(page.locator("#lifecycle-message")).toBeEmpty();
     await expect(page.locator("#bot-lifecycle")).toHaveText(retention);
     await expect(page.locator("#bots")).toContainText("Availability: deleted");
+    await expect(page.locator("#bots")).toContainText("No active Bots.");
     await expect(page.locator("#chat-works")).toContainText("Final: Fresh note");
     await expect(page.getByLabel("Message", { exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Enable Bot" })).toHaveCount(0);
@@ -104,12 +140,15 @@ test("disable a Bot, enable it without revival, and logically delete it while ke
     await page.getByRole("button", { name: "Create Bot", exact: true }).click();
     await expect(page.locator("#selected-bot")).toContainText("A replacement role.");
     const replacement = (await page.locator("#selected-bot").textContent()) ?? "";
-    const replacementId = replacement.match(/Bot ID: (\S+)/)?.[1];
+    const replacementId = replacement.match(/Bot ID: (.*?)Workspace:/)?.[1];
     expect(replacementId).toBeTruthy();
     expect(replacementId).not.toBe(originalId);
     expect(replacement).not.toContain(`Workspace: groups/${originalId}`);
     await showFeature(page, "chat");
-    await page.getByRole("button", { name: "Select Personal" }).first().click();
+    await page
+      .locator(`[data-bot-id="${originalId}"]`)
+      .getByRole("button", { name: "Select Personal", exact: true })
+      .click();
     await expect(page.locator("#bot-lifecycle")).toHaveText(retention);
     await expect(page.locator("#chat-works")).toContainText("Inspect this session");
     expect(errors).toEqual([]);

@@ -100,6 +100,28 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await page.getByRole("button", { name: "Create Bot", exact: true }).click();
     await expect(page.locator("#selected-bot")).toContainText("Writer");
     await expect(page.locator("#selected-bot")).toContainText("deepseek-reasoner");
+    await page.getByRole("button", { name: "Researcher menu", exact: true }).click();
+    await page.getByRole("button", { name: "Close Bot menu", exact: true }).click();
+    await expect(page.locator("#bot-identity-name")).toHaveText("Writer");
+    await page.getByRole("button", { name: "Researcher menu", exact: true }).click();
+    await page
+      .getByRole("dialog", { name: "Researcher", exact: true })
+      .getByRole("button", { name: "Configuration", exact: true })
+      .click();
+    await expect(page.locator("#settings-bot")).toHaveText("Researcher");
+    expect(
+      (
+        await page.request.post(new URL("/api/bots/personal/thread/messages", ready.url).href, {
+          data: { requestId: "menu-focus-update", text: "<b>Menu focus update</b>" },
+        })
+      ).status(),
+    ).toBe(202);
+    await expect(page.locator('[data-bot-id="personal"] .bot-preview')).toContainText(
+      "<b>Menu focus update</b>",
+    );
+    await expect(page.locator('[data-bot-id="personal"] .bot-preview b')).toHaveCount(0);
+    await page.getByRole("button", { name: "Close settings", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Researcher menu", exact: true })).toBeFocused();
     await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Researcher", exact: true }).click();
     await expect(page.locator("#selected-bot")).toContainText("Investigate sources.");

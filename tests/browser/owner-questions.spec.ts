@@ -64,6 +64,7 @@ test("answers a persistent question through its own card after reload and Host r
     await page.getByRole("button", { name: "Pair with Host" }).click();
     await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
+    await expect(page.locator("#bots")).toContainText("Needs attention");
     await expect(page.locator("#chat-works")).toContainText("Execution: waiting");
     await showFeature(page, "tasks");
     await expect(page.getByLabel("Answer to Which city?")).toBeVisible();

@@ -9,6 +9,7 @@ import type { LocalAccess } from "./local-access.ts";
 
 const ASSETS = new Map([
   ["/", ["index.html", "text/html; charset=utf-8"]],
+  ["/bot-navigation.js", ["bot-navigation.js", "text/javascript; charset=utf-8"]],
   ["/shell.js", ["shell.js", "text/javascript; charset=utf-8"]],
   ["/main.js", ["main.js", "text/javascript; charset=utf-8"]],
   ["/history.js", ["history.js", "text/javascript; charset=utf-8"]],
@@ -53,6 +54,11 @@ export async function serveClient(
     const snapshot = await host.clientStatus();
     response.writeHead(200, { "Content-Type": "application/json" });
     response.end(JSON.stringify(snapshot));
+    return;
+  }
+  if (path === "/api/bot-summaries" && request.method === "GET") {
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ bots: host.botSummaries() }));
     return;
   }
   if (path === "/api/bot-options" && request.method === "GET") {
@@ -778,6 +784,7 @@ export async function serveClient(
     path === "/api/pair" ||
     path === "/api/bots" ||
     path === "/api/bot-options" ||
+    path === "/api/bot-summaries" ||
     memoryRoute ||
     memoryCoreRoute ||
     memoryTopicRoute

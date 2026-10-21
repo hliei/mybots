@@ -368,7 +368,7 @@ it("keeps an exhausted notice failed across restart until the owner resends it",
  eligibility, state, attempts, next_attempt_at, last_error, accepted_at, created_at, updated_at)
  SELECT question_id, bot_id, task_id, run_id, summary, locator, eligibility, state, attempts,
  next_attempt_at, last_error, accepted_at, created_at, updated_at FROM notices;
- DROP TABLE notices; ALTER TABLE runs DROP COLUMN collaboration_waited;`);
+ DROP INDEX owner_questions_bot_state; DROP INDEX thread_messages_latest; DROP INDEX tasks_thread; DROP INDEX runs_task_state; DROP TABLE notices; ALTER TABLE runs DROP COLUMN collaboration_waited;`);
   } finally {
     previous.close();
   }

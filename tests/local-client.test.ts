@@ -19,6 +19,7 @@ afterEach(async () => {
   await host?.stop();
   host = undefined;
   if (root) await rm(root, { recursive: true, force: true });
+  vi.useRealTimers();
 });
 
 async function start(driver = new MailboxDriver(), readOnly = false) {
@@ -107,6 +108,7 @@ it("rejects invalid credential, Host and Origin on HTTP and the existing live-ev
       ["/api/pair", "POST"],
       ["/api/bots", "POST"],
       ["/api/bots", "GET"],
+      ["/api/bot-summaries", "GET"],
       ["/api/bot-options", "GET"],
       ["/api/sessions", "GET"],
       ["/api/sessions", "POST"],
@@ -194,4 +196,73 @@ it("shows failed container startup and pending input without claiming successful
       ],
     });
   });
+});
+
+it("reads bounded ordinary chat summaries in activity order across Host restart", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-21T00:00:00Z"));
+  const base = await start();
+  const credential = (await readFile(join(root, "data", "client-credential"), "utf8")).trim();
+  const headers = { Authorization: `Bearer ${credential}`, "Content-Type": "application/json" };
+  const post = (path: string, body: unknown) =>
+    fetch(`${base}${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+  const created = await post("/api/bots", {
+    requestId: "summary-bot",
+    name: "Research",
+    instructions: "Research carefully.",
+    model: { provider: "deepseek", id: "deepseek-chat" },
+    tools: [],
+  });
+  const { bot } = await created.json();
+  const read = async (url = base) => {
+    const response = await fetch(`${url}/api/bot-summaries`, { headers });
+    expect(response.status).toBe(200);
+    return (await response.json()).bots;
+  };
+  expect(await read()).toMatchObject([
+    { id: bot.id, latestMessage: null, working: false, attention: false },
+    { id: "personal", latestMessage: null, activityAt: "2026-10-21T00:00:00.000Z" },
+  ]);
+  vi.setSystemTime(new Date("2026-10-21T01:00:00Z"));
+  await post("/api/bots/personal/thread/messages", {
+    requestId: "summary-message",
+    text: `<b>Hello</b> ${"x".repeat(400)}`,
+  });
+  await vi.waitFor(async () =>
+    expect((await read())[0]).toMatchObject({
+      id: "personal",
+      latestMessage: { role: "assistant", excerpt: expect.stringContaining("Reply: <b>Hello</b>") },
+      working: false,
+    }),
+  );
+  const before = await read();
+  expect(before[0].latestMessage.excerpt.length).toBeLessThanOrEqual(200);
+  expect(before[0].activityAt).toBe(before[0].latestMessage.createdAt);
+  expect(before[0].latestMessage.id).toEqual(expect.any(String));
+  await post("/api/bots/personal/settings", {
+    requestId: "summary-settings",
+    instructions: "A new role does not change activity.",
+    model: { provider: "deepseek", id: "deepseek-chat" },
+    tools: [],
+  });
+  expect(await read()).toEqual(before);
+  await post(`/api/bots/${bot.id}/disable`, { requestId: "summary-disable" });
+  expect((await read())[1]).toMatchObject({
+    id: bot.id,
+    availability: "disabled",
+    activityAt: before[1].activityAt,
+  });
+  await channel?.close();
+  await host?.stop();
+  const { configuration } = await loadHostSettings("examples/host/host.json");
+  host = await Host.start({ root, configuration, driver: new MailboxDriver() });
+  channel = await WebSocketChannel.listen({ root, host, configuration, port: 0 });
+  expect(await read(`http://127.0.0.1:${channel.address.port}`)).toEqual([
+    before[0],
+    { ...before[1], availability: "disabled" },
+  ]);
 });

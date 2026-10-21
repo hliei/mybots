@@ -374,6 +374,23 @@ selectors and available tool names. `GET /api/bots` returns `{ bots }` with each
 Bot's `id`, `name`, `workspace` (relative to the installation root), `instructions`,
 `model` selector and `tools`. Endpoints and credentials are not public settings.
 
+`GET /api/bot-summaries` returns authenticated `{ bots }` for navigation, including
+stable identity, availability, creation and activity timestamps, a latest ordinary
+chat message (`id`, `role`, plain-text `excerpt` of at most 200 characters, and
+`createdAt`), plus `working` and `attention` booleans. Empty Threads return a null
+message and use Bot creation time for activity. Rows sort by activity descending,
+then Bot ID ascending. Routine/delegation output, selection and configuration
+saves do not advance chat activity. Active/stopping Runs mark working; pending or
+expired questions, pending or expired action approvals and uncertain/held Runs mark attention.
+This query reads SQLite originals without opening SDK sessions. Schema version 28
+adds read indexes for these lookups and retains existing records and file paths.
+
+The sidebar filters names locally and separates disabled Bots and retained deleted
+identities. Row right-click and ellipsis menus expose inspection and applicable
+lifecycle actions. Logical deletion requires a retention disclosure and confirmation.
+An unconfirmed lifecycle response retains its exact Bot, operation and request ID
+with an explicit retry control, including after reload and logical deletion.
+
 `POST /api/bots` accepts this creation payload:
 
 ```json
