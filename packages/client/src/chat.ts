@@ -8,6 +8,7 @@ import {
   showRunHistory,
 } from "./history.ts";
 import { showRoutines } from "./routines.ts";
+import { openDetail } from "./shell.ts";
 
 interface Outcome {
   kind: string;
@@ -431,6 +432,11 @@ let version = 0;
 let refreshTimer = 0;
 let locatedQuestion = false;
 let sending = false;
+let hostAvailable = false;
+export function setHostAvailable(value: boolean): void {
+  hostAvailable = value;
+  controls();
+}
 let pending: Pending | undefined;
 const answerDrafts = new Map<string, string>();
 try {
@@ -440,11 +446,13 @@ try {
   /* Unreadable browser state has no request to recover. */
 }
 function controls(): void {
-  const admitting = availability === "active";
+  const admitting = !!botId && availability === "active" && hostAvailable;
   for (const node of form.querySelectorAll<
     HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement
   >("input, textarea, select, button"))
     node.disabled = !admitting || sending || !!pending;
+  if (availability === "active" && !sending && !pending) text.disabled = false;
+  resetBackground.disabled = !admitting || sending || !!pending;
   retry.hidden = !pending;
   retry.disabled = sending || !admitting;
 }
@@ -461,7 +469,7 @@ export async function showChat(
     text.value = "";
     target.replaceChildren();
     works.replaceChildren();
-    messages.replaceChildren();
+    messages.replaceChildren(paragraph("Loading conversation…"));
     selected.textContent = "";
   }
   panel.hidden = !botId;
@@ -697,6 +705,7 @@ export async function showChat(
         ),
       ].find((section) => location.hash === `#${encodeURIComponent(section.id)}`);
       if (target) {
+        openDetail("tasks");
         target.tabIndex = -1;
         target.focus();
         locatedQuestion = true;
@@ -964,7 +973,7 @@ function runButton(
   return button;
 }
 async function submit(newTask = false): Promise<void> {
-  if (sending || !botId) return;
+  if (sending || !botId || !hostAvailable) return;
   sending = true;
   try {
     if (!pending) {
@@ -1107,7 +1116,7 @@ form.addEventListener("submit", (event) => {
 });
 retry.addEventListener("click", () => void submit());
 resetBackground.addEventListener("click", () => {
-  if (!botId || sending || pending) return;
+  if (!botId || !hostAvailable || availability !== "active" || sending || pending) return;
   pending = { botId, requestId: crypto.randomUUID(), operation: "reset", text: "" };
   localStorage.setItem(pendingKey, JSON.stringify(pending));
   void submit();

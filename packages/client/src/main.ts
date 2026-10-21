@@ -1,5 +1,6 @@
-import { showChat } from "./chat.ts";
+import { setHostAvailable, showChat } from "./chat.ts";
 import { showMemory } from "./memory.ts";
+import { closeCreation, setShellBot } from "./shell.ts";
 import { type SkillSelection, selectedSkills, showSkills } from "./skills.ts";
 
 interface Snapshot {
@@ -272,34 +273,18 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     const article = document.createElement("article");
     const heading = document.createElement("h3");
     heading.textContent = bot.name;
-    const identity = document.createElement("p");
-    identity.textContent = `Bot ID: ${bot.id}`;
+    article.className = "bot-row";
+    article.classList.toggle("selected", selectedId === bot.id);
+    const avatar = document.createElement("span");
+    avatar.className = "avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    avatar.textContent = bot.name.slice(0, 1).toLocaleUpperCase();
     const availability = document.createElement("p");
-    const managedBot = managed.find((item) => item.id === bot.id);
-    availability.textContent = `Availability: ${managedBot?.availability ?? "active"}`;
-    article.append(heading, identity, availability);
-    const sessions = snapshot.sessions.filter((session) => session.botId === bot.id);
-    if (sessions.length === 0) {
-      const empty = document.createElement("p");
-      empty.textContent = "No Runs yet.";
-      article.append(empty);
-    } else {
-      const list = document.createElement("ul");
-      for (const session of sessions) {
-        const item = document.createElement("li");
-        const id = document.createElement("code");
-        id.className = "session-id";
-        id.textContent = session.id;
-        const progress = document.createElement("span");
-        progress.textContent = `Destination: ${session.destinationId} · Run: ${session.status} · Container: ${session.containerStatus}. Inputs: ${session.inputs.pending} pending, ${session.inputs.processing} processing, ${session.inputs.acknowledged} acknowledged, ${session.inputs.failed} failed.`;
-        item.append(id, progress);
-        list.append(item);
-      }
-      article.append(list);
-    }
+    availability.textContent = `Availability: ${managed.find((item) => item.id === bot.id)?.availability ?? "active"}`;
+    article.append(avatar, heading, availability);
     const choose = document.createElement("button");
     choose.type = "button";
-    choose.textContent = `Select ${bot.name}`;
+    choose.setAttribute("aria-label", `Select ${bot.name}`);
     choose.setAttribute("aria-pressed", String(selectedId === bot.id));
     choose.addEventListener("click", () => {
       selectBot(bot.id);
@@ -309,9 +294,17 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     bots.append(article);
   }
   const active = managed.find((bot) => bot.id === selectedId);
+  setShellBot(active);
   selected.hidden = !active;
   selected.replaceChildren();
+  const execution = document.getElementById("host-execution") as HTMLElement;
+  execution.replaceChildren();
   if (active) {
+    for (const session of snapshot.sessions.filter((item) => item.botId === active.id)) {
+      const line = document.createElement("p");
+      line.textContent = `Run ${session.id} · Destination: ${session.destinationId} · Run: ${session.status} · Container: ${session.containerStatus}. Inputs: ${session.inputs.pending} pending, ${session.inputs.processing} processing, ${session.inputs.acknowledged} acknowledged, ${session.inputs.failed} failed.`;
+      execution.append(line);
+    }
     const heading = document.createElement("h2");
     heading.textContent = active.name;
     selected.append(heading);
@@ -452,6 +445,8 @@ async function load(): Promise<void> {
   try {
     const response = await fetch("/api/status", { cache: "no-store" });
     if (response.status === 401) {
+      setHostAvailable(false);
+      setShellBot(undefined);
       pairing.hidden = false;
       status.hidden = true;
       connection.textContent = "Pair this browser to inspect your local Host.";
@@ -478,6 +473,8 @@ async function load(): Promise<void> {
       !isOptions(options)
     )
       throw new Error();
+    setHostAvailable(true);
+    (document.getElementById("open-create") as HTMLButtonElement).disabled = false;
     renderOptions(options);
     render(snapshot, managed.bots);
     pairing.hidden = true;
@@ -486,6 +483,7 @@ async function load(): Promise<void> {
     (document.querySelector<HTMLElement>("#updated") as HTMLElement).textContent =
       `Last checked ${new Date().toLocaleTimeString()}`;
   } catch {
+    setHostAvailable(false);
     connection.textContent =
       "Host unavailable. Displayed status may be stale. Keep the Host running; this page will reconnect automatically.";
   } finally {
@@ -568,6 +566,7 @@ createForm.addEventListener("submit", async (event) => {
     createButton.textContent = "Create Bot";
     createForm.reset();
     createMessage.textContent = `Created ${result.bot.name}.`;
+    closeCreation();
     await load();
   } catch {
     createMessage.textContent = pending

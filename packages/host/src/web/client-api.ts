@@ -9,6 +9,7 @@ import type { LocalAccess } from "./local-access.ts";
 
 const ASSETS = new Map([
   ["/", ["index.html", "text/html; charset=utf-8"]],
+  ["/shell.js", ["shell.js", "text/javascript; charset=utf-8"]],
   ["/main.js", ["main.js", "text/javascript; charset=utf-8"]],
   ["/history.js", ["history.js", "text/javascript; charset=utf-8"]],
   ["/routines.js", ["routines.js", "text/javascript; charset=utf-8"]],

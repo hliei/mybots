@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RunnerMailbox } from "@mybots/mailbox/node";
 import { expect, test } from "@playwright/test";
+import { showFeature } from "./navigation.ts";
 
 test("downloads a selected result unchanged after workspace edits and a fresh Host", async ({
   page,
@@ -60,16 +61,19 @@ test("downloads a selected result unchanged after workspace edits and a fresh Ho
     await page.goto(ready.url);
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
     const link = page.getByRole("link", {
       name: `Download report.txt (${original.length} bytes)`,
       exact: true,
     });
+    await showFeature(page, "tasks");
     await expect(link).toBeVisible();
     await expect(page.locator("#chat-works")).toContainText("Report ready");
     await expect(page.locator("#chat-works")).toContainText("Bot: personal · Task:");
     await writeFile(workspaceFile, "Replaced working report\n");
     async function download() {
+      await showFeature(page, "tasks");
       const [saved] = await Promise.all([page.waitForEvent("download"), link.click()]);
       expect(saved.suggestedFilename()).toBe("report.txt");
       const target = join(root, "downloaded-report.txt");
@@ -82,7 +86,9 @@ test("downloads a selected result unchanged after workspace edits and a fresh Ho
     await stop();
     await start(Number(new URL(ready.url).port));
     await page.reload();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
+    await showFeature(page, "tasks");
     await expect(link).toBeVisible();
     await download();
     expect(errors).toEqual([]);

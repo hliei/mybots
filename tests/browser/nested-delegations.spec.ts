@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HostMailbox, RunnerMailbox } from "@mybots/mailbox/node";
 import { expect, test } from "@playwright/test";
+import { showFeature } from "./navigation.ts";
 
 for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as const) {
   test(`shows two delegation levels after restart and handles ${outcome} work`, async ({
@@ -81,10 +82,14 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
       await page.goto(ready.url);
       await page.getByLabel("Connection credential").fill(ready.credential);
       await page.getByRole("button", { name: "Pair with Host" }).click();
+      await showFeature(page, "chat");
       await page.getByRole("button", { name: "Select Personal" }).click();
       await expect(page.getByLabel("Target Bot")).toContainText("deny");
+      await showFeature(page, "Collaboration");
       await page.getByLabel("Target Bot").selectOption(writerId);
+      await showFeature(page, "Collaboration");
       await page.getByLabel("Permission").selectOption("allow");
+      await showFeature(page, "Collaboration");
       await page.getByRole("button", { name: "Save delegation permission" }).click();
       await expect(page.locator("#collaboration-notice")).toContainText(
         `Delegation from this Bot to ${writerId} is allow.`,
@@ -111,15 +116,20 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
       await expect(page.locator("#chat-works")).toContainText("Selected browser text");
       await expect(page.locator("#chat-works")).toContainText(writerId);
       await page.reload();
+      await showFeature(page, "chat");
       await page.getByRole("button", { name: "Select Personal" }).click();
       await expect(page.locator("#chat-works")).toContainText("Delegation browser-child");
+      await showFeature(page, "chat");
       await page.getByRole("button", { name: "Select Writer" }).click();
       await expect(page.locator("#chat-works")).toContainText("Origin: delegation");
       await expect(page.locator("#chat-works")).toContainText("Selected browser text");
+      await showFeature(page, "Collaboration");
       await page.getByLabel("Target Bot").selectOption(reviewerId);
+      await showFeature(page, "Collaboration");
       await page
         .getByLabel("Permission")
         .selectOption(outcome === "uncertain" ? "ask-each-time" : "allow");
+      await showFeature(page, "Collaboration");
       await page.getByRole("button", { name: "Save delegation permission" }).click();
       await expect(page.locator("#collaboration-notice")).toContainText(
         `Delegation from this Bot to ${reviewerId} is ${outcome === "uncertain" ? "ask-each-time" : "allow"}.`,
@@ -151,6 +161,7 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
       );
       if (outcome === "uncertain") {
         const card = page.locator('[data-approval-id="browser-review"]');
+        await showFeature(page, "tasks");
         await card.getByRole("button", { name: "Approve action" }).click();
         await expect(card).toContainText("executed");
         const detail = await (
@@ -162,29 +173,39 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
           (row: { id: string }) => row.id === "browser-review",
         );
       }
+      await showFeature(page, "chat");
       await page.getByRole("button", { name: "Select Reviewer" }).click();
       await expect(page.locator("#chat-works")).toContainText("Hold slot");
       await stop();
       await start(Number(new URL(ready.url).port));
       await page.reload();
+      await showFeature(page, "chat");
       await page.getByRole("button", { name: "Select Writer" }).click();
       await expect(page.locator("#chat-works")).toContainText("Execution: waiting");
       await expect(page.locator("#chat-works")).toContainText("Delegation browser-review");
+      await showFeature(page, "tasks");
       await page.locator("#chat-works").screenshot({
         path: join(tmpdir(), "mybots-nested-delegation.png"),
       });
       await expect(page.locator("#chat-works")).toContainText("Origin: delegation");
       if (outcome === "revoke" || outcome === "revoke-uncertain") {
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Reviewer" }).click();
         await expect(
           page.locator("#chat-works article").filter({ hasText: `Run ID: ${review.childRunId}` }),
         ).toContainText("Execution: active", { timeout: 10000 });
         const auth = { Authorization: `Bearer ${ready.credential}` };
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Personal" }).click();
+        await showFeature(page, "tasks");
         await expect(page.locator('[data-delegation-id="browser-child"]')).toBeVisible();
+        await showFeature(page, "Collaboration");
         await page.getByLabel("Target Bot").selectOption(writerId);
+        await showFeature(page, "Collaboration");
         await page.getByLabel("Permission").focus();
+        await showFeature(page, "Collaboration");
         await page.getByLabel("Permission").selectOption("ask-each-time");
+        await showFeature(page, "Collaboration");
         await page.getByRole("button", { name: "Save delegation permission" }).click();
         await expect(page.locator("#collaboration-notice")).toContainText(
           `to ${writerId} is ask-each-time.`,
@@ -226,8 +247,11 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
         if (outcome === "revoke-uncertain")
           new RunnerMailbox(directory).acknowledge(input.id, "completed");
         child?.send("fail-stop");
+        await showFeature(page, "Collaboration");
         await page.getByLabel("Permission").focus();
+        await showFeature(page, "Collaboration");
         await page.getByLabel("Permission").selectOption("deny");
+        await showFeature(page, "Collaboration");
         await page.getByRole("button", { name: "Save delegation permission" }).click();
         await expect(page.locator("#collaboration-notice")).toContainText(
           `to ${writerId} is deny.`,
@@ -237,8 +261,10 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
         await expect(page.locator('[data-delegation-id="browser-child"]')).toContainText(
           "Collaboration revoked",
         );
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Writer" }).click();
         await expect(page.locator("#chat-works")).toContainText("Owned child stop is unconfirmed.");
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Reviewer" }).click();
         await expect(page.locator("#chat-works")).toContainText("Execution stop unconfirmed");
         await expect(page.locator("#chat-works")).toContainText("Execution: queued");
@@ -247,6 +273,7 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
         await stop();
         await start(Number(new URL(ready.url).port));
         await page.reload();
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Reviewer" }).click();
         const leaf = page
           .locator("#chat-works article")
@@ -259,8 +286,10 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
           page.locator("#chat-works article").filter({ hasText: `Run ID: ${queued.runId}` }),
         ).toContainText("Execution: active", { timeout: 10000 });
         new RunnerMailbox(directory).reply(input, "Late evidence after revocation", "message");
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Refresh status" }).click();
         await expect(leaf).toContainText("Late result: Late evidence after revocation");
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Personal" }).click();
         await expect(page.locator('[data-delegation-id="browser-child"]')).toContainText(
           "Collaboration revoked",
@@ -279,38 +308,50 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
           ).toContainText("Execution: succeeded");
         }
       } else if (outcome === "cancel") {
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Personal" }).click();
+        await showFeature(page, "tasks");
         await page.getByRole("button", { name: "Stop run", exact: true }).click();
         await expect(page.locator("#chat-works")).toContainText("Execution: closed");
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Writer" }).click();
         await expect(page.locator("#chat-works")).toContainText("Execution: closed");
         await expect(page.locator('[data-delegation-id="browser-review"]')).toContainText(
           "cancelled",
         );
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Reviewer" }).click();
         await expect(page.locator("#chat-works")).toContainText("Execution: closed");
         await expect(page.locator("#chat-works")).toContainText("Hold slot");
       } else {
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Reviewer" }).click();
         await expect(page.locator("#chat-works")).toContainText("Hold slot");
         const directory = join(root, "data", "sessions", reviewerId, review.childRunId);
         const input = new HostMailbox(directory).inputs()[0];
         if (!input) throw new Error("Reviewer input is missing");
         new RunnerMailbox(directory).acknowledge(input.id, "completed");
+        await showFeature(page, "tasks");
         await page.getByRole("button", { name: "Stop run", exact: true }).click();
         await expect(page.locator("#chat-works")).toContainText("Execution: uncertain");
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Personal" }).click();
         await expect(page.locator("#chat-works")).toContainText("Owned child outcome is uncertain");
         await expect(page.locator("#chat-works")).toContainText("Execution: waiting");
+        await showFeature(page, "tasks");
         await page.locator("#chat-works").screenshot({
           path: join(tmpdir(), "mybots-nested-uncertainty.png"),
         });
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Writer" }).click();
         await expect(page.locator("#chat-works")).toContainText("Owned child outcome is uncertain");
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Reviewer" }).click();
+        await showFeature(page, "tasks");
         await page.getByRole("button", { name: "Close uncertain run", exact: true }).click();
         await expect(page.locator("#chat-works")).toContainText("Execution: closed");
         child?.send("complete");
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Personal" }).click();
         await expect(page.locator("#chat-works")).toContainText("Execution: succeeded");
         await expect(page.locator("#chat-works")).not.toContainText(

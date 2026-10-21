@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RunnerMailbox } from "@mybots/mailbox/node";
 import { expect, test } from "@playwright/test";
+import { showFeature } from "./navigation.ts";
 
 test("repairs a Bot topic and resends the question notice without changing the Run", async ({
   page,
@@ -61,6 +62,7 @@ test("repairs a Bot topic and resends the question notice without changing the R
     await page.goto(ready.url);
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
     const works = page.locator("#chat-works");
     await expect(works).toContainText("Execution: waiting");
@@ -71,9 +73,11 @@ test("repairs a Bot topic and resends the question notice without changing the R
       `Local client: /?bot=personal&run=${ready.sessionId}#question-browser-city`,
     );
     child?.send("telegram-mode:ready");
+    await showFeature(page, "tasks");
     await page.getByRole("button", { name: "Repair Telegram topic" }).click();
     await expect(works).toContainText("Telegram topic: mapped · 71");
     await expect(works).toContainText("Telegram topic: mapped");
+    await showFeature(page, "tasks");
     await page.getByRole("button", { name: "Resend Telegram notice" }).click();
     await expect(works).toContainText("Telegram notice: delivered · 1 of 3 attempts");
     await expect(works).toContainText("This is not a read receipt");
@@ -101,6 +105,7 @@ test("repairs a Bot topic and resends the question notice without changing the R
     await stop();
     await start(Number(new URL(ready.url).port));
     await page.reload();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
     await expect(works).toContainText("Telegram notice: delivered · 1 of 3 attempts");
     await expect(works).toContainText("Execution: waiting");
@@ -156,14 +161,17 @@ test("inspects and resends a Routine outcome notice and follows its work locator
     await page.goto(ready.url);
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
     const works = page.locator("#chat-works");
     await expect(works).toContainText(`Routine: ${routine.id}`);
     await expect(works).toContainText("Work succeeded.");
     await expect(works).toContainText("Telegram notice: failed");
     child.send("telegram-mode:ready");
+    await showFeature(page, "tasks");
     await page.getByRole("button", { name: "Repair Telegram topic" }).click();
     await expect(works).toContainText("Telegram topic: mapped");
+    await showFeature(page, "tasks");
     await page.getByRole("button", { name: "Resend Telegram notice" }).click();
     await expect(works).toContainText("Telegram notice: delivered · 1 of 3 attempts");
     await expect(works).toContainText("This is not a read receipt");
@@ -253,6 +261,7 @@ test("inspects and resends a Routine outcome notice and follows its work locator
       "href",
       `/?bot=personal&run=${source.runId}#task-${source.taskId}`,
     );
+    await showFeature(page, "tasks");
     await approval.getByRole("button", { name: "Deny action" }).click();
     await expect(works).toContainText("Owner decision: deny");
     await works.getByRole("link", { name: /Source Bot: personal/ }).click();

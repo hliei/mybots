@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { RunnerMailbox } from "@mybots/mailbox/node";
 import { expect, test } from "@playwright/test";
 import type { Host } from "../../packages/host/src/host.ts";
+import { showFeature } from "./navigation.ts";
 
 type ThreadDetail = Awaited<ReturnType<Host["threadDetail"]>>;
 
@@ -93,14 +94,18 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
     return response.json();
   }
   async function createBot(name: string, role: string, memory: string) {
+    await showFeature(page, "create");
     await page.getByLabel("Bot name", { exact: true }).fill(name);
     await page.getByLabel("Role instructions", { exact: true }).fill(role);
     await page.getByLabel("Model", { exact: true }).selectOption("deepseek/deepseek-chat");
     await page.getByRole("button", { name: "Create Bot", exact: true }).click();
     await expect(page.locator("#selected-bot")).toContainText(role);
+    await showFeature(page, "overview");
     const id = (await page.locator("#selected-bot").innerText()).match(/Bot ID: (\S+)/)?.[1];
     if (!id) throw new Error("Created Bot identity missing");
+    await showFeature(page, "Memory");
     await page.getByLabel("Memory index", { exact: true }).fill(memory);
+    await showFeature(page, "Memory");
     await page.getByRole("button", { name: "Save memory index", exact: true }).click();
     await expect(page.locator("#memory-message")).toContainText("Saved");
     return id;
@@ -145,21 +150,29 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
     );
     expect(writer).not.toBe(researcher);
     phase = "connected";
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Researcher", exact: true }).click();
     await expect(page.getByLabel("Memory index", { exact: true })).toHaveValue(
       "Keep source citations.",
     );
+    await showFeature(page, "Collaboration");
     await page.getByLabel("Target Bot", { exact: true }).selectOption(writer);
+    await showFeature(page, "Collaboration");
     await page.getByLabel("Permission", { exact: true }).selectOption("ask-each-time");
+    await showFeature(page, "Collaboration");
     await page.getByRole("button", { name: "Save delegation permission" }).click();
     await expect(page.locator("#collaboration-notice")).toContainText("ask-each-time");
+    await showFeature(page, "Routines");
     await page
       .getByLabel("Routine instructions", { exact: true })
       .fill("Research and commission a report");
+    await showFeature(page, "Routines");
     await page
       .getByLabel("Run at (ISO instant with offset)", { exact: true })
       .fill("2026-10-21T09:00:00+08:00");
+    await showFeature(page, "Routines");
     await page.getByLabel("Schedule timezone", { exact: true }).fill("Asia/Shanghai");
+    await showFeature(page, "Routines");
     await page.getByRole("button", { name: "Create one-shot Routine", exact: true }).click();
     await expect(page.locator("#routine-list article")).toHaveCount(1);
     await expect(page.locator("#chat-works article")).toHaveCount(0);
@@ -202,8 +215,10 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
     await page.reload();
     await expect(approval).toContainText("pending");
     phase = "connected";
+    await showFeature(page, "tasks");
     await approval.getByRole("button", { name: "Approve action", exact: true }).click();
     await expect(approval).toContainText("executed");
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Writer", exact: true }).click();
     await expect(page.getByLabel("Memory index", { exact: true })).toHaveValue(
       "Use short paragraphs.",
@@ -241,11 +256,14 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
     await stop();
     await start(port, "2026-10-21T02:00:00Z");
     await page.reload();
+    await showFeature(page, "tasks");
     await expect(page.getByLabel("Answer to Which report style?", { exact: true })).toBeVisible();
     phase = "connected";
+    await showFeature(page, "tasks");
     await page
       .getByLabel("Answer to Which report style?", { exact: true })
       .fill("Concise with citations");
+    await showFeature(page, "tasks");
     await page.getByRole("button", { name: "Answer question", exact: true }).click();
     await expect(childCard).toContainText("Owner answer: Concise with citations");
     await expect(childCard).toContainText("Execution: active");
@@ -268,6 +286,7 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
     await writeFile(workingFile, "# Later working revision\n");
     child?.send("complete");
     await expect(childCard).toContainText("Outcome: succeeded");
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Researcher", exact: true }).click();
     await expect(parentCard).toContainText("Outcome: succeeded");
     await expect(parentCard).toContainText("Telegram notice: pending");
@@ -291,21 +310,25 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
     phase = "connected";
     await expect(parentCard).toContainText("Telegram notice: delivered");
     expect((await detail(researcher)).tasks).toHaveLength(1);
+    await showFeature(page, "tasks");
     await parentCard.getByRole("button", { name: "Inspect Run evidence" }).click();
     await page.getByRole("button", { name: "Run Attempts", exact: true }).click();
     await expect(page.locator("#run-history")).toContainText(parentRun.attempts[0]?.id as string);
     await expect(page.locator("#run-history")).toContainText(
       settled[0]?.runs[0]?.attempts[1]?.id as string,
     );
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Writer", exact: true }).click();
     await expect(childCard).toContainText("Report ready");
     await expect(childCard).toContainText(
       `Bot: ${writer} · Task: ${childTask.id} · Run: ${childRun.id}`,
     );
+    await showFeature(page, "tasks");
     const [download] = await Promise.all([page.waitForEvent("download"), downloadLink.click()]);
     const saved = join(root, "downloaded-report.md");
     await download.saveAs(saved);
     expect(await readFile(saved)).toEqual(original);
+    await showFeature(page, "tasks");
     await childCard.getByRole("button", { name: "Inspect Run evidence" }).click();
     await page.getByRole("button", { name: "Run inputs", exact: true }).click();
     await expect(page.locator("#run-history")).toContainText("Draft the approved report");
@@ -325,13 +348,14 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
       ),
     ).toBe(false);
     await page.setViewportSize({ width: 1280, height: 900 });
+    await showFeature(page, "tasks");
     await childCard.scrollIntoViewIfNeeded();
     await page.screenshot({ path: "/tmp/mybots-product-acceptance-desktop.png" });
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1920, height: 1080 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
-    await page.screenshot({ path: "/tmp/mybots-product-acceptance-mobile.png" });
+    await page.screenshot({ path: "/tmp/mybots-product-acceptance-wide.png" });
     expect(errors).toEqual([]);
   } finally {
     try {

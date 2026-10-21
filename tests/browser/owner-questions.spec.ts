@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RunnerMailbox } from "@mybots/mailbox/node";
 import { expect, test } from "@playwright/test";
+import { showFeature } from "./navigation.ts";
 
 test("answers a persistent question through its own card after reload and Host restart", async ({
   page,
@@ -61,15 +62,20 @@ test("answers a persistent question through its own card after reload and Host r
     await page.goto(ready.url);
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
     await expect(page.locator("#chat-works")).toContainText("Execution: waiting");
+    await showFeature(page, "tasks");
     await expect(page.getByLabel("Answer to Which city?")).toBeVisible();
     await page.reload();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
+    await showFeature(page, "tasks");
     await expect(page.getByLabel("Answer to Which city?")).toBeVisible();
     await stop();
     await start(Number(new URL(ready.url).port));
     await page.reload();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
     let dropped = false;
     await page.route("**/questions/browser-city/answer", async (route) => {
@@ -82,11 +88,15 @@ test("answers a persistent question through its own card after reload and Host r
       expect(response.status()).toBe(202);
       await route.abort("failed");
     });
+    await showFeature(page, "tasks");
     await page.getByLabel("Answer to Which city?").fill("Hangzhou");
+    await showFeature(page, "tasks");
     await page.getByRole("button", { name: "Answer question", exact: true }).click();
     await expect(page.locator("#chat-message")).toContainText("response unconfirmed");
     await page.reload();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Retry chat request", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "Retry chat request", exact: true }),

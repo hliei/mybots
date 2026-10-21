@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RunnerMailbox } from "@mybots/mailbox/node";
 import { expect, test } from "@playwright/test";
+import { showFeature } from "./navigation.ts";
 
 for (const action of ["allow", "approve", "deny", "expire"] as const) {
   test(`shows ${action} delegation after reload and Host restart`, async ({ page }) => {
@@ -64,12 +65,16 @@ for (const action of ["allow", "approve", "deny", "expire"] as const) {
       await page.goto(ready.url);
       await page.getByLabel("Connection credential").fill(ready.credential);
       await page.getByRole("button", { name: "Pair with Host" }).click();
+      await showFeature(page, "chat");
       await page.getByRole("button", { name: "Select Personal" }).click();
       await expect(page.getByLabel("Target Bot")).toContainText("deny");
+      await showFeature(page, "Collaboration");
       await page.getByLabel("Target Bot").selectOption(writerId);
+      await showFeature(page, "Collaboration");
       await page
         .getByLabel("Permission")
         .selectOption(action === "allow" ? "allow" : "ask-each-time");
+      await showFeature(page, "Collaboration");
       await page.getByRole("button", { name: "Save delegation permission" }).click();
       await expect(page.locator("#collaboration-notice")).toContainText(
         `Delegation from this Bot to ${writerId} is ${action === "allow" ? "allow" : "ask-each-time"}.`,
@@ -96,9 +101,11 @@ for (const action of ["allow", "approve", "deny", "expire"] as const) {
       await expect(page.locator("#chat-works")).toContainText("Selected browser text");
       await expect(page.locator("#chat-works")).toContainText(writerId);
       await page.reload();
+      await showFeature(page, "chat");
       await page.getByRole("button", { name: "Select Personal" }).click();
       await expect(page.locator("#chat-works")).toContainText("Delegation browser-child");
       if (action === "allow") {
+        await showFeature(page, "chat");
         await page.getByRole("button", { name: "Select Writer" }).click();
         await expect(page.locator("#chat-works")).toContainText("Origin: delegation");
       } else {
@@ -106,11 +113,13 @@ for (const action of ["allow", "approve", "deny", "expire"] as const) {
         await expect(card).toContainText("Operation: delegate");
         await expect(card).toContainText(writerId);
         await expect(card).toContainText("Inputs: Selected browser text");
+        await showFeature(page, "tasks");
         await expect(card.getByRole("button", { name: "Approve action" })).toBeVisible();
       }
       await stop();
       await start(Number(new URL(ready.url).port));
       await page.reload();
+      await showFeature(page, "chat");
       await page.getByRole("button", { name: "Select Personal" }).click();
       if (action !== "allow") {
         const card = page.locator('[data-approval-id="browser-child"]');
@@ -131,19 +140,23 @@ for (const action of ["allow", "approve", "deny", "expire"] as const) {
               { times: 1 },
             );
           }
+          await showFeature(page, "tasks");
           await card
             .getByRole("button", { name: action === "approve" ? "Approve action" : "Deny action" })
             .click();
           if (action === "approve") {
             await expect(page.locator("#chat-message")).toContainText("unconfirmed");
             await page.reload();
+            await showFeature(page, "chat");
             await page.getByRole("button", { name: "Select Personal" }).click();
+            await showFeature(page, "chat");
             await page.getByRole("button", { name: "Retry chat request" }).click();
           }
           await expect(card).toContainText(`Owner decision: ${action}`);
           await expect(card).toContainText(action === "approve" ? "executed" : "denied");
         }
       }
+      await showFeature(page, "chat");
       await page.getByRole("button", { name: "Select Writer" }).click();
       if (action === "allow" || action === "approve") {
         await expect(page.locator("#chat-works")).toContainText("Origin: delegation");

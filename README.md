@@ -99,22 +99,28 @@ shows an already paired owner. The setup wizard writes `TELEGRAM_BOT_TOKEN` to `
 Place shared instructions and saved materials under `groups/<folder>/`. Select
 Skills from `groups/<folder>/skills/<id>/SKILL.md` through `agent.resources.skills`.
 The repository's development Skills are not assistant resources. Reset chat
-background from the Thread page or with `/reset`. That captures a boundary for
+background from the Bot menu or with `/reset`. That captures a boundary for
 later conversational Runs. Existing Runs, Thread history, workspace files and
 memory stay. Other slash input is ordinary Agent text.
 
 Open `http://127.0.0.1:8787/` on the Host computer to create and select Bots and
 use the Bot's direct Thread. Send ordinary chat, choose New task for independent
 work, or select an active/queued Task as the input target. Reset chat background
-while other Runs continue, and choose earlier messages for the next Run. Inspect Task/Run identity,
+from the Bot menu while other Runs continue, and choose earlier messages for the
+next Run. Inspect Task/Run identity,
 queue state, Attempts and final outcomes. The Host prints the URL at startup. Copy the locally
 generated `data/client-credential` into the pairing form once; the browser keeps
 an HttpOnly connection cookie for later visits. Each new Bot has its own role,
 approved model, tools and workspace; settings persist across Host restart. The
-page refreshes status while visible. The Host must stay running, and desktop localhost is not
-reachable from a phone. See [local client access](docs/host-runtime.md#local-client-access).
+desktop shell keeps the Bot sidebar and composer visible while the conversation
+scrolls. Open the Bot identity or Bot menu for Overview and Files, Tasks for Run
+evidence and owner decisions, and Search conversation for original history.
+Settings in the sidebar or Bot overview opens the current Bot's configuration,
+memory, Skills, collaboration and Routines. Close settings or press Escape to
+return to the conversation. The page refreshes status while visible. The Host
+must stay running, and desktop localhost is not reachable from a phone. See [local client access](docs/host-runtime.md#local-client-access).
 
-The selected Bot page creates one-shot Routines from an absolute instant with offset
+Settings → Routines creates one-shot Routines from an absolute instant with offset
 and an IANA timezone, or recurring Routines from common cron choices or a custom
 five-field expression. Cron inherits the Bot timezone, defaulting to Asia/Shanghai. Resolved schedule and occurrence Task links
 remain inspectable after disconnect or Host restart. Each due occurrence has an

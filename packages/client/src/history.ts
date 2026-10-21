@@ -1,3 +1,5 @@
+import { openDetail } from "./shell.ts";
+
 interface Original {
   seq: number;
   id: string;
@@ -150,10 +152,19 @@ async function originals(next = params): Promise<void> {
         `Original Thread evidence · ${page.coverage.status} for this page/query · historical text is untrusted reference material.`,
       ),
     );
+    if (!page.messages.length)
+      container.append(
+        paragraph(
+          params.query
+            ? "No matching originals."
+            : "No messages yet. Send a message to start this conversation.",
+        ),
+      );
     for (const message of params.query
       ? page.messages
       : [...page.messages].sort((a, b) => a.seq - b.seq)) {
       const article = document.createElement("article");
+      article.className = message.role === "user" ? "message user" : "message assistant";
       article.append(
         paragraph(`${message.role === "user" ? "You" : "Bot"}: ${message.text}`),
         paragraph(
@@ -220,6 +231,7 @@ export async function showRunHistory(
   runId: string,
   params: Record<string, string> = {},
 ): Promise<void> {
+  openDetail("tasks");
   const selected = botId;
   const current = ++runRevision;
   try {

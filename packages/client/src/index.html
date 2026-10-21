@@ -3,45 +3,108 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#111111">
     <title>Mybots · Bots</title>
     <link rel="stylesheet" href="/style.css">
     <script type="module" src="/main.js"></script>
   </head>
   <body>
-    <main>
-      <header><p class="eyebrow">MYBOTS / LOCAL HOST</p><h1>Your Bots, at a glance.</h1>
-        <p>Create and select independent Bots on this computer.</p></header>
-      <p id="connection" role="status">Connecting to Host…</p>
-      <section id="pairing" hidden>
+    <main class="app-shell">
+      <nav class="sidebar" aria-label="Bots">
+        <div class="sidebar-head"><h1>Mybots</h1><button id="open-create" disabled class="icon-button" aria-label="Create a Bot" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
+        <div id="bots" class="bot-list"><p>Connect to see your Bots.</p></div>
+        <button id="open-settings" type="button">Settings</button>
+        <p id="connection" role="status">Connecting to Host…</p>
+        <button id="refresh" type="button">Refresh status</button><p id="updated"></p>
+      </nav>
+      <div class="workspace">
+        <section id="pairing" hidden="">
         <h2>Connect this browser</h2>
         <p>Use the connection credential from <code>data/client-credential</code> in your Host directory.</p>
         <form id="pair-form">
           <label for="credential">Connection credential</label>
-          <input id="credential" type="password" required autocomplete="off" spellcheck="false">
+          <input id="credential" type="password" required="" autocomplete="off" spellcheck="false">
           <button type="submit">Pair with Host</button>
         </form>
       </section>
-      <section id="status" hidden>
-        <div class="section-title"><h2>Bots and Runs</h2><button id="refresh" type="button">Refresh status</button></div>
-        <p id="updated"></p><div id="bots"></div>
-        <article id="selected-bot" aria-label="Selected Bot" hidden></article>
-        <section id="settings" hidden>
+        <section id="status" class="chat-column" hidden>
+          <header class="chat-head">
+            <button id="bot-identity" type="button" disabled><span class="avatar" aria-hidden="true"></span><span id="bot-identity-name">Select a Bot</span></button>
+            <div class="header-actions"><button id="open-search" type="button" aria-label="Search conversation" class="icon-button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg></button><button id="open-tasks" type="button">Tasks</button><button id="bot-menu" type="button" aria-label="Bot menu" class="icon-button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button></div>
+          </header>
+          <div id="shell-empty" class="empty-chat"><h2>Your Bots, at a glance.</h2><p>Select a Bot from the sidebar or create one to start a conversation.</p></div>
+          <section id="chat" aria-labelledby="chat-heading" hidden>
+            <div class="timeline" aria-label="Chat history" tabindex="0">
+              <div class="thread"><h2 id="chat-heading" class="sr-only">Direct Thread</h2><div id="history-navigation"></div><div id="live-execution" aria-live="polite"></div><div id="thread-messages" aria-label="Conversation"></div></div>
+            </div>
+            <div class="composer-area"><form id="message-form">
+            <label for="input-target">Input target</label>
+            <select id="input-target"><option value="">Thread — continue chat</option></select>
+            <label for="message-text">Message</label>
+            <textarea id="message-text" required="" maxlength="32000" rows="2" placeholder="Message your Bot…"></textarea>
+            <button type="submit">Send message</button>
+            <button id="new-task" type="submit">New task</button>
+
+          </form><p id="chat-message" aria-live="polite"></p><button id="retry-chat" type="button" hidden="">Retry chat request</button></div>
+          </section>
+        </section>
+        <aside id="detail-surface" class="right-panel" aria-label="Bot details" hidden>
+          <header class="panel-toolbar"><h2 id="detail-title">Overview</h2><button id="close-detail" type="button" aria-label="Close details" class="icon-button">×</button></header>
+          <p class="current-bot" id="detail-bot"></p>
+          <nav class="detail-nav" aria-label="Bot detail views"><button type="button" data-detail="overview">Overview</button><button type="button" data-detail="files">Files</button><button type="button" data-detail="tasks">Task activity</button><button type="button" data-detail="search">History search</button></nav>
+          <div class="panel-content">
+            <div data-detail-mount="overview"><article id="selected-bot" aria-label="Selected Bot" hidden=""></article><div id="host-execution"></div><button id="bot-settings" type="button">Bot settings</button><button id="reset-background" type="button">Reset chat background</button></div>
+            <div data-detail-mount="files" hidden><section id="attachments">
+            <h3>Task attachments</h3>
+            <p>An upload belongs to the selected Task and is not given to every Task in this Thread. Save a file into the Bot workspace when other Tasks of this Bot should reuse it. The Host stores and downloads the bytes; it does not interpret, preview, or edit the file format.</p>
+            <form id="attachment-form">
+              <label for="attachment-task">Attachment Task</label>
+              <select id="attachment-task" required=""></select>
+              <label for="attachment-file">File</label>
+              <input id="attachment-file" type="file" required="">
+              <button type="submit">Upload attachment</button>
+            </form>
+            <p id="attachment-message" aria-live="polite"></p>
+            <div id="attachment-list" aria-label="Selected Task attachments"></div>
+            <h3>Bot workspace</h3>
+            <p>These are regular files in this Bot workspace, including a file saved from a Task attachment. Another Bot does not receive them.</p>
+            <ul id="workspace-files"></ul>
+          </section></div>
+            <div data-detail-mount="tasks" hidden><h3 id="selected-chat"></h3><div id="chat-works" aria-label="Tasks and Runs"></div><section id="run-history" aria-label="Recorded Run evidence"></section></div>
+            <div data-detail-mount="search" hidden><form id="history-search">
+            <label for="history-query">Search original history</label>
+            <input id="history-query" maxlength="500" type="search">
+            <button type="submit">Search history</button>
+            <button id="history-latest" type="button">Latest originals</button>
+          </form><p>Results appear in the conversation. Reading history does not change the chat background.</p></div>
+          </div>
+        </aside>
+      </div>
+    </main>
+    <dialog id="settings-surface" aria-labelledby="settings-heading">
+      <nav class="settings-nav" aria-label="Settings sections"><h2 id="settings-heading">Settings</h2><p id="settings-bot" class="current-bot">No Bot selected</p>
+        <button type="button" data-settings="configuration">Configuration</button><button type="button" data-settings="memory">Memory</button><button type="button" data-settings="skills">Skills</button><button type="button" data-settings="collaboration">Collaboration</button><button type="button" data-settings="routines">Routines</button><button type="button" data-settings="connection">Connection</button>
+      </nav>
+      <div class="settings-main"><button id="close-settings" type="button" aria-label="Close settings" class="icon-button">×</button>
+        <p id="settings-empty">Select a Bot to manage its configuration, memory, permissions and Routines.</p>
+        <div data-settings-mount="configuration"><section id="settings" hidden="">
           <h2>Bot configuration</h2>
           <p id="settings-versions"></p>
           <form id="settings-form">
             <fieldset id="settings-fields">
               <label for="saved-role">Bot role</label>
-              <textarea id="saved-role" required maxlength="32000" rows="4"></textarea>
+              <textarea id="saved-role" required="" maxlength="32000" rows="4"></textarea>
               <label for="saved-model">Saved model</label>
-              <select id="saved-model" required></select>
+              <select id="saved-model" required=""></select>
               <fieldset id="saved-tools"><legend>Saved tools</legend></fieldset>
               <fieldset id="saved-skills"><legend>Skill revisions to activate on save</legend></fieldset>
             </fieldset>
             <button id="save-settings" type="submit">Save configuration</button>
           </form>
           <p id="settings-message" aria-live="polite"></p>
-        </section>
-        <section id="memory" hidden>
+        </section></div>
+        <div data-settings-mount="memory" hidden><section id="memory" hidden="">
           <h2>Long-term memory</h2>
           <p>Index and definition load on later Runs, up to 16,000 characters each. Topics stay in files until a Bot reads them. Deleting a file stops that loading. It does not erase conversation history or guarantee forgetting, and a later save can record a fact again. Mutable external facts still need a current check at their source. A save compares the version you read; an intervening edit is shown for rereading. Agent and owner writes can still race, with no automatic merge.</p>
           <form id="memory-index">
@@ -68,48 +131,27 @@
             <button type="submit">Save memory topic</button>
             <button id="memory-topic-delete" type="button">Delete memory topic</button>
           </form>
-          <pre id="memory-conflict" hidden></pre>
+          <pre id="memory-conflict" hidden=""></pre>
           <button id="memory-use-observed" type="button">Load observed memory</button>
           <p id="memory-message" aria-live="polite"></p>
-        </section>
-        <section id="local-skills" hidden>
+        </section></div>
+        <div data-settings-mount="skills" hidden><section id="local-skills" hidden="">
           <h2>Local Skills</h2>
           <p>Import a local directory on this Host, including proposed files from a Bot workspace. Imported revisions remain inactive until selected and saved. Limits: 256 files, 4 MiB; links are rejected.</p>
           <form id="skill-import">
-            <label for="skill-id">Skill ID</label><input id="skill-id" name="skill-id" required pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}">
-            <label for="skill-path">Local Skill directory</label><input id="skill-path" name="skill-path" required>
+            <label for="skill-id">Skill ID</label><input id="skill-id" name="skill-id" required="" pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}">
+            <label for="skill-path">Local Skill directory</label><input id="skill-path" name="skill-path" required="">
             <button type="submit">Import Skill for inspection</button>
           </form>
           <p id="skill-message" aria-live="polite"></p>
           <div id="skill-library"></div>
-        </section>
-        <section id="chat" aria-labelledby="chat-heading" hidden>
-          <h2 id="chat-heading">Direct Thread</h2>
-          <h3 id="selected-chat"></h3>
-          <form id="history-search">
-            <label for="history-query">Search original history</label>
-            <input id="history-query" maxlength="500" type="search">
-            <button type="submit">Search history</button>
-            <button id="history-latest" type="button">Latest originals</button>
-          </form>
-          <div id="history-navigation"></div>
-          <div id="live-execution" aria-live="polite"></div>
-          <div id="thread-messages" aria-label="Conversation"></div>
-          <form id="message-form">
-            <label for="input-target">Input target</label>
-            <select id="input-target"><option value="">Thread — continue chat</option></select>
-            <label for="message-text">Message</label>
-            <textarea id="message-text" required maxlength="32000" rows="4"></textarea>
-            <button type="submit">Send message</button>
-            <button id="new-task" type="submit">New task</button>
-            <button id="reset-background" type="button">Reset chat background</button>
-          </form>
-          <section id="collaboration">
+        </section></div>
+        <div data-settings-mount="collaboration" hidden><section id="collaboration">
             <h3>Delegation</h3>
             <p>Directed collaboration defaults to deny. Allow lets this Bot delegate selected text to the named Bot. This Bot cannot grant itself, and the reverse direction needs its own permission. Ask each time requires a local decision for the exact target and inputs before creating child work.</p>
             <form id="collaboration-form">
               <label for="collaboration-target">Target Bot</label>
-              <select id="collaboration-target" required></select>
+              <select id="collaboration-target" required=""></select>
               <label for="collaboration-mode">Permission</label>
               <select id="collaboration-mode">
                 <option value="deny">Deny</option>
@@ -119,23 +161,23 @@
               <button type="submit">Save delegation permission</button>
             </form>
             <p id="collaboration-notice" aria-live="polite"></p>
-            <button id="collaboration-retry" type="button" hidden>Retry delegation permission</button>
-          </section>
-          <section id="routines">
+            <button id="collaboration-retry" type="button" hidden="">Retry delegation permission</button>
+          </section></div>
+        <div data-settings-mount="routines" hidden><section id="routines">
             <h3>Routines</h3>
             <form id="bot-timezone-form">
               <label for="bot-timezone">Bot timezone</label>
-              <input id="bot-timezone" required placeholder="Asia/Shanghai">
+              <input id="bot-timezone" required="" placeholder="Asia/Shanghai">
               <button type="submit">Save Bot timezone</button>
             </form>
             <p id="bot-timezone-notice" aria-live="polite"></p>
-            <button id="bot-timezone-retry" type="button" hidden>Retry Bot timezone</button>
+            <button id="bot-timezone-retry" type="button" hidden="">Retry Bot timezone</button>
             <p>Cron uses this Bot timezone (default Asia/Shanghai). Changes apply immediately to future scheduling. Admitted work and one-shot instants stay fixed. Missed slots create no backlog; one unfinished occurrence blocks the next.</p>
             <p>Work runs while the Host is available, even after you disconnect. Each occurrence gets its own Task and independent Run context. Include any selected prior inputs in the instructions.</p>
             <p>Pause blocks automatic starts and lets current work finish. Resume skips cron slots missed while paused; an overdue one-shot runs once. Run now works while paused and does not turn recurrence back on. Deleting a Routine cancels unfinished occurrences and future starts, and keeps the definition and results. Stopping one occurrence does not pause or delete the Routine. An explicit retry keeps the Task and the earlier Run outcome.</p>
             <form id="routine-form">
               <label for="routine-text">Routine instructions</label>
-              <textarea id="routine-text" required maxlength="32000" rows="3"></textarea>
+              <textarea id="routine-text" required="" maxlength="32000" rows="3"></textarea>
               <label for="routine-schedule">Routine schedule</label>
               <select id="routine-schedule">
                 <option value="once">One-shot</option>
@@ -146,62 +188,40 @@
               </select>
               <div id="routine-once-fields">
               <label for="routine-instant">Run at (ISO instant with offset)</label>
-              <input id="routine-instant" required placeholder="2026-10-21T09:00:00+08:00">
+              <input id="routine-instant" required="" placeholder="2026-10-21T09:00:00+08:00">
               <label for="routine-timezone">Schedule timezone</label>
-              <input id="routine-timezone" required placeholder="Asia/Shanghai">
+              <input id="routine-timezone" required="" placeholder="Asia/Shanghai">
               </div>
-              <div id="routine-cron-fields" hidden>
+              <div id="routine-cron-fields" hidden="">
                 <label for="routine-cron">Cron expression</label>
-                <input id="routine-cron" placeholder="0 9 * * *" disabled>
+                <input id="routine-cron" placeholder="0 9 * * *" disabled="">
                 <p>Five numeric fields: minute, hour, day of month, month, weekday. Cron follows local wall time. At a spring-forward gap a fixed hour shifts forward; during a repeated fall-back hour the parser can select the second instance. Results follow cron-parser 5.10.2.</p>
               </div>
               <button id="routine-create" type="submit">Create one-shot Routine</button>
             </form>
             <p id="routine-notice" aria-live="polite"></p>
-            <button id="routine-retry" type="button" hidden>Retry Routine creation</button>
-            <button id="routine-command-retry" type="button" hidden>Retry Routine command</button>
+            <button id="routine-retry" type="button" hidden="">Retry Routine creation</button>
+            <button id="routine-command-retry" type="button" hidden="">Retry Routine command</button>
             <div id="routine-list" aria-label="Routines"></div>
-          </section>
-          <section id="attachments">
-            <h3>Task attachments</h3>
-            <p>An upload belongs to the selected Task and is not given to every Task in this Thread. Save a file into the Bot workspace when other Tasks of this Bot should reuse it. The Host stores and downloads the bytes; it does not interpret, preview, or edit the file format.</p>
-            <form id="attachment-form">
-              <label for="attachment-task">Attachment Task</label>
-              <select id="attachment-task" required></select>
-              <label for="attachment-file">File</label>
-              <input id="attachment-file" type="file" required>
-              <button type="submit">Upload attachment</button>
-            </form>
-            <p id="attachment-message" aria-live="polite"></p>
-            <div id="attachment-list" aria-label="Selected Task attachments"></div>
-            <h3>Bot workspace</h3>
-            <p>These are regular files in this Bot workspace, including a file saved from a Task attachment. Another Bot does not receive them.</p>
-            <ul id="workspace-files"></ul>
-          </section>
-          <div id="chat-works" aria-label="Tasks and Runs"></div>
-          <section id="run-history" aria-label="Recorded Run evidence"></section>
-          <p id="chat-message" aria-live="polite"></p>
-          <button id="retry-chat" type="button" hidden>Retry chat request</button>
-        </section>
-        <section aria-labelledby="create-heading">
+          </section></div>
+        <div data-settings-mount="connection" hidden><h2>Connection and notifications</h2><p>The Host must be running on this computer. Pair this browser using the connection credential in <code>data/client-credential</code>. Telegram topic repair and eligible notice resend are available in Tasks.</p><button id="notification-details" type="button">Open notification details</button></div>
+      </div>
+    </dialog>
+    <dialog id="create-surface" aria-labelledby="create-heading"><button id="close-create" type="button" aria-label="Close creation" class="icon-button">×</button><section aria-labelledby="create-heading">
           <h2 id="create-heading">Create a Bot</h2>
           <p>Give this Bot its own role and working materials. Edit saved settings from the selected Bot.</p>
           <form id="create-form">
             <fieldset id="create-fields">
               <label for="bot-name">Bot name</label>
-              <input id="bot-name" required maxlength="120" autocomplete="off">
+              <input id="bot-name" required="" maxlength="120" autocomplete="off">
               <label for="instructions">Role instructions</label>
-              <textarea id="instructions" required maxlength="32000" rows="4"></textarea>
-              <label for="model">Model</label><select id="model" required></select>
+              <textarea id="instructions" required="" maxlength="32000" rows="4"></textarea>
+              <label for="model">Model</label><select id="model" required=""></select>
               <fieldset id="tools"><legend>Tools</legend></fieldset>
             </fieldset>
             <button id="create-button" type="submit">Create Bot</button>
           </form>
           <p id="create-message" aria-live="polite"></p>
-        </section>
-        <p class="note">Container state and mailbox acknowledgements describe execution progress; they do not establish a successful work outcome.</p>
-      </section>
-      <footer>The Host must be running on this computer. A phone cannot reach this desktop’s localhost.</footer>
-    </main>
+        </section></dialog>
   </body>
 </html>

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { showFeature } from "./navigation.ts";
 
 test("real Pi history, lost live frames, reload and Host restart preserve usable originals", async ({
   page,
@@ -63,15 +64,19 @@ test("real Pi history, lost live frames, reload and Host restart preserve usable
     await expect(page).toHaveTitle("Mybots · Bots");
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal", exact: true }).click();
     await expect(page.locator("#selected-chat")).toContainText("Thread ID:");
     phase = "connected";
+    await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Inspect original history");
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await expect(page.locator("#live-execution")).toContainText("Live original lookup");
     await expect(page.locator("#chat-works article").last()).toContainText("Outcome: unresolved");
     await page.reload();
     await expect(page.locator("#live-execution")).toContainText("Live original lookup");
+    await showFeature(page, "tasks");
     await page
       .locator("#chat-works article")
       .last()
@@ -85,23 +90,26 @@ test("real Pi history, lost live frames, reload and Host restart preserve usable
     await expect(page.locator("#thread-messages")).toContainText("Original evidence recovered");
     await page.getByRole("button", { name: "Older originals", exact: true }).click();
     await expect(page.locator("#thread-messages")).toContainText("original 0");
+    await showFeature(page, "search");
     await page.getByLabel("Search original history").fill("火星项目");
+    await showFeature(page, "search");
     await page.getByRole("button", { name: "Search history", exact: true }).click();
     await expect(page.locator("#thread-messages")).toContainText("火星项目");
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.locator("#chat-heading").scrollIntoViewIfNeeded();
     await page.screenshot({ path: "/tmp/mybots-history-desktop.png" });
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1920, height: 1080 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
     await page.locator("#chat-heading").scrollIntoViewIfNeeded();
-    await page.screenshot({ path: "/tmp/mybots-history-mobile.png" });
+    await page.screenshot({ path: "/tmp/mybots-history-wide.png" });
     phase = "restarting";
     await stop();
     await start(Number(new URL(ready.url).port));
     await page.reload();
     await expect(page.locator("#thread-messages")).toContainText("Original evidence recovered");
+    await showFeature(page, "tasks");
     await page
       .locator("#chat-works article")
       .last()

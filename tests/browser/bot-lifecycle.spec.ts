@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { showFeature } from "./navigation.ts";
 
 interface Ready {
   url: string;
@@ -54,27 +55,34 @@ test("disable a Bot, enable it without revival, and logically delete it while ke
     await page.goto(ready.url);
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal", exact: true }).click();
     const original = (await page.locator("#selected-bot").textContent()) ?? "";
     const originalId = original.match(/Bot ID: (\S+)/)?.[1];
     expect(originalId).toBeTruthy();
     child?.send("fail-stop");
+    await showFeature(page, "overview");
     await page.getByRole("button", { name: "Disable Bot", exact: true }).click();
     await expect(page.locator("#bot-lifecycle")).toContainText("This Bot is disabled");
     await expect(page.locator("#chat-works")).toContainText("Execution stop unconfirmed");
     await expect(page.getByLabel("Message", { exact: true })).toBeDisabled();
     child?.send("allow-stop");
+    await showFeature(page, "overview");
     await page.getByRole("button", { name: "Retry cancellation", exact: true }).click();
     await expect(page.locator("#chat-works")).toContainText("Stopped before a final result.");
     await expect(page.locator("#chat-works")).toContainText("Inspect this session");
     await expect(page.locator("#bot-lifecycle")).toContainText("does not revive cancelled work");
+    await showFeature(page, "overview");
     await page.getByRole("button", { name: "Enable Bot", exact: true }).click();
     await expect(page.locator("#bot-lifecycle")).toContainText("Disabling blocks new chat");
     await expect(page.locator("#chat-works")).toContainText("Execution: closed");
     await expect(page.locator("#chat-works")).toContainText("Stopped before a final result.");
     await expect(page.getByLabel("Message", { exact: true })).toBeEnabled();
+    await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Fresh note");
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
+    await showFeature(page, "tasks");
     await expect(page.locator("#chat-works").getByText("Execution: active")).toBeVisible();
     child?.send("complete");
     await expect(page.locator("#chat-works")).toContainText("Final: Fresh note");
@@ -82,12 +90,14 @@ test("disable a Bot, enable it without revival, and logically delete it while ke
     const retention =
       "Logical deletion keeps this Bot's configuration, history, results, workspace, memory, and materials, including copies held by other Bots. It does not restore the Bot or permanently purge retained data.";
     await expect(page.locator("#selected-bot")).toContainText(retention);
+    await showFeature(page, "overview");
     await page.getByRole("button", { name: "Logically delete Bot", exact: true }).click();
     await expect(page.locator("#bot-lifecycle")).toHaveText(retention);
     await expect(page.locator("#bots")).toContainText("Availability: deleted");
     await expect(page.locator("#chat-works")).toContainText("Final: Fresh note");
     await expect(page.getByLabel("Message", { exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Enable Bot" })).toHaveCount(0);
+    await showFeature(page, "create");
     await page.getByLabel("Bot name").fill("Personal");
     await page.getByLabel("Role instructions").fill("A replacement role.");
     await page.getByLabel("Model", { exact: true }).selectOption("deepseek/deepseek-chat");
@@ -98,6 +108,7 @@ test("disable a Bot, enable it without revival, and logically delete it while ke
     expect(replacementId).toBeTruthy();
     expect(replacementId).not.toBe(originalId);
     expect(replacement).not.toContain(`Workspace: groups/${originalId}`);
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).first().click();
     await expect(page.locator("#bot-lifecycle")).toHaveText(retention);
     await expect(page.locator("#chat-works")).toContainText("Inspect this session");
