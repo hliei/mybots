@@ -547,13 +547,21 @@ operation cannot change the policy. Ask-each-time requires an exact local action
 `{ requestId, mode }` where mode is `deny`, `ask-each-time`, or `allow`. The Web page saves that
 direction for the selected Bot. The opposite direction stays independent.
 
-`delegate` accepts a stable `requestId`, the target Bot ID, and selected text of
-up to 32,000 characters. The Host copies that text into a new Task and Run owned
-by the target Bot. The child does not receive the source workspace, source chat,
-or a source mount. The delegation records the source Bot, target Bot, parent
-Task, parent Run, originating Run, and child Task/Run. A denied request is stored
-on the parent Run and returned again for the same selected text; it does not
-create a child. A specialist may delegate to a reviewer, with a maximum of two
+`delegate` accepts a stable `requestId`, the target Bot ID, selected text of
+up to 32,000 characters, and an optional `files` list of at most 16 Task
+attachments or delivered artifacts from the delegating Task. The Host copies
+that text into a new Task and Run owned by the target Bot. Selected bytes are
+copied into the receiving Task's attachment directory with the source Bot, Task,
+Run, and delegation. The child does not receive the source workspace, source
+Host paths, source chat, unrelated files, or a source mount. Same-Bot workspace
+saving remains a separate operation and does not cross Bots. A denied request is
+stored on the parent Run and returned again for the same selected text and files;
+it does not create a child. Ask-each-time keeps the file selection on the exact
+approval and copies those bytes only when that approval creates the child. A
+later change to the source, including a same-length rewrite, leaves the approval
+stale and copies nothing. The
+delegation records the source Bot, target Bot, parent Task, parent Run,
+originating Run, and child Task/Run. A specialist may delegate to a reviewer, with a maximum of two
 edges from the originating Run. Each edge checks its own directed permission;
 requests to any ancestor Bot and requests beyond that depth fail explicitly.
 Returning a child result does not require the reverse direction or add an edge.
@@ -835,8 +843,9 @@ and symbolic-link paths and applies `files.maxBytes` (25 MiB by default) to each
 file. It copies the chosen bytes outside the workspace and commits their metadata
 with the selected result. These results remain separate from the Run outcome.
 
-Thread details include each result's Bot, Task, Run, and the delegation that owns
-the producing Run when the result came from delegated work,
+Thread details include each result's Bot, Task, Run, the delegation that owns
+the producing Run when the result came from delegated work, and that delegation's
+originating Run,
 and artifact IDs, relative names and byte sizes. The browser shows the summary
 and download links. Authenticated
 `GET /api/bots/:botId/runs/:runId/artifacts/:artifactId` returns the saved bytes as

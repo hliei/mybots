@@ -313,8 +313,10 @@ it("keeps an acknowledged output gap uncertain without blocking new work after c
 
 it("retains SDK-queued steering through Host loss and records it in the same Run on takeover", async () => {
   let hold = true;
-  const service = await startPiService(() =>
-    hold ? { hold: true } : { text: "Steering recovered" },
+  // Leave room for the full tool schema and recovered steering; capacity has separate tests.
+  const service = await startPiService(
+    () => (hold ? { hold: true } : { text: "Steering recovered" }),
+    { contextWindow: 65536 },
   );
   const driver = piRunDriver(
     new PiProvider({ modelRuntime: service.runtime, model: service.model }),

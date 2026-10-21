@@ -1,19 +1,42 @@
+interface AttachmentSource {
+  delegationId: string;
+  botId: string;
+  taskId: string;
+  runId: string;
+  kind: "attachment" | "artifact";
+  fileId: string;
+}
 interface Attachment {
   id: string;
   filename: string;
   bytes: number;
+  runId: string | null;
+  source: AttachmentSource | null;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isSource(value: unknown): value is AttachmentSource {
+  return (
+    record(value) &&
+    typeof value.delegationId === "string" &&
+    typeof value.botId === "string" &&
+    typeof value.taskId === "string" &&
+    typeof value.runId === "string" &&
+    (value.kind === "attachment" || value.kind === "artifact") &&
+    typeof value.fileId === "string"
+  );
+}
 function isAttachment(value: unknown): value is Attachment {
   return (
     record(value) &&
     typeof value.id === "string" &&
     typeof value.filename === "string" &&
-    typeof value.bytes === "number"
+    typeof value.bytes === "number" &&
+    (value.runId === null || typeof value.runId === "string") &&
+    (value.source === null || isSource(value.source))
   );
 }
 
@@ -132,6 +155,12 @@ function render(attachments: Attachment[], drafts: Map<string | undefined, strin
         textContent: `${item.filename} · ${item.bytes} bytes`,
       }),
     );
+    if (item.source)
+      article.append(
+        Object.assign(document.createElement("p"), {
+          textContent: `Receiving Bot ${botId} · Task ${task.value} · Run ${item.runId} · Delegation ${item.source.delegationId} · Source ${item.source.kind} ${item.source.fileId} · Bot ${item.source.botId} · Task ${item.source.taskId} · Run ${item.source.runId}`,
+        }),
+      );
     const download = document.createElement("a");
     download.href = `/api/bots/${encodeURIComponent(botId)}/tasks/${encodeURIComponent(task.value)}/attachments/${encodeURIComponent(item.id)}`;
     download.textContent = `Download ${item.filename}`;

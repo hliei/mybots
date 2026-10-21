@@ -26,6 +26,7 @@ interface SelectedResult extends Publication {
   taskId: string;
   runId: string;
   delegationId: string | null;
+  originatingRunId: string | null;
   artifacts: { id: string; name: string; bytes: number }[];
 }
 interface Question {
@@ -34,6 +35,12 @@ interface Question {
   state: "pending" | "answered" | "expired" | "cancelled";
   answer: string | null;
   deadline: string | null;
+}
+interface DelegationFile {
+  kind: "attachment" | "artifact";
+  id: string;
+  filename: string;
+  bytes: number;
 }
 interface Approval {
   id: string;
@@ -58,6 +65,7 @@ interface Delegation {
   text: string;
   state: string;
   result: string | null;
+  files: DelegationFile[];
 }
 interface Run {
   id: string;
@@ -118,6 +126,7 @@ interface Pending {
   text: string;
   questionId?: string;
   approval?: Approval;
+  files?: DelegationFile[];
   decision?: "approve" | "deny";
   taskId?: string;
   runId?: string;
@@ -125,6 +134,15 @@ interface Pending {
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function validDelegationFile(value: unknown): value is DelegationFile {
+  return (
+    record(value) &&
+    (value.kind === "attachment" || value.kind === "artifact") &&
+    typeof value.id === "string" &&
+    typeof value.filename === "string" &&
+    typeof value.bytes === "number"
+  );
 }
 function validApproval(value: unknown): value is Approval {
   return (
@@ -237,7 +255,9 @@ function isDetail(value: unknown): value is Detail {
                 (row.childRunId === null || typeof row.childRunId === "string") &&
                 (row.revokedAt === null || typeof row.revokedAt === "string") &&
                 (row.approval === null || validApproval(row.approval)) &&
-                (row.result === null || typeof row.result === "string"),
+                (row.result === null || typeof row.result === "string") &&
+                Array.isArray(row.files) &&
+                row.files.every(validDelegationFile),
             ) &&
             Array.isArray(run.progress) &&
             run.progress.every(publication) &&
@@ -248,6 +268,7 @@ function isDetail(value: unknown): value is Detail {
                 record(result) &&
                 [result.botId, result.taskId, result.runId].every((id) => typeof id === "string") &&
                 (result.delegationId === null || typeof result.delegationId === "string") &&
+                (result.originatingRunId === null || typeof result.originatingRunId === "string") &&
                 Array.isArray(result.artifacts) &&
                 result.artifacts.every(
                   (file: unknown) =>
@@ -456,7 +477,7 @@ export async function showChat(selectedBotId: string | undefined): Promise<void>
                   `Selected result · Attempt ${result.attemptId}: ${result.text}${result.truncated ? " [Excerpt]" : ""}`,
                 ),
                 paragraph(
-                  `Bot: ${result.botId} · Task: ${result.taskId} · Run: ${result.runId}${result.delegationId ? ` · Delegation: ${result.delegationId}` : ""}`,
+                  `Bot: ${result.botId} · Task: ${result.taskId} · Run: ${result.runId}${result.delegationId ? ` · Delegation: ${result.delegationId}` : ""}${result.originatingRunId ? ` · Originating Run: ${result.originatingRunId}` : ""}`,
                 ),
               );
               for (const file of result.artifacts) {
@@ -580,6 +601,14 @@ function delegationCard(run: Run, delegation: Delegation): HTMLElement {
     paragraph(`Originating Run ${delegation.originatingRunId}`),
     paragraph(`Selected text: ${delegation.text}`),
   );
+  if (delegation.files.length > 0)
+    section.append(
+      paragraph(
+        `Selected files: ${delegation.files
+          .map((file) => `${file.kind} ${file.filename} (${file.bytes} bytes)`)
+          .join(", ")}`,
+      ),
+    );
   if (delegation.childTaskId && delegation.childRunId)
     section.append(
       paragraph(`Child Task ${delegation.childTaskId} · Child Run ${delegation.childRunId}`),
@@ -641,6 +670,7 @@ function approvalCard(source: Delegation, approval: Approval, run: Run): HTMLEle
           operation: "decision",
           text: approval.text,
           approval,
+          files: source.files,
           decision,
         };
         localStorage.setItem(pendingKey, JSON.stringify(pending));
@@ -762,6 +792,12 @@ async function submit(newTask = false): Promise<void> {
               targetBotId: admitted.approval?.targetBotId,
               text: admitted.approval?.text,
               deadline: admitted.approval?.deadline,
+              files: (admitted.files ?? []).map((file) => ({
+                kind: file.kind,
+                id: file.id,
+                filename: file.filename,
+                bytes: file.bytes,
+              })),
             }
           : admitted.operation === "reset" || runOperation
             ? { requestId: admitted.requestId }

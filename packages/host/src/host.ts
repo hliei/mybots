@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
@@ -35,6 +35,7 @@ import { ChatRequestError, chatInput } from "./chat.ts";
 import { validateHostConfiguration } from "./config/host.ts";
 import { provisionSession, replaceSessionContext } from "./container-runner.ts";
 import { HostStore, type SavedSession, type SessionRoute } from "./db/index.ts";
+import type { DelegationFile } from "./db/threads.ts";
 import type {
   ModelConfiguration,
   SessionDriver,
@@ -667,7 +668,7 @@ export class Host {
     try {
       execution.mailbox.syncAcknowledgements();
       this.syncChat(execution);
-      this.reconcileDurableWait(execution);
+      await this.reconcileDurableWait(execution);
       if (this.enforceBudget(execution)) return;
       if (execution.route.session.purpose === "run") {
         const state = this.store.threads.run(id).state;
@@ -778,7 +779,7 @@ export class Host {
           execution.mailbox.syncAcknowledgements();
           this.syncChat(execution);
           this.enforceBudget(execution);
-          this.reconcileDurableWait(execution);
+          await this.reconcileDurableWait(execution);
           await this.historyOperations(execution);
           if (!execution.handle && !execution.starting && !execution.replacing)
             await this.reconcileSession(execution);
@@ -1485,14 +1486,14 @@ export class Host {
     return saved;
   }
 
-  private delegate(
+  private async delegate(
     execution: SessionExecution,
     request: HistoryRequest,
     input: Record<string, unknown>,
   ) {
     if (
       Object.keys(input).some(
-        (key) => !["requestId", "targetBotId", "text", "deadline"].includes(key),
+        (key) => !["requestId", "targetBotId", "text", "deadline", "files"].includes(key),
       )
     )
       throw new ChatRequestError("Unknown delegation field.");
@@ -1519,19 +1520,225 @@ export class Host {
       (typeof input.deadline !== "string" || !Number.isFinite(Date.parse(input.deadline)))
     )
       throw new ChatRequestError("Delegation deadline must be an explicit timestamp.");
-    const recorded = this.store.threads.delegate({
-      requestId: input.requestId,
-      sourceBotId: execution.route.session.agent_group_id,
-      targetBotId: input.targetBotId,
-      parentTaskId: run.task_id,
-      parentRunId: run.id,
-      parentAttemptId: attempt.id,
-      text: input.text,
-      deadline: typeof input.deadline === "string" ? new Date(input.deadline).toISOString() : null,
-      now: this.timestamp(),
+    const sourceBotId = execution.route.session.agent_group_id;
+    const selected = await this.selectedDelegationFiles(sourceBotId, run.task_id, input.files);
+    const files = selected.map((file) => ({
+      kind: file.kind,
+      id: file.id,
+      filename: file.filename,
+      bytes: file.bytes,
+      digest: createHash("sha256").update(file.body).digest("hex"),
+    }));
+    const existing = this.store.threads.delegation(input.requestId);
+    let childTaskId: string | undefined;
+    if (
+      !existing &&
+      selected.length > 0 &&
+      this.store.threads.collaborationMode(sourceBotId, input.targetBotId) === "allow"
+    ) {
+      childTaskId = randomUUID();
+      try {
+        await this.writeTransfer(
+          input.targetBotId,
+          childTaskId,
+          selected.map((file) => ({ filename: file.filename, bytes: file.body })),
+        );
+      } catch (error) {
+        await this.removeTransfer(input.targetBotId, childTaskId);
+        throw error;
+      }
+    }
+    try {
+      const recorded = this.store.threads.delegate({
+        requestId: input.requestId,
+        sourceBotId,
+        targetBotId: input.targetBotId,
+        parentTaskId: run.task_id,
+        parentRunId: run.id,
+        parentAttemptId: attempt.id,
+        text: input.text,
+        files,
+        ...(childTaskId ? { childTaskId } : {}),
+        deadline:
+          typeof input.deadline === "string" ? new Date(input.deadline).toISOString() : null,
+        now: this.timestamp(),
+      });
+      if (childTaskId && recorded?.childTaskId !== childTaskId)
+        await this.removeTransfer(input.targetBotId, childTaskId);
+      if (recorded?.state === "pending") this.schedule();
+      return recorded;
+    } catch (error) {
+      if (childTaskId) await this.removeTransfer(input.targetBotId, childTaskId);
+      throw error;
+    }
+  }
+
+  private async selectedDelegationFiles(botId: string, taskId: string, value: unknown) {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.length > 16)
+      throw new ChatRequestError("A delegation accepts at most 16 selected files.");
+    const selected: (DelegationFile & { body: Buffer })[] = [];
+    const ids = new Set<string>();
+    const names = new Set<string>();
+    for (const entry of value) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry))
+        throw new ChatRequestError(
+          "Selected files must identify a Task attachment or delivered artifact.",
+        );
+      const record = entry as Record<string, unknown>;
+      if (Object.keys(record).some((key) => key !== "kind" && key !== "id"))
+        throw new ChatRequestError(
+          "Selected files must identify a Task attachment or delivered artifact.",
+        );
+      if (
+        (record.kind !== "attachment" && record.kind !== "artifact") ||
+        typeof record.id !== "string" ||
+        !REQUEST_ID.test(record.id)
+      )
+        throw new ChatRequestError(
+          "Selected files must identify a Task attachment or delivered artifact.",
+        );
+      const identity = `${record.kind}:${record.id}`;
+      if (ids.has(identity)) throw new ChatRequestError("Select each file once.");
+      ids.add(identity);
+      const loaded = await this.readTransferSource(botId, taskId, record.kind, record.id);
+      if (names.has(loaded.filename)) throw new ChatRequestError("Select each file name once.");
+      names.add(loaded.filename);
+      selected.push({
+        kind: record.kind,
+        id: record.id,
+        filename: loaded.filename,
+        bytes: loaded.bytes.length,
+        body: loaded.bytes,
+      });
+    }
+    return selected;
+  }
+
+  private async readTransferSource(
+    botId: string,
+    taskId: string,
+    kind: "attachment" | "artifact",
+    id: string,
+  ): Promise<{ filename: string; bytes: Buffer }> {
+    if (kind === "attachment") {
+      const record = this.store.threads.attachment(botId, taskId, id);
+      const directory = await ensureTaskAttachmentDirectory(this.root, botId, taskId);
+      const bytes = await readTaskAttachment(directory, record.filename);
+      this.requireTransferBytes(bytes);
+      return { filename: record.filename, bytes };
+    }
+    const record = this.store.threads.taskArtifact(botId, taskId, id);
+    if (!record) throw new ChatRequestError("Delivered artifact not found.", 404);
+    const directory = await ensureDeliveredArtifactDirectory(this.root, botId);
+    const bytes = await readDeliveredArtifact(directory, record.id);
+    if (bytes.length !== record.bytes)
+      throw new ChatRequestError("Delivered artifact unavailable.", 503);
+    this.requireTransferBytes(bytes);
+    return {
+      filename: attachmentFilename(record.name.split("/").at(-1) as string),
+      bytes,
+    };
+  }
+
+  private requireTransferBytes(bytes: Buffer): void {
+    if (bytes.length === 0) throw new ChatRequestError("Selected file is empty.");
+    if (bytes.length > this.maxFileBytes())
+      throw new ChatRequestError(fileLimitMessage(this.maxFileBytes()), 413);
+  }
+
+  private async writeTransfer(
+    botId: string,
+    taskId: string,
+    files: { filename: string; bytes: Buffer }[],
+  ): Promise<void> {
+    const directory = await ensureTaskAttachmentDirectory(this.root, botId, taskId);
+    const written: string[] = [];
+    try {
+      for (const file of files) {
+        await writeTaskAttachment(directory, file.filename, file.bytes);
+        written.push(file.filename);
+      }
+    } catch (error) {
+      for (const name of written) await rm(join(directory, name), { force: true });
+      throw error;
+    }
+  }
+
+  private async removeTransfer(botId: string, taskId: string): Promise<void> {
+    await rm(join(this.root, "data", "task-attachments", botId, taskId), {
+      recursive: true,
+      force: true,
     });
-    if (recorded?.state === "pending") this.schedule();
-    return recorded;
+  }
+
+  private async stageApprovedCopies(runId: string) {
+    const staged: { delegationId: string; childTaskId: string; targetBotId: string }[] = [];
+    for (const row of this.store.threads.approvedTransfers(runId)) {
+      const childTaskId = randomUUID();
+      try {
+        const bodies: { filename: string; bytes: Buffer }[] = [];
+        for (const file of row.files) {
+          const loaded = await this.readTransferSource(
+            row.sourceBotId,
+            row.parentTaskId,
+            file.kind,
+            file.id,
+          );
+          if (
+            loaded.filename !== file.filename ||
+            createHash("sha256").update(loaded.bytes).digest("hex") !== file.digest
+          )
+            throw new ChatRequestError(
+              "Selected file changed. A new request and decision are required.",
+              409,
+            );
+          bodies.push(loaded);
+        }
+        await this.writeTransfer(row.targetBotId, childTaskId, bodies);
+        staged.push({ delegationId: row.id, childTaskId, targetBotId: row.targetBotId });
+      } catch (error) {
+        await this.removeTransfer(row.targetBotId, childTaskId);
+        if (error instanceof ChatRequestError)
+          this.store.threads.abandonApproval(row.id, error.message, this.timestamp());
+        else throw error;
+      }
+    }
+    return staged;
+  }
+
+  private decisionFiles(value: unknown): DelegationFile[] {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.length > 16)
+      throw new ChatRequestError(
+        "Approval inputs changed. Read the current request and make a new decision.",
+        409,
+      );
+    return value.map((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry))
+        throw new ChatRequestError(
+          "Approval inputs changed. Read the current request and make a new decision.",
+          409,
+        );
+      const record = entry as Record<string, unknown>;
+      if (
+        (record.kind !== "attachment" && record.kind !== "artifact") ||
+        typeof record.id !== "string" ||
+        typeof record.filename !== "string" ||
+        typeof record.bytes !== "number" ||
+        !Number.isSafeInteger(record.bytes)
+      )
+        throw new ChatRequestError(
+          "Approval inputs changed. Read the current request and make a new decision.",
+          409,
+        );
+      return {
+        kind: record.kind,
+        id: record.id,
+        filename: record.filename,
+        bytes: record.bytes,
+      };
+    });
   }
 
   async decideApproval(botId: string, runId: string, approvalId: string, value: unknown) {
@@ -1540,11 +1747,19 @@ export class Host {
     if (
       Object.keys(value).some(
         (key) =>
-          !["requestId", "decision", "operation", "targetBotId", "text", "deadline"].includes(key),
+          ![
+            "requestId",
+            "decision",
+            "operation",
+            "targetBotId",
+            "text",
+            "deadline",
+            "files",
+          ].includes(key),
       )
     )
       throw new ChatRequestError("Unsupported approval decision field.");
-    const { deadline, text, ...fields } = value as Record<string, unknown>;
+    const { deadline, text, files: selectedFiles, ...fields } = value as Record<string, unknown>;
     if (
       deadline !== null &&
       (typeof deadline !== "string" || !Number.isFinite(Date.parse(deadline)))
@@ -1565,7 +1780,13 @@ export class Host {
       approvalId,
       input.requestId,
       input.decision,
-      { operation: "delegate", targetBotId: input.targetBotId, text, deadline },
+      {
+        operation: "delegate",
+        targetBotId: input.targetBotId,
+        text,
+        deadline,
+        files: this.decisionFiles(selectedFiles),
+      },
       this.timestamp(),
     );
     // Execution is reconciled separately after the complete tool batch ends its Attempt.
@@ -1585,7 +1806,7 @@ export class Host {
       this.timestamp(),
     );
     const execution = await this.prepare(this.store.route(this.store.threads.session(runId)));
-    this.reconcileDurableWait(execution);
+    await this.reconcileDurableWait(execution);
     this.schedule();
     return result;
   }
@@ -2282,13 +2503,25 @@ export class Host {
    * A durable wait ends the Attempt only after recorded tool calls have results.
    * An unconfirmed executor stop keeps the Bot slot.
    */
-  private reconcileDurableWait(execution: SessionExecution): void {
+  private async reconcileDurableWait(execution: SessionExecution): Promise<void> {
     if (this.stopped || execution.route.session.purpose !== "run") return;
     const id = execution.route.session.id;
     if (execution.starting || execution.replacing || execution.cutover) return;
     this.store.threads.expireQuestions(this.timestamp());
     this.store.threads.expireApprovals(this.timestamp());
-    this.store.threads.executeApprovals(id, this.timestamp());
+    const staged = await this.stageApprovedCopies(id);
+    try {
+      this.store.threads.executeApprovals(
+        id,
+        this.timestamp(),
+        staged.map((item) => ({ delegationId: item.delegationId, childTaskId: item.childTaskId })),
+      );
+    } finally {
+      for (const item of staged) {
+        if (this.store.threads.delegation(item.delegationId)?.childTaskId !== item.childTaskId)
+          await this.removeTransfer(item.targetBotId, item.childTaskId);
+      }
+    }
     const state = this.store.threads.run(id).state;
     const questions = this.store.threads.questions(id);
     const delegations = this.store.threads
