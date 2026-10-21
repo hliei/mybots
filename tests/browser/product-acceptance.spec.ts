@@ -79,7 +79,11 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
       }
       expect(await exited).toBe(0);
     } finally {
-      if (child?.exitCode === null) child.kill("SIGKILL");
+      if (child?.exitCode === null && child.signalCode === null) {
+        const killed = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
+        child.kill("SIGKILL");
+        await killed;
+      }
       child = undefined;
     }
   }
