@@ -37,6 +37,7 @@ const definitionMeta = document.querySelector<HTMLElement>(
 ) as HTMLElement;
 const topicMeta = document.querySelector<HTMLElement>("#memory-topic-meta") as HTMLElement;
 let currentBot: string | undefined;
+let editable = true;
 let requestVersion = 0;
 let observed: Observed | undefined;
 const versions = {
@@ -135,7 +136,7 @@ async function load(botId: string): Promise<void> {
   apply(body, false);
 }
 
-export async function showMemory(botId: string | undefined): Promise<void> {
+export async function showMemory(botId: string | undefined, nextEditable = true): Promise<void> {
   const switched = currentBot !== botId;
   if (switched) {
     observed = undefined;
@@ -151,7 +152,12 @@ export async function showMemory(botId: string | undefined): Promise<void> {
     loaded = { index: "", definition: "", topic: "" };
   }
   currentBot = botId;
+  editable = nextEditable;
   section.hidden = !botId;
+  for (const node of section.querySelectorAll("textarea, input"))
+    if (node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement)
+      node.readOnly = !editable;
+  for (const button of section.querySelectorAll("button")) button.disabled = !editable;
   if (!botId) return;
   try {
     await load(botId);

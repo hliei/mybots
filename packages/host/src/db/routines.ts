@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { ChatRequestError } from "../chat.ts";
+import { isBotAvailability } from "../bots.ts";
+import { ChatRequestError, rejectInactiveBot } from "../chat.ts";
 import { nextCron, type routineInput } from "../routines.ts";
 
 export interface Routine {
@@ -151,6 +152,7 @@ export class RoutineStore {
       )
         throw new ChatRequestError("Selected message was not found on this Thread.", 404);
     }
+    rejectInactiveBot(this.availability(botId));
     const id = randomUUID();
     this.db
       .prepare(
@@ -314,6 +316,15 @@ export class RoutineStore {
       .all(routineId) as { id: string; state: string }[];
   }
 
+  private availability(botId: string) {
+    const row = this.db.prepare("SELECT availability FROM agent_groups WHERE id = ?").get(botId) as
+      | { availability: unknown }
+      | undefined;
+    if (!row || !isBotAvailability(row.availability))
+      throw new ChatRequestError("Bot not found.", 404);
+    return row.availability;
+  }
+
   private require(botId: string, routineId: string): Routine {
     const routine = this.list(botId).find((row) => row.id === routineId);
     if (!routine) throw new ChatRequestError("Routine not found.", 404);
@@ -378,7 +389,10 @@ export class RoutineStore {
 
   due(now: string): Routine[] {
     const bots = this.db
-      .prepare("SELECT DISTINCT bot_id FROM routines WHERE next_occurrence <= ?")
+      .prepare(
+        `SELECT DISTINCT r.bot_id FROM routines r JOIN agent_groups a ON a.id = r.bot_id
+ WHERE r.next_occurrence <= ? AND a.availability = 'active'`,
+      )
       .all(now);
     return bots
       .flatMap((row) => this.list(row.bot_id as string))

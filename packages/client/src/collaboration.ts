@@ -20,9 +20,10 @@ let botId: string | undefined;
 let refresh: (() => void) | undefined;
 let sending = false;
 let pending: Pending | undefined;
+let admitting = true;
 
 function controls(): void {
-  const busy = sending || !!pending;
+  const busy = sending || !!pending || !admitting;
   target.disabled = mode.disabled = busy || target.options.length === 0;
   const button = form.querySelector("button");
   if (button) button.disabled = busy || target.options.length === 0;
@@ -36,7 +37,9 @@ export function showCollaboration(
   selectedBotId: string | undefined,
   peers: Peer[],
   reload: () => void,
+  nextAdmitting = true,
 ): void {
+  admitting = nextAdmitting;
   botId = selectedBotId;
   refresh = reload;
   const section = document.getElementById("collaboration") as HTMLElement;

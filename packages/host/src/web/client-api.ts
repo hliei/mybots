@@ -198,6 +198,41 @@ export async function serveClient(
     }
     return;
   }
+  const lifecycleRoute = /^\/api\/bots\/([^/]+)\/(disable|enable|delete)$/.exec(path);
+  if (lifecycleRoute && request.method === "POST") {
+    try {
+      let input: unknown;
+      try {
+        input = JSON.parse((await readLimited(request, 65536)).toString("utf8"));
+      } catch (error) {
+        if (error instanceof ChatRequestError) throw error;
+        throw new ChatRequestError("Bot lifecycle requires valid JSON.");
+      }
+      const operation = lifecycleRoute[2] as "disable" | "enable" | "delete";
+      const result = await host.setBotAvailability(
+        decodeURIComponent(lifecycleRoute[1] as string),
+        operation,
+        input,
+      );
+      response.writeHead(operation === "enable" || result.replayed ? 200 : 202, {
+        "Content-Type": "application/json",
+      });
+      response.end(JSON.stringify(result));
+    } catch (error) {
+      response.writeHead(error instanceof ChatRequestError ? error.status : 503, {
+        "Content-Type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error:
+            error instanceof ChatRequestError
+              ? error.message
+              : "Bot lifecycle unavailable. Retry with the same requestId.",
+        }),
+      );
+    }
+    return;
+  }
   const collaborationRoute = /^\/api\/bots\/([^/]+)\/collaboration\/([^/]+)$/.exec(path);
   if (collaborationRoute && request.method === "POST") {
     try {

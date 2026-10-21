@@ -121,7 +121,7 @@ test.each([2, 3, 4])(
       }
       const upgraded = new DatabaseSync(file);
       try {
-        expect(upgraded.prepare("PRAGMA user_version").get()?.user_version).toBe(24);
+        expect(upgraded.prepare("PRAGMA user_version").get()?.user_version).toBe(25);
         if (version === 4)
           expect(upgraded.prepare("SELECT instance_id FROM host_instances").all()).toEqual([
             { instance_id: "previous-host" },

@@ -75,8 +75,8 @@ the owner Skill panel to import and activate updates. `agent.resources.tools` se
 tools select `read`, `write`, `edit`, `bash`; an empty tool list disables built-ins.
 Selecting a web tool requires matching `agent.web` configuration. The execution
 harness is Pi; the model backend is specified separately by `model.provider` and
-`model.id`. The central store uses schema version 13 for host routing, Bot configuration,
-Threads, original messages, Tasks, Runs, Attempts and stable input admissions.
+`model.id`. The central store uses schema version 24 for host routing, Bot configuration,
+availability, Threads, original messages, Tasks, Runs, Attempts and stable input admissions.
 An older store containing sessions requires fresh runtime records; see the
 [replacement instructions](../README.md#persistence-and-reliability). The central store saves the model
 selector as `provider/id` plus its endpoint and token limits. Endpoints must use

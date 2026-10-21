@@ -132,6 +132,7 @@ try {
   /* Ignore unreadable browser state. */
 }
 let botId: string | undefined;
+let availability: "active" | "disabled" | "deleted" = "active";
 let pending: Creation | undefined;
 let sending = false;
 let refresh: () => void = () => {};
@@ -142,10 +143,11 @@ try {
   /* Ignore unreadable browser state. */
 }
 function controls() {
+  const admitting = availability === "active";
   for (const node of form.querySelectorAll<
     HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement | HTMLSelectElement
   >("input, textarea, button, select"))
-    node.disabled = sending || !!pending;
+    node.disabled = !admitting || sending || !!pending;
   const once = schedule.value === "once";
   (document.getElementById("routine-once-fields") as HTMLElement).hidden = !once;
   (document.getElementById("routine-cron-fields") as HTMLElement).hidden = once;
@@ -159,7 +161,12 @@ function controls() {
   commandRetry.hidden = !command;
   commandRetry.disabled = commanding;
 }
-export async function showRoutines(selectedBot: string, onChange: () => void): Promise<boolean> {
+export async function showRoutines(
+  selectedBot: string,
+  onChange: () => void,
+  next: "active" | "disabled" | "deleted" = "active",
+): Promise<boolean> {
+  availability = next;
   const changed = botId !== selectedBot;
   botId = selectedBot;
   refresh = onChange;
@@ -249,6 +256,11 @@ export async function showRoutines(selectedBot: string, onChange: () => void): P
         remove.textContent = "Delete routine";
         for (const control of [editor, schedule, zone, save, pause, run, remove])
           control.disabled = commanding || !!command;
+        run.disabled = run.disabled || availability !== "active";
+        if (routine.paused) pause.disabled = pause.disabled || availability === "deleted";
+        if (availability === "deleted")
+          for (const control of [editor, schedule, zone, save, pause, run, remove])
+            control.disabled = true;
         article.append(editor, schedule, zone, save, pause, run, remove);
       }
       if (routine.source.kind === "run") {

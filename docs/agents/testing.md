@@ -493,3 +493,20 @@ retries. A real Pi SDK case receives the correlated revocation in the same sourc
 Run without repeating its delegation tool. The nested browser journey changes
 the directed permission, observes stale approval and stopping cards, then reads
 cancelled or uncertain work and late evidence after a fresh Host starts.
+
+## Bot disablement and logical deletion
+
+`tests/bot-lifecycle.test.ts` uses authenticated HTTP, real SQLite and mailboxes,
+and a controlled clock and executor. It disables a Bot during active chat,
+cancels a Routine occurrence, a delegated child and a pending question, and lets
+unrelated target work finish. An unconfirmed stop stays visible, holds that Bot's
+slot while another Bot completes, and is confirmed after a fresh Host starts.
+Enable keeps the saved role, memory and cancelled outcome, then admits an explicit
+retry as a new Run. Logical deletion returns the retention statement without
+listing feature files, leaves workspace bytes and another Bot's copy in place,
+rejects settings and memory edits, and gives a same-name Bot a new identity and
+empty workspace. Disabled and deleted Bots reject Thread sends, Task inputs,
+retries, Routine creation and delegation. `tests/browser/bot-lifecycle.spec.ts`
+disables the built client during active work, shows an unconfirmed stop, enables
+without reviving that Run, discloses retained evidence, and creates an independent
+same-name Bot. Telegram topic retention belongs to the notification policy.
