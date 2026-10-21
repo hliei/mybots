@@ -53,6 +53,8 @@ function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot {
   return (
     isObject(value) &&
     typeof value.id === "string" &&
+    (value.inputId === undefined || typeof value.inputId === "string") &&
+    (value.preview === undefined || typeof value.preview === "boolean") &&
     typeof value.text === "string" &&
     (value.tool === null || typeof value.tool === "string") &&
     Number.isSafeInteger(value.textOffset) &&

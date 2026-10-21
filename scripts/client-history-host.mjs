@@ -12,10 +12,21 @@ import { startPiService } from "../tests/pi-fixture.ts";
 
 const root = process.argv[2];
 const release = Promise.withResolvers();
+const streamMore = Promise.withResolvers();
+const streamEnd = Promise.withResolvers();
 const service = await startPiService(async (request) => {
   const latest = JSON.stringify(
     request.messages.findLast((message) => message.role === "user")?.content,
   );
+  if (latest.includes("Stream reply"))
+    return {
+      chunks: (async function* () {
+        yield "A growing reply";
+        await streamMore.promise;
+        yield " with original text 🪐";
+        await streamEnd.promise;
+      })(),
+    };
   if (latest.includes("Inspect original history")) {
     if (!request.messages.some((message) => message.role === "tool"))
       return {
@@ -26,6 +37,8 @@ const service = await startPiService(async (request) => {
     await release.promise;
     return { text: markdownOriginal };
   }
+  if (latest.includes("Panel reflow reply"))
+    return { text: "A line of conversation remains in place while the panel changes. ".repeat(9) };
   if (latest.includes("Read wide original")) return { text: wideOriginal };
   if (latest.includes("Read long original")) return { text: longOriginal };
   return { text: `Remembered: ${latest}` };
@@ -92,10 +105,14 @@ try {
     process.once("disconnect", resolve);
     process.on("message", (message) => {
       if (message === "complete") release.resolve();
+      if (message === "stream-more") streamMore.resolve();
+      if (message === "stream-end") streamEnd.resolve();
     });
   });
 } finally {
   release.resolve();
+  streamMore.resolve();
+  streamEnd.resolve();
   await channel?.close();
   await host.stop();
   await service.close();

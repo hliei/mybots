@@ -14,6 +14,7 @@ const ASSETS = new Map([
   ["/main.js", ["main.js", "text/javascript; charset=utf-8"]],
   ["/markdown.js", ["markdown.js", "text/javascript; charset=utf-8"]],
   ["/vendor/marked.js", ["vendor/marked.js", "text/javascript; charset=utf-8"]],
+  ["/reading-position.js", ["reading-position.js", "text/javascript; charset=utf-8"]],
   ["/history.js", ["history.js", "text/javascript; charset=utf-8"]],
   ["/routines.js", ["routines.js", "text/javascript; charset=utf-8"]],
   ["/chat.js", ["chat.js", "text/javascript; charset=utf-8"]],

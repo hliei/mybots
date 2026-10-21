@@ -716,11 +716,23 @@ mailbox input; no parallel local routing store is created.
 
 Authenticated `execution` WebSocket envelopes carry `botId`, `threadId`,
 `taskId`, `runId` and a bounded `snapshot` (`id`, executor `incarnation`, `text`,
-Unicode `textOffset`, current `tool`). The runner publishes accumulated previews,
-so a missed frame does not require concatenating subsequent fragments. A preview
+Unicode `textOffset`, current `tool`, correlated `inputId` and tool-commentary
+`preview` flag). The runner publishes accumulated previews,
+resetting text at each assistant message and labelling tool commentary separately.
+The stream `id` becomes the grouped durable Thread reply ID when that exchange
+settles; text alone never establishes settlement. Run history snapshots also
+carry Bot, Thread, Task and Run scope.
+A missed frame is repaired from the current bounded snapshot. A preview
 is progress only; the persisted Run outcome establishes completion. The browser
 repairs missed frames and reloads from HTTP snapshots, including after Host
 restart. Preview text can be shorter than the complete recorded originals.
+
+The desktop conversation grows live chat text in its reply bubble and replaces
+that projection with the matching original. Tool previews and independent work
+remain labelled activity. Reading follows new output only at the bottom; scrolling
+into history shows Back to latest. Per-Bot message anchors and the choice to
+follow survive panel reflow and settings, even when the whole history temporarily
+fits. Older original pages prepend without replacing the reading anchor.
 
 Every connected client observes live host envelopes: `inbound` for accepted input
 (`session_id`, `message_id`, `destination`, `channel_type`, `platform_id`,

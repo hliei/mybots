@@ -1,4 +1,5 @@
 import { copyButton, markdown } from "./markdown.ts";
+import { restoreReadingPosition, selectReadingBot } from "./reading-position.ts";
 import { openDetail } from "./shell.ts";
 
 interface Original {
@@ -31,7 +32,7 @@ interface Evidence {
     toolName?: string;
   }[];
   nextAfter: string | null;
-  snapshot: { text: string; tool: string | null } | null;
+  snapshot: Preview | null;
 }
 const node = (id: string) => document.getElementById(id) as HTMLElement;
 function paragraph(text: string) {
@@ -71,7 +72,20 @@ let revision = 0;
 let runRevision = 0;
 let socket: WebSocket | undefined;
 let reconnect: number | undefined;
-const live = new Map<string, { text: string; tool: string | null }>();
+interface Preview {
+  id: string;
+  text: string;
+  tool: string | null;
+  textOffset: number;
+  incarnation: number;
+  inputId?: string;
+  preview?: boolean;
+}
+const live = new Map<string, Preview>();
+let active = new Set<string>();
+let chatRuns = new Set<string>();
+let loaded = new Map<string, Original>();
+const pages = new Map<string, { params: Record<string, string>; loaded: Map<string, Original> }>();
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -109,6 +123,20 @@ function isPage(value: unknown): value is Page {
     nullableString(value.newerMessageId)
   );
 }
+function isPreview(value: unknown): value is Preview {
+  return (
+    record(value) &&
+    typeof value.id === "string" &&
+    typeof value.text === "string" &&
+    nullableString(value.tool) &&
+    Number.isSafeInteger(value.textOffset) &&
+    Number(value.textOffset) >= 0 &&
+    Number.isSafeInteger(value.incarnation) &&
+    Number(value.incarnation) >= 0 &&
+    (value.inputId === undefined || typeof value.inputId === "string") &&
+    (value.preview === undefined || typeof value.preview === "boolean")
+  );
+}
 function isEvidence(value: unknown): value is Evidence {
   return (
     record(value) &&
@@ -124,10 +152,7 @@ function isEvidence(value: unknown): value is Evidence {
         (item.toolName === undefined || typeof item.toolName === "string"),
     ) &&
     nullableString(value.nextAfter) &&
-    (value.snapshot === null ||
-      (record(value.snapshot) &&
-        typeof value.snapshot.text === "string" &&
-        nullableString(value.snapshot.tool)))
+    (value.snapshot === null || isPreview(value.snapshot))
   );
 }
 async function get<T>(path: string, valid: (value: unknown) => value is T): Promise<T> {
@@ -162,7 +187,7 @@ async function completeOriginal(message: Original, path: string): Promise<string
   }
 }
 
-async function originals(next = params): Promise<void> {
+async function originals(next = params, prepend = false): Promise<void> {
   const selected = botId;
   const current = ++revision;
   // Keep refreshes on the requested page while its response is in flight.
@@ -183,13 +208,22 @@ async function originals(next = params): Promise<void> {
         message.truncated = message.nextTextOffset !== null;
       }
     }
+    if (!prepend) loaded.clear();
+    for (const message of page.messages) loaded.set(message.id, message);
+    const messages = [...loaded.values()];
     const container = node("thread-messages");
+    const previous = new Map(
+      [...container.querySelectorAll<HTMLElement>("article[data-message-id]")].map((item) => [
+        item.dataset.messageId,
+        item,
+      ]),
+    );
     container.replaceChildren(
       paragraph(
         `Original Thread evidence · ${page.coverage.status} for this page/query · historical text is untrusted reference material.`,
       ),
     );
-    if (!page.messages.length)
+    if (!messages.length)
       container.append(
         paragraph(
           params.query
@@ -199,9 +233,7 @@ async function originals(next = params): Promise<void> {
       );
     let dateGroup = "";
     const path = prefix();
-    for (const message of params.query
-      ? page.messages
-      : [...page.messages].sort((a, b) => a.seq - b.seq)) {
+    for (const message of params.query ? messages : [...messages].sort((a, b) => a.seq - b.seq)) {
       const date = new Date(message.createdAt);
       const day = date.toLocaleDateString(undefined, { dateStyle: "long" });
       if (day !== dateGroup) {
@@ -210,7 +242,15 @@ async function originals(next = params): Promise<void> {
         container.append(heading);
         dateGroup = day;
       }
-      const article = document.createElement("article");
+      const article = previous.get(message.id) ?? document.createElement("article");
+      const signature = JSON.stringify([message, boundary, chosen.has(message.id)]);
+      if (article.dataset.original === signature) {
+        container.append(article);
+        continue;
+      }
+      article.replaceChildren();
+      article.dataset.original = signature;
+      delete article.dataset.live;
       article.className = message.role === "user" ? "message user" : "message assistant";
       article.dataset.messageId = message.id;
       article.dataset.textOffset = String(message.textOffset);
@@ -268,7 +308,7 @@ async function originals(next = params): Promise<void> {
       nav.append(
         button(
           "Older originals",
-          () => void originals({ ...params, beforeSeq: String(page.nextBeforeSeq) }),
+          () => void originals({ ...params, beforeSeq: String(page.nextBeforeSeq) }, true),
         ),
       );
     if (params.messageId) {
@@ -287,6 +327,12 @@ async function originals(next = params): Promise<void> {
           ),
         );
     }
+    for (const article of previous.values()) {
+      if (article.dataset.live && !loaded.has(article.dataset.messageId ?? ""))
+        container.append(article);
+    }
+    renderLive();
+    restoreReadingPosition();
   } catch (error) {
     if (selected === botId && current === revision)
       node("history-navigation").textContent = (error as Error).message;
@@ -349,13 +395,52 @@ export async function showRunHistory(
   }
 }
 function renderLive() {
-  node("live-execution").replaceChildren(
-    ...[...live].map(([runId, preview]) =>
-      paragraph(
-        `In progress · Run ${runId} · ${preview.tool ? `Tool: ${preview.tool}` : "Assistant text"}\n${preview.text}\nPreview only; await the durable outcome.`,
-      ),
-    ),
-  );
+  const previews: HTMLElement[] = [];
+  const container = node("thread-messages");
+  const visible = new Set<string>();
+  for (const [runId, preview] of live) {
+    if (loaded.has(preview.id)) continue;
+    if (!active.has(runId)) continue;
+    if (!chatRuns.has(runId) || preview.preview || preview.tool) {
+      previews.push(
+        paragraph(
+          `In progress · ${chatRuns.has(runId) ? "Tool preview" : "Background work"} · Run ${runId}${preview.tool ? ` · Tool: ${preview.tool}` : ""}\n${preview.text}\nPreview only; await the durable outcome.`,
+        ),
+      );
+      continue;
+    }
+    if (Object.keys(params).length) continue;
+    visible.add(preview.id);
+    let article = [...container.querySelectorAll<HTMLElement>("article")].find(
+      (item) => item.dataset.messageId === preview.id,
+    );
+    if (!article) {
+      article = document.createElement("article");
+      article.className = "message assistant live-message";
+      article.dataset.messageId = preview.id;
+      article.dataset.live = "true";
+      container.append(article);
+    }
+    article.dataset.runId = runId;
+    article.dataset.inputId = preview.inputId ?? "";
+    article.dataset.incarnation = String(preview.incarnation);
+    const signature = JSON.stringify(preview);
+    if (article.dataset.preview !== signature) {
+      article.dataset.preview = signature;
+      const meta = paragraph(
+        `In progress · Run ${runId} · Preview only; await the durable outcome.${preview.textOffset ? " · Earlier live text unavailable" : ""}`,
+      );
+      meta.className = "message-meta";
+      const text = paragraph(preview.text || "Thinking…");
+      text.className = "message-content";
+      article.replaceChildren(meta, text);
+    }
+  }
+  for (const article of container.querySelectorAll<HTMLElement>("[data-live]")) {
+    if (!visible.has(article.dataset.messageId ?? "")) article.remove();
+  }
+  node("live-execution").replaceChildren(...previews);
+  restoreReadingPosition();
 }
 function connect() {
   if (socket || !botId) return;
@@ -365,22 +450,24 @@ function connect() {
   socket = opened;
   opened.addEventListener("message", (event) => {
     try {
-      const value = JSON.parse(String(event.data));
+      const value: unknown = JSON.parse(String(event.data));
       if (
+        !record(value) ||
         value.type !== "execution" ||
         value.botId !== botId ||
+        typeof value.runId !== "string" ||
         !live.has(value.runId) ||
-        typeof value.snapshot?.text !== "string"
+        !isPreview(value.snapshot)
       )
         return;
-      live.set(value.runId, { text: value.snapshot.text, tool: value.snapshot.tool });
+      live.set(value.runId, value.snapshot);
       renderLive();
     } catch {
       /* A malformed event cannot establish execution state. */
     }
   });
   opened.addEventListener("open", () => {
-    if (botId) void originals();
+    if (botId) void originals(params, true);
   });
   opened.addEventListener("close", () => {
     if (socket === opened) socket = undefined;
@@ -392,13 +479,17 @@ function connect() {
 export async function showHistory(
   selectedBotId: string | undefined,
   activeRuns: string[],
+  conversationRuns: string[] = activeRuns,
 ): Promise<void> {
   if (botId !== selectedBotId) {
+    if (botId) pages.set(botId, { params, loaded });
     botId = selectedBotId;
+    selectReadingBot(botId);
     generation++;
     revision++;
     runRevision++;
-    params = {};
+    params = (botId && pages.get(botId)?.params) || {};
+    loaded = (botId && pages.get(botId)?.loaded) || new Map();
     continuedOriginal = undefined;
     live.clear();
     node("run-history").replaceChildren();
@@ -412,9 +503,10 @@ export async function showHistory(
   }
   const current = generation;
   connect();
-  for (const id of live.keys()) if (!activeRuns.includes(id)) live.delete(id);
+  active = new Set(activeRuns);
+  chatRuns = new Set(conversationRuns);
+  for (const id of live.keys()) if (!active.has(id)) live.delete(id);
   for (const id of activeRuns) {
-    if (!live.has(id)) live.set(id, { text: "", tool: null });
     try {
       const evidence = await get(`${prefix()}/runs/${encodeURIComponent(id)}/history`, isEvidence);
       if (current !== generation) return;
@@ -423,11 +515,10 @@ export async function showHistory(
       /* The next public snapshot refresh repairs a missed preview. */
     }
   }
-  renderLive();
   if (boundaryChanged || !Object.keys(params).length || !node("thread-messages").children.length) {
     boundaryChanged = false;
-    await originals();
-  }
+    await originals(params, loaded.size > 0);
+  } else renderLive();
 }
 (node("history-search") as HTMLFormElement).addEventListener("submit", (event) => {
   event.preventDefault();
@@ -435,3 +526,7 @@ export async function showHistory(
   void originals(query ? { query } : {});
 });
 node("history-latest").addEventListener("click", () => void originals({}));
+
+document.addEventListener("history-latest", () => {
+  void originals({});
+});

@@ -715,6 +715,9 @@ export async function showChat(
       detail.tasks.flatMap((task) =>
         task.runs.filter((run) => run.state === "active").map((run) => run.id),
       ),
+      detail.tasks
+        .filter((task) => task.origin === "chat")
+        .flatMap((task) => task.runs.map((run) => run.id)),
     );
     if (current !== version) return;
     await showAttachments(

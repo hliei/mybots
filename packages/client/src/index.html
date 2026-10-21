@@ -38,9 +38,9 @@
           <div id="shell-empty" class="empty-chat"><h2>Your Bots, at a glance.</h2><p>Select a Bot from the sidebar or create one to start a conversation.</p></div>
           <section id="chat" aria-labelledby="chat-heading" hidden>
             <div class="timeline" aria-label="Chat history" tabindex="0">
-              <div class="thread"><h2 id="chat-heading" class="sr-only">Direct Thread</h2><div id="history-navigation"></div><div id="live-execution" aria-live="polite"></div><div id="thread-messages" aria-label="Conversation"></div></div>
+              <div class="thread"><h2 id="chat-heading" class="sr-only">Direct Thread</h2><div id="history-navigation"></div><div id="thread-messages" aria-label="Conversation"></div><div id="live-execution" aria-live="polite"></div></div>
             </div>
-            <div class="composer-area"><form id="message-form">
+            <div class="composer-area"><button id="back-to-latest" type="button" hidden>↓ Back to latest</button><form id="message-form">
             <label for="input-target">Input target</label>
             <select id="input-target"><option value="">Thread — continue chat</option></select>
             <label for="message-text">Message</label>

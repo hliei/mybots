@@ -13,7 +13,8 @@ export type ModelReply =
   | { tool: string; arguments: Record<string, unknown>; text?: string }
   | { tools: { name: string; arguments: Record<string, unknown> }[]; text?: string }
   | { status: number }
-  | { hold: true };
+  | { hold: true }
+  | { chunks: AsyncIterable<string> };
 
 /** Real HTTP/SSE boundary; SDK execution and persistence are not substituted. */
 export async function startPiService(
@@ -47,7 +48,10 @@ export async function startPiService(
         })}\n\n`,
       );
     };
-    send({ role: "assistant", content: reply.text ?? null });
+    if ("chunks" in reply) {
+      send({ role: "assistant" });
+      for await (const text of reply.chunks) send({ content: text });
+    } else send({ role: "assistant", content: reply.text ?? null });
     if ("tool" in reply || "tools" in reply) {
       send({
         tool_calls: ("tools" in reply
@@ -61,7 +65,14 @@ export async function startPiService(
         })),
       });
     }
-    send({}, "tool" in reply || "tools" in reply ? "tool_calls" : (reply.finishReason ?? "stop"));
+    send(
+      {},
+      "tool" in reply || "tools" in reply
+        ? "tool_calls"
+        : "finishReason" in reply
+          ? (reply.finishReason ?? "stop")
+          : "stop",
+    );
     response.end("data: [DONE]\n\n");
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

@@ -2121,6 +2121,8 @@ export class Host {
     const result = {
       botId,
       runId,
+      threadId: this.store.threads.session(runId).thread_id,
+      taskId: this.store.threads.run(runId).task_id,
       records,
       snapshot: execution.mailbox.executionSnapshot() ?? null,
       coverage: selected.length > 5 ? "partial" : "exhausted",
