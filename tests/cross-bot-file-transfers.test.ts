@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { RunnerMailbox } from "@mybots/mailbox/node";
 import { afterEach, expect, it, vi } from "vitest";
 import { PiProvider } from "../packages/agent-runner/src/providers/pi.ts";
@@ -565,4 +566,134 @@ it("records a real SDK file selection without exposing the source bytes in the c
   } finally {
     await service.close();
   }
+});
+
+it("requires a new decision when denied file bytes change at the same length", async () => {
+  const execution = new MailboxDriver();
+  execution.respond = async (_input, _material, signal) => {
+    await new Promise<void>((resolve) => {
+      if (signal.aborted) resolve();
+      else signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    return "Stopped";
+  };
+  await start(undefined, execution);
+  const targetId = await writer();
+  await post(`/api/bots/personal/collaboration/${targetId}`, {
+    requestId: "ask",
+    mode: "ask-each-time",
+  });
+  const sent = await (
+    await post("/api/bots/personal/thread/messages", {
+      requestId: "source",
+      text: "Select bytes",
+    })
+  ).json();
+  await vi.waitFor(() => expect(execution.launches).toHaveLength(1));
+  const mailbox = new RunnerMailbox(execution.launches[0]?.material.directory as string);
+  const file = await upload(sent.taskId, "note.txt", Buffer.from("old!"));
+  const selection = {
+    targetBotId: targetId,
+    text: "Copy note",
+    files: [{ kind: "attachment", id: file.id }],
+  };
+  const first = await ask(mailbox, "first", "delegate", { requestId: "first", ...selection });
+  expect(
+    (
+      await post(`/api/bots/personal/runs/${sent.runId}/approvals/first/decision`, {
+        requestId: "deny-first",
+        decision: "deny",
+        operation: "delegate",
+        ...selection,
+        deadline: null,
+        files: first.result?.files,
+      })
+    ).status,
+  ).toBe(202);
+  const repeated = await ask(mailbox, "repeated", "delegate", {
+    requestId: "repeated",
+    ...selection,
+  });
+  expect(repeated.result?.id).toBe("first");
+  await writeFile(
+    join(root, "data", "task-attachments", "personal", sent.taskId, "note.txt"),
+    "new!",
+  );
+  const changed = await ask(mailbox, "changed", "delegate", { requestId: "changed", ...selection });
+  expect(changed.result).toMatchObject({ id: "changed", approval: { state: "pending" } });
+  expect((await get(`/api/bots/${targetId}/thread`)).tasks).toEqual([]);
+});
+
+it("retains committed file copies when a later approved delegation fails admission", async () => {
+  const execution = new MailboxDriver();
+  execution.respond = async (_input, _material, signal) => {
+    await new Promise<void>((resolve) => {
+      if (signal.aborted) resolve();
+      else signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    return "Stopped";
+  };
+  await start(undefined, execution);
+  const targetId = await writer();
+  await post(`/api/bots/personal/collaboration/${targetId}`, {
+    requestId: "ask",
+    mode: "ask-each-time",
+  });
+  const sent = await (
+    await post("/api/bots/personal/thread/messages", {
+      requestId: "source",
+      text: "Copy in a batch",
+    })
+  ).json();
+  await vi.waitFor(() => expect(execution.launches).toHaveLength(1));
+  const mailbox = new RunnerMailbox(execution.launches[0]?.material.directory as string);
+  const file = await upload(sent.taskId, "note.txt", Buffer.from("retained"));
+  for (const requestId of ["batch-first", "batch-second"]) {
+    expect(
+      (
+        await ask(mailbox, requestId, "delegate", {
+          requestId,
+          targetBotId: targetId,
+          text: requestId,
+          files: [{ kind: "attachment", id: file.id }],
+        })
+      ).result?.state,
+    ).toBe("pending");
+  }
+  // Another admitted input creates a conflict for the later child admission.
+  expect(
+    (
+      await post(`/api/bots/${targetId}/thread/tasks`, {
+        requestId: "batch-conflict",
+        text: "Independent input",
+      })
+    ).status,
+  ).toBe(202);
+  mailbox.requestDurableWait("delegation");
+  await vi.waitFor(async () =>
+    expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("waiting"),
+  );
+  // Recreate a durable batch of approved proposals before the next reconciliation.
+  const db = new DatabaseSync(join(root, "data", "host.db"));
+  try {
+    db.exec(
+      "UPDATE input_admissions SET request_id = 'batch-second' WHERE request_id = 'batch-conflict'",
+    );
+    db.exec(
+      "UPDATE action_approvals SET state = 'approved', decision = 'approve' WHERE id IN ('batch-first', 'batch-second')",
+    );
+  } finally {
+    db.close();
+  }
+  await vi.waitFor(async () => {
+    const tasks = (await get(`/api/bots/${targetId}/thread`)).tasks;
+    const copied = tasks.find((task: { origin: string }) => task.origin === "delegation");
+    expect(copied).toBeDefined();
+    const attachments = (await get(`/api/bots/${targetId}/tasks/${copied.id}/attachments`))
+      .attachments;
+    expect(attachments).toHaveLength(1);
+    expect(
+      await download(`/api/bots/${targetId}/tasks/${copied.id}/attachments/${attachments[0].id}`),
+    ).toEqual(Buffer.from("retained"));
+  });
 });

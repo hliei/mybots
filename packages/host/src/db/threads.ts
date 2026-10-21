@@ -1884,7 +1884,7 @@ export class ThreadStore {
         row.targetBotId === input.targetBotId &&
         row.text === input.text &&
         row.approval?.state === "denied" &&
-        sameDelegationFiles(row.files, files),
+        this.sameBoundDelegationFiles(row.id, files),
     );
     if (denied) return denied;
     const mode = this.collaborationMode(input.sourceBotId, input.targetBotId);
@@ -2280,7 +2280,7 @@ export class ThreadStore {
         const existing = this.delegationsWhere(
           "source_bot_id = ? AND target_bot_id = ? AND parent_run_id = ? AND state = 'denied'",
           [input.sourceBotId, input.targetBotId, input.parentRunId],
-        ).find((row) => row.text === input.text && sameDelegationFiles(row.files, files));
+        ).find((row) => row.text === input.text && this.sameBoundDelegationFiles(row.id, files));
         if (existing) return existing;
         this.db
           .prepare(`INSERT INTO delegations (
@@ -2363,6 +2363,14 @@ export class ThreadStore {
      FROM delegation_files WHERE delegation_id = ? ORDER BY position`,
       )
       .all(id) as unknown as BoundDelegationFile[];
+  }
+
+  private sameBoundDelegationFiles(id: string, files: BoundDelegationFile[]): boolean {
+    const saved = this.boundDelegationFiles(id);
+    return (
+      sameDelegationFiles(saved, files) &&
+      saved.every((file, index) => file.digest === files[index]?.digest)
+    );
   }
 
   private insertDelegationFiles(id: string, files: BoundDelegationFile[]): void {

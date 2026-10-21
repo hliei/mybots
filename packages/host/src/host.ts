@@ -2510,16 +2510,15 @@ export class Host {
     this.store.threads.expireQuestions(this.timestamp());
     this.store.threads.expireApprovals(this.timestamp());
     const staged = await this.stageApprovedCopies(id);
-    let created: string[] = [];
     try {
-      created = this.store.threads.executeApprovals(
+      this.store.threads.executeApprovals(
         id,
         this.timestamp(),
         staged.map((item) => ({ delegationId: item.delegationId, childTaskId: item.childTaskId })),
       );
     } finally {
       for (const item of staged) {
-        if (!created.includes(item.childTaskId))
+        if (this.store.threads.delegation(item.delegationId)?.childTaskId !== item.childTaskId)
           await this.removeTransfer(item.targetBotId, item.childTaskId);
       }
     }
