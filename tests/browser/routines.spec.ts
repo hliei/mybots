@@ -85,7 +85,13 @@ test("one-shot Routine survives overdue restart and accepts targeted occurrence 
     ).toBeVisible();
     await showFeature(page, "chat");
     const taskId = await work.getAttribute("data-task-id");
-    await page.getByLabel("Input target", { exact: true }).selectOption(taskId as string);
+    const card = page.locator(`#work-cards article[data-task-id="${taskId}"]`);
+    await expect(card).toContainText("Routine · active");
+    await expect(
+      page.getByRole("button", { name: "Stop current chat Run", exact: true }),
+    ).toBeHidden();
+    await card.getByRole("button", { name: "Add instructions", exact: true }).click();
+    await expect(page.getByLabel("Input target", { exact: true })).toHaveValue(taskId as string);
     await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Only shelf 3");
     await showFeature(page, "chat");
@@ -95,6 +101,30 @@ test("one-shot Routine survives overdue restart and accepts targeted occurrence 
     child?.send("complete");
     await expect(work).toContainText("Outcome: succeeded");
     await expect(work).toContainText("Routine result: Only shelf 3");
+    await expect(card).toContainText("Routine · succeeded");
+    await expect(card.getByRole("button", { name: "Add instructions", exact: true })).toHaveCount(
+      0,
+    );
+    await card.getByRole("button", { name: "View details", exact: true }).click();
+    await expect(
+      work.getByRole("button", { name: "Inspect Run evidence", exact: true }),
+    ).toBeVisible();
+    for (const viewport of [
+      { width: 1280, height: 900 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport);
+      expect(
+        await page.evaluate(
+          () =>
+            document.documentElement.scrollWidth <= innerWidth &&
+            document.documentElement.scrollHeight <= innerHeight,
+        ),
+      ).toBe(true);
+      await expect(card).toBeVisible();
+      await page.screenshot({ path: `/tmp/mybots-tasks-${viewport.width}.png` });
+    }
     await page.setViewportSize({ width: 1920, height: 1080 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,

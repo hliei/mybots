@@ -184,7 +184,7 @@ test("inspects and resends a Routine outcome notice and follows its work locator
     expect(locator).toBeTruthy();
     await page.goto(new URL(locator as string, ready.url).href);
     await expect(
-      page.locator("[data-task-id]").filter({ hasText: `Routine: ${routine.id}` }),
+      page.locator("#chat-works [data-task-id]").filter({ hasText: `Routine: ${routine.id}` }),
     ).toBeFocused();
     const headers = { Authorization: `Bearer ${ready.credential}` };
     async function post(path: string, data: unknown) {
@@ -265,7 +265,7 @@ test("inspects and resends a Routine outcome notice and follows its work locator
     await approval.getByRole("button", { name: "Deny action" }).click();
     await expect(works).toContainText("Owner decision: deny");
     await works.getByRole("link", { name: /Source Bot: personal/ }).click();
-    await expect(page.locator(`[data-task-id="${source.taskId}"]`)).toBeFocused();
+    await expect(page.locator(`#chat-works [data-task-id="${source.taskId}"]`)).toBeFocused();
     expect(errors).toEqual([]);
   } finally {
     child.kill("SIGTERM");

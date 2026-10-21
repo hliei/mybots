@@ -38,7 +38,7 @@
           <div id="shell-empty" class="empty-chat"><h2>Your Bots, at a glance.</h2><p>Select a Bot from the sidebar or create one to start a conversation.</p></div>
           <section id="chat" aria-labelledby="chat-heading" hidden>
             <div class="timeline" aria-label="Chat history" tabindex="0">
-              <div class="thread"><h2 id="chat-heading" class="sr-only">Direct Thread</h2><div id="history-navigation"></div><div id="thread-messages" aria-label="Conversation"></div><div id="live-execution" aria-live="polite"></div></div>
+              <div class="thread"><h2 id="chat-heading" class="sr-only">Direct Thread</h2><div id="history-navigation"></div><div id="thread-messages" aria-label="Conversation"></div><div id="live-execution" aria-live="polite"></div><div id="work-cards" aria-label="Work summaries"></div></div>
             </div>
             <div class="composer-area"><button id="back-to-latest" type="button" hidden>↓ Back to latest</button><form id="message-form">
             <label for="input-target">Input target</label>
@@ -49,7 +49,7 @@
             <div class="composer-actions"><button id="message-actions" type="button" aria-label="Message actions" aria-expanded="false" aria-controls="composer-menu" class="icon-button">+</button><div id="composer-menu" hidden><button id="new-task" type="button">New task</button></div></div>
             <button type="submit" aria-label="Send message" title="Send message" class="icon-button">↑</button>
 
-          </form><p id="chat-message" aria-live="polite"></p><button id="retry-chat" type="button" hidden="">Retry chat request</button></div>
+          </form><div id="chat-stop"></div><p id="chat-message" aria-live="polite"></p><button id="retry-chat" type="button" hidden="">Retry chat request</button></div>
           </section>
         </section>
         <aside id="detail-surface" class="right-panel" aria-label="Bot details" hidden>

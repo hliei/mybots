@@ -99,7 +99,9 @@ test("disable a Bot, enable it without revival, and logically delete it while ke
     await showFeature(page, "chat");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await showFeature(page, "tasks");
-    await expect(page.locator("#chat-works").getByText("Execution: active")).toBeVisible();
+    await expect(
+      page.locator("#chat-works").getByText("Chat · active", { exact: true }),
+    ).toBeVisible();
     child?.send("complete");
     await expect(page.locator("#chat-works")).toContainText("Final: Fresh note");
     await expect(page.locator("#chat-works")).toContainText("Stopped before a final result.");

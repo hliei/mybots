@@ -167,6 +167,7 @@ test("history anchors survive live output, Bot switching and panel reflow", asyn
     await page.getByLabel("Model", { exact: true }).selectOption("deepseek/deepseek-chat");
     await page.getByRole("button", { name: "Create Bot", exact: true }).click();
     await expect(page.getByRole("button", { name: "Bot details: Reader" })).toBeVisible();
+    await page.setViewportSize({ width: 1280, height: 940 });
     await page.getByLabel("Message", { exact: true }).fill("Panel reflow reply");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await expect(page.locator("#thread-messages")).toContainText("A line of conversation");

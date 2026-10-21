@@ -188,7 +188,7 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
     const parent = (await detail(researcher)).tasks[0];
     const parentRun = parent?.runs[0];
     if (!parent || !parentRun) throw new Error("Routine occurrence missing");
-    const parentCard = page.locator(`[data-task-id="${parent.id}"]`);
+    const parentCard = page.locator(`#chat-works [data-task-id="${parent.id}"]`);
     await expect(parentCard).toContainText("Execution: active");
     await expect(parentCard).toContainText("Origin: routine");
     await expect(parentCard).toContainText("Run background: none");
@@ -227,7 +227,7 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
     const childTask = (await detail(writer)).tasks[0];
     const childRun = childTask?.runs[0];
     if (!childTask || !childRun) throw new Error("Owned child missing");
-    const childCard = page.locator(`[data-task-id="${childTask.id}"]`);
+    const childCard = page.locator(`#chat-works [data-task-id="${childTask.id}"]`);
     await expect(childCard).toContainText(`Parent Task ${parent.id} · Parent Run ${parentRun.id}`);
     await expect(childCard).toContainText(`Child Task ${childTask.id} · Child Run ${childRun.id}`);
     const writerMailbox = new RunnerMailbox(join(root, "data", "sessions", writer, childRun.id));

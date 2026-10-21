@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 type Feature =
   | "chat"
@@ -34,6 +34,10 @@ export async function showFeature(page: Page, feature: Feature): Promise<void> {
   } else if (feature === "tasks") {
     if (!(await page.locator('[data-detail-mount="tasks"]').isVisible()))
       await page.getByRole("button", { name: "Tasks", exact: true }).click();
+    await expect(page.locator("#chat-works")).toHaveAttribute("aria-busy", "false");
+    for (const details of await page.locator("#chat-works > article > details").all())
+      if ((await details.getAttribute("open")) === null)
+        await details.locator(":scope > summary").click();
   } else if (feature === "files") {
     if (!(await page.locator('[data-detail-mount="files"]').isVisible())) {
       await page.getByRole("button", { name: /^Bot details:/ }).click();

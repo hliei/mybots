@@ -74,6 +74,10 @@ test("inspect budget exhaustion, confirmed stop and an explicit new-Run retry", 
     await task.getByRole("button", { name: "Retry run", exact: true }).click();
     await expect(task).toContainText("Active budget: 0.0 / 60 minutes");
     await expect(task).toContainText("Execution: active");
+    await expect(task).toContainText("Explicit retry of Run:");
+    await expect(
+      task.locator("details.task-details > div > p").filter({ hasText: /^Run ID:/ }),
+    ).toHaveCount(2);
     await page.reload();
     await expect(page.locator("#chat-works article").nth(1)).toContainText(
       "exhausted; completed effects are retained",

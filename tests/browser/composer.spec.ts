@@ -66,6 +66,48 @@ const test = base.extend<{
   },
 });
 
+test("Tasks expose compact source cards, explicit additions and the active chat stop target", async ({
+  page,
+  runtime: { ready },
+}) => {
+  await page.goto(ready.url);
+  await page.getByLabel("Connection credential").fill(ready.credential);
+  await page.getByRole("button", { name: "Pair with Host" }).click();
+  await page.getByRole("button", { name: "Select Personal", exact: true }).click();
+  const stop = page.getByRole("button", { name: "Stop current chat Run", exact: true });
+  await expect(stop).toBeVisible();
+  await expect(stop).toHaveAttribute("data-run-id", ready.sessionId);
+  await expect(page.locator("#work-cards article")).toHaveCount(0);
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await expect(page.locator("#chat-works")).toHaveAttribute("aria-busy", "false");
+  const task = page.locator("#chat-works article").first();
+  const taskId = await task.getAttribute("data-task-id");
+  await expect(task.locator("summary").first()).toContainText("Chat · active");
+  await expect(task.getByRole("button", { name: "Inspect Run evidence" })).toBeHidden();
+  await task.locator("summary").first().click();
+  await expect(task.getByRole("button", { name: "Inspect Run evidence" })).toBeVisible();
+  await task.getByRole("button", { name: "Add instructions", exact: true }).click();
+  await expect(page.locator("#composer-target")).toContainText(taskId as string);
+  await expect(stop).toBeHidden();
+  await page.getByLabel("Message", { exact: true }).fill("Targeted active instructions");
+  const added = page.waitForResponse((response) =>
+    response.url().endsWith(`/tasks/${taskId}/inputs`),
+  );
+  await page.getByLabel("Message", { exact: true }).press("Enter");
+  expect(await (await added).json()).toMatchObject({ taskId, runId: ready.sessionId });
+  await page.getByRole("button", { name: "Return to Thread", exact: true }).click();
+  await expect(stop).toBeVisible();
+  const stopped = page.waitForResponse((response) =>
+    response.url().endsWith(`/runs/${ready.sessionId}/stop`),
+  );
+  await stop.click();
+  expect((await stopped).ok()).toBe(true);
+  await expect(task).toContainText("Outcome: cancelled");
+  await expect(stop).toBeHidden();
+  await expect(page.locator("#work-cards article")).toHaveCount(1);
+  await expect(page.locator("#work-cards")).toContainText("Chat · closed");
+});
+
 test("composer preserves isolated drafts and handles Enter, newlines and IME", async ({
   page,
   runtime: { ready },
@@ -353,7 +395,12 @@ test("explicit additions to a waiting Task retain its Run and do not answer its 
   await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await expect(page.locator("#chat-works")).toContainText("Execution: waiting");
   const taskId = await page.locator("#chat-works article").first().getAttribute("data-task-id");
-  await page.getByLabel("Input target").selectOption(taskId as string);
+  await page
+    .locator("#chat-works article")
+    .first()
+    .getByRole("button", { name: "Add instructions", exact: true })
+    .click();
+  await expect(page.getByLabel("Input target")).toHaveValue(taskId as string);
   await page.getByLabel("Message", { exact: true }).fill("Additional waiting instructions");
   const admitted = page.waitForResponse((response) =>
     response.url().endsWith(`/tasks/${taskId}/inputs`),

@@ -7,6 +7,7 @@ import {
   showHistory,
   showRunHistory,
 } from "./history.ts";
+import { restoreReadingPosition } from "./reading-position.ts";
 import { showRoutines } from "./routines.ts";
 import { openDetail } from "./shell.ts";
 
@@ -102,6 +103,7 @@ interface Delegation {
 }
 interface Run {
   id: string;
+  priorRunId: string | null;
   state: string;
   budget: { limitMs: number; activeMs: number; exhaustedAt: string | null };
   held?: boolean;
@@ -134,6 +136,7 @@ interface Run {
 interface Task {
   id: string;
   origin: string;
+  routine: { id: string; text: string } | null;
   runs: Run[];
 }
 interface Detail {
@@ -279,12 +282,17 @@ function isDetail(value: unknown): value is Detail {
         record(task) &&
         typeof task.id === "string" &&
         typeof task.origin === "string" &&
+        (task.routine === null ||
+          (record(task.routine) &&
+            typeof task.routine.id === "string" &&
+            typeof task.routine.text === "string")) &&
         Array.isArray(task.runs) &&
         task.runs.every(
           (run: unknown) =>
             record(run) &&
             typeof run.id === "string" &&
             typeof run.state === "string" &&
+            (run.priorRunId === null || typeof run.priorRunId === "string") &&
             record(run.budget) &&
             typeof run.budget.limitMs === "number" &&
             typeof run.budget.activeMs === "number" &&
@@ -422,6 +430,10 @@ const panel = element("chat");
 const selected = element("selected-chat");
 const messages = element("thread-messages");
 const works = element("chat-works");
+const cards = element("work-cards");
+const chatStop = element("chat-stop");
+const expandedTasks = new Set<string>();
+let chatExecution: { taskId: string; runId: string; state: string } | undefined;
 const notice = element("chat-message");
 const form = element<HTMLFormElement>("message-form");
 const text = element<HTMLTextAreaElement>("message-text");
@@ -606,6 +618,9 @@ function controls(): void {
   resetBackground.disabled = !admitting || sending || !!pending;
   retry.hidden = !pending;
   retry.disabled = sending || !hostAvailable;
+  chatStop.hidden = !!target.value || !chatExecution;
+  for (const button of chatStop.querySelectorAll<HTMLButtonElement>("button"))
+    button.disabled = !hostAvailable || sending || !!pending || chatExecution?.state === "stopping";
 }
 export async function showChat(
   selectedBotId: string | undefined,
@@ -615,6 +630,14 @@ export async function showChat(
   if (!selectedBotId) availability = "active";
   else if (next) availability = next;
   if (botId !== selectedBotId) {
+    works.setAttribute("aria-busy", "true");
+    expandedTasks.clear();
+    cards.replaceChildren();
+    delete cards.dataset.cards;
+    chatStop.replaceChildren();
+    delete chatStop.dataset.target;
+    chatExecution = undefined;
+    element("run-history").replaceChildren();
     clearBackgroundSelection();
     botId = selectedBotId;
     text.value = selectedBotId ? readDraft(selectedBotId).text : "";
@@ -671,6 +694,35 @@ export async function showChat(
     const detail: unknown = await response.json();
     if (!isDetail(detail)) throw new Error();
     if (current !== version) return;
+    const executingChat = detail.tasks
+      .filter((task) => task.origin === "chat")
+      .flatMap((task) =>
+        task.runs
+          .filter((run) => ["active", "stopping"].includes(run.state))
+          .map((run) => ({ taskId: task.id, runId: run.id, state: run.state })),
+      );
+    chatExecution = executingChat.length === 1 ? executingChat[0] : undefined;
+    const stopSignature = JSON.stringify(chatExecution ?? null);
+    if (chatStop.dataset.target !== stopSignature) {
+      chatStop.dataset.target = stopSignature;
+      chatStop.replaceChildren();
+      if (chatExecution) {
+        const button = runButton(
+          "Stop current chat Run",
+          "stop",
+          chatExecution.taskId,
+          chatExecution.runId,
+        );
+        button.dataset.runId = chatExecution.runId;
+        button.title = `Task ${chatExecution.taskId} · Run ${chatExecution.runId}`;
+        if (chatExecution.state === "stopping") button.textContent = "Stopping current chat…";
+        chatStop.append(
+          button,
+          paragraph(`Task ${chatExecution.taskId} · Run ${chatExecution.runId}`),
+        );
+      }
+    }
+    controls();
     showCollaboration(
       botId,
       detail.collaboration,
@@ -725,6 +777,7 @@ export async function showChat(
       detail.tasks.map((task) => task.id),
     );
     if (current !== version) return;
+    renderWorkCards(detail.tasks);
     if (
       document.activeElement instanceof HTMLTextAreaElement &&
       works.contains(document.activeElement)
@@ -740,10 +793,39 @@ export async function showChat(
         const article = document.createElement("article");
         article.id = `task-${task.id}`;
         article.dataset.taskId = task.id;
-        article.append(paragraph(`Task ID: ${task.id} · Origin: ${task.origin}`));
+        article.className = "task-card";
+        const evidence = document.createElement("details");
+        evidence.className = "task-details";
+        evidence.open =
+          expandedTasks.has(task.id) ||
+          task.runs.some(
+            (run) =>
+              run.questions.some((q) => q.state === "pending") ||
+              run.delegations.some((d) => d.approval?.state === "pending"),
+          );
+        const summary = document.createElement("summary");
+        summary.append(
+          paragraph(`${sourceLabel(task)} · ${task.runs.at(-1)?.state ?? "no Runs"}`),
+          paragraph(taskTitle(task)),
+        );
+        evidence.append(summary);
+        evidence.addEventListener("toggle", () => {
+          if (!evidence.isConnected) return;
+          if (evidence.open) expandedTasks.add(task.id);
+          else expandedTasks.delete(task.id);
+        });
+        article.append(evidence);
+        const content = document.createElement("div");
+        evidence.append(content);
+        content.append(paragraph(`Task ID: ${task.id} · Origin: ${task.origin}`));
+        if (task.routine)
+          content.append(paragraph(`Routine: ${task.routine.text} · ${task.routine.id}`));
+        const addition = additionButton(task);
+        if (addition) content.append(addition);
         for (const run of task.runs) {
-          article.append(
+          content.append(
             paragraph(`Run ID: ${run.id}`),
+            ...(run.priorRunId ? [paragraph(`Explicit retry of Run: ${run.priorRunId}`)] : []),
             paragraph(
               run.state === "queued" && run.admissionClass && run.queuePosition
                 ? `Execution: queued · ${run.admissionClass} · position ${run.queuePosition}`
@@ -785,7 +867,7 @@ export async function showChat(
             paragraph(`Outcome: ${run.outcome?.kind ?? "unresolved"}`),
           );
           for (const question of run.questions)
-            article.append(
+            content.append(
               questionCard(
                 task.id,
                 run,
@@ -796,37 +878,38 @@ export async function showChat(
           for (const notice of detail.notices.filter(
             (notice) => notice.runId === run.id && notice.kind !== "question",
           ))
-            article.append(noticeCard(notice));
-          for (const delegation of run.delegations) article.append(delegationCard(run, delegation));
+            content.append(noticeCard(notice));
+          for (const delegation of run.delegations) content.append(delegationCard(run, delegation));
           if (run.outcome)
-            article.append(
+            content.append(
               paragraph(
                 `Final: ${run.outcome.reply}${run.outcome.truncated ? " [Excerpt; inspect Run evidence for the original.]" : ""}`,
               ),
             );
           if (run.state === "waiting")
-            article.append(
+            content.append(
+              paragraph(`Wait reason: ${run.waitReason ?? "unknown"}`),
               paragraph(
                 "Durable wait released this Bot's execution slot. Resumed work waits for the active Attempt to finish.",
               ),
             );
           const executing = run.attempts.find((attempt) => attempt.endedAt === null);
-          if (executing) article.append(paragraph(`Attempt ${executing.id} is executing.`));
+          if (executing) content.append(paragraph(`Attempt ${executing.id} is executing.`));
           if (run.state === "stopping")
-            article.append(
+            content.append(
               paragraph(
                 run.stopError ??
                   "Stopping until termination is confirmed. This Bot keeps its execution slot.",
               ),
             );
           if (run.state === "uncertain")
-            article.append(
+            content.append(
               paragraph(
                 "Final evidence is missing. This Run is held until you retry or close it. Unrelated Tasks can proceed.",
               ),
             );
           if (run.held)
-            article.append(
+            content.append(
               paragraph(
                 run.state === "waiting"
                   ? "Owned child outcome is uncertain. Inspect the child Task to retry or close its Run."
@@ -834,7 +917,7 @@ export async function showChat(
               ),
             );
           for (const late of run.lateEvidence ?? [])
-            article.append(paragraph(`Late result: ${late.text}`));
+            content.append(paragraph(`Late result: ${late.text}`));
           const details = document.createElement("details");
           details.append(
             Object.assign(document.createElement("summary"), {
@@ -860,25 +943,26 @@ export async function showChat(
             );
             if (input.outcome) details.append(paragraph(`Reply: ${input.outcome.reply}`));
           }
-          article.append(details);
+          content.append(details);
           const inspect = document.createElement("button");
           inspect.type = "button";
           inspect.textContent = "Inspect Run evidence";
           inspect.addEventListener("click", () => void showRunHistory(run.id));
-          article.append(inspect);
+          content.append(inspect);
           const runnable = ["queued", "active", "stopping", "waiting"].includes(run.state);
-          if (runnable) article.append(runButton("Stop run", "stop", task.id, run.id));
+          if (runnable) content.append(runButton("Stop run", "stop", task.id, run.id));
           if (run.state === "uncertain" || run.state === "closed") {
             const retryRun = runButton("Retry run", "retry", task.id, run.id);
             retryRun.disabled = availability !== "active";
-            article.append(retryRun);
+            content.append(retryRun);
           }
           if (run.state === "uncertain")
-            article.append(runButton("Close uncertain run", "close", task.id, run.id));
+            content.append(runButton("Close uncertain run", "close", task.id, run.id));
         }
         return article;
       }),
     );
+    works.setAttribute("aria-busy", "false");
     if (!locatedQuestion && location.hash) {
       const target = [
         ...works.querySelectorAll<HTMLElement>(
@@ -887,6 +971,8 @@ export async function showChat(
       ].find((section) => location.hash === `#${encodeURIComponent(section.id)}`);
       if (target) {
         openDetail("tasks");
+        const details = target.closest(".task-details") ?? target.querySelector(".task-details");
+        if (details instanceof HTMLDetailsElement) details.open = true;
         target.tabIndex = -1;
         target.focus();
         locatedQuestion = true;
@@ -909,6 +995,100 @@ export async function showChat(
         "Thread state unavailable. Displayed results may be stale. Refresh to retry.";
   }
 }
+function sourceLabel(task: Task): string {
+  return task.origin === "routine"
+    ? "Routine"
+    : task.origin === "delegation"
+      ? "Delegation"
+      : "Chat";
+}
+function taskTitle(task: Task): string {
+  return (
+    task.routine?.text.slice(0, 100) ||
+    task.runs[0]?.inputs[0]?.text.slice(0, 100) ||
+    `Task ${task.id}`
+  );
+}
+function additionButton(task: Task): HTMLButtonElement | undefined {
+  const run = task.runs.at(-1);
+  if (!run || !["active", "queued", "waiting"].includes(run.state)) return;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Add instructions";
+  button.disabled = availability !== "active" || sending || !!pending || !hostAvailable;
+  button.addEventListener("click", () => {
+    const option = [...target.options].find((option) => option.value === task.id);
+    if (!option || option.dataset.runId !== run.id || option.dataset.unavailable) return;
+    target.value = task.id;
+    saveDraft();
+    showTarget();
+    text.focus();
+  });
+  return button;
+}
+function renderWorkCards(tasks: Task[]): void {
+  const surfaced = tasks.filter(
+    (task) =>
+      task.origin !== "chat" ||
+      task.runs.some(
+        (run) =>
+          run.questions.length ||
+          run.delegations.length ||
+          run.held ||
+          (run.outcome && ["cancelled", "failed", "uncertain"].includes(run.outcome.kind)) ||
+          ["uncertain", "stopping"].includes(run.state),
+      ),
+  );
+  const signature = JSON.stringify([
+    surfaced.map((task) => [
+      task.id,
+      taskTitle(task),
+      task.runs.map((run) => [run.state, run.questions, run.delegations, run.held, run.stopError]),
+    ]),
+    availability,
+    sending,
+    !!pending,
+    hostAvailable,
+  ]);
+  if (cards.dataset.cards === signature) return;
+  cards.dataset.cards = signature;
+  cards.replaceChildren(
+    ...surfaced.map((task) => {
+      const article = document.createElement("article");
+      article.className = "task-card";
+      article.dataset.taskId = task.id;
+      const run = task.runs.at(-1);
+      article.append(
+        paragraph(`${sourceLabel(task)} · ${run?.state ?? "no Runs"}`),
+        paragraph(taskTitle(task)),
+      );
+      const decisions = task.runs.flatMap((run) => [
+        ...run.questions.map((q) => `Question: ${q.text.slice(0, 180)} · ${q.state}`),
+        ...run.delegations
+          .filter((d) => d.approval)
+          .map((d) => `Action approval · ${d.approval?.state}`),
+      ]);
+      if (decisions.length) article.append(paragraph(decisions.join(" · ")));
+      if (run?.stopError) article.append(paragraph(run.stopError));
+      const inspect = document.createElement("button");
+      inspect.type = "button";
+      inspect.textContent = "View details";
+      inspect.addEventListener("click", () => {
+        openDetail("tasks");
+        const details = document.getElementById(`task-${task.id}`)?.querySelector("details");
+        if (details) {
+          details.open = true;
+          details.querySelector("summary")?.focus();
+        }
+      });
+      article.append(inspect);
+      const addition = additionButton(task);
+      if (addition) article.append(addition);
+      return article;
+    }),
+  );
+  restoreReadingPosition();
+}
 function delegationCard(run: Run, delegation: Delegation): HTMLElement {
   const section = document.createElement("section");
   section.dataset.delegationId = delegation.id;
@@ -920,6 +1100,10 @@ function delegationCard(run: Run, delegation: Delegation): HTMLElement {
     paragraph(`Originating Run ${delegation.originatingRunId}`),
     paragraph(`Selected text: ${delegation.text}`),
   );
+  const parent = document.createElement("a");
+  parent.href = `/?bot=${encodeURIComponent(delegation.sourceBotId)}#task-${encodeURIComponent(delegation.parentTaskId)}`;
+  parent.textContent = "Open owning Task";
+  section.append(parent);
   if (delegation.files.length > 0)
     section.append(
       paragraph(
@@ -928,10 +1112,15 @@ function delegationCard(run: Run, delegation: Delegation): HTMLElement {
           .join(", ")}`,
       ),
     );
-  if (delegation.childTaskId && delegation.childRunId)
+  if (delegation.childTaskId && delegation.childRunId) {
     section.append(
       paragraph(`Child Task ${delegation.childTaskId} · Child Run ${delegation.childRunId}`),
     );
+    const child = document.createElement("a");
+    child.href = `/?bot=${encodeURIComponent(delegation.targetBotId)}#task-${encodeURIComponent(delegation.childTaskId)}`;
+    child.textContent = "Open delegated Task";
+    section.append(child);
+  }
   if (delegation.revokedAt)
     section.append(
       paragraph(

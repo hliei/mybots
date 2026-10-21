@@ -164,5 +164,15 @@ dialog::backdrop { background: #0009; }
 
 .timeline { overflow-anchor: none; }
 .composer-area { position: relative; }
+.task-card { border: 1px solid var(--line); border-radius: 16px; background: var(--surface); padding: 16px; margin: 16px 0; overflow-wrap: anywhere; }
+.task-card p { margin: 6px 0; font-size: 13px; line-height: 1.6; }
+.task-card summary { cursor: pointer; }
+.task-card summary p:first-child, #work-cards article > p:first-child { color: var(--secondary); font-size: 12px; }
+.task-card summary p:last-child, #work-cards article > p:nth-child(2) { font-size: 15px; color: #eee; }
+.task-card button { margin: 6px 6px 0 0; }
+.task-details > div { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 10px; }
+#selected-chat { font-size: 12px; color: var(--secondary); font-weight: normal; }
+#chat-stop { max-width: 940px; margin: 8px auto 0; }
+#chat-stop p { font-size: 11px; color: var(--secondary); overflow-wrap: anywhere; margin: 4px 0; }
 #back-to-latest { position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translateX(-50%); border-radius: 24px; background: #222; box-shadow: 0 3px 12px #0008; }
 .live-message .message-meta { color: #979797; }

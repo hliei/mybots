@@ -67,9 +67,9 @@ test("downloads a selected result unchanged after workspace edits and a fresh Ho
       name: `Download report.txt (${original.length} bytes)`,
       exact: true,
     });
+    await expect(page.locator("#chat-works")).toContainText("Report ready");
     await showFeature(page, "tasks");
     await expect(link).toBeVisible();
-    await expect(page.locator("#chat-works")).toContainText("Report ready");
     await expect(page.locator("#chat-works")).toContainText("Bot: personal · Task:");
     await writeFile(workspaceFile, "Replaced working report\n");
     async function download() {
@@ -88,6 +88,7 @@ test("downloads a selected result unchanged after workspace edits and a fresh Ho
     await page.reload();
     await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
+    await expect(page.locator("#chat-works")).toContainText("Report ready");
     await showFeature(page, "tasks");
     await expect(link).toBeVisible();
     await download();

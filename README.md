@@ -131,6 +131,18 @@ operation, Task/Run and request identity. Retry chat request recovers that saved
 admission, even after switching Bots or restarting the Host, without discarding a
 newer draft. Losing live observation alone does not disable HTTP submission.
 
+Tasks lists chat, Routine and delegated work as compact source-labelled cards.
+Expand a card to inspect its Runs, queue, active budget, ownership links and
+results, or choose Add instructions to target its current Run in the composer.
+Routine, delegated and actionable work also has a summary in the conversation;
+ordinary replies remain bubbles. Pending question and approval forms remain in
+Task details. Stop current chat Run names the active Task and Run and is available
+while composing ordinary chat. Use Stop run in a Task's details for other work,
+including its owned descendants. Stopping stays pending until termination is
+confirmed; failed stops and uncertain outcomes retain their evidence. Review an
+uncertain Run before explicitly closing or retrying it. Retry keeps the Task,
+starts a linked new Run and preserves the earlier outcome.
+
 Settings → Routines creates one-shot Routines from an absolute instant with offset
 and an IANA timezone, or recurring Routines from common cron choices or a custom
 five-field expression. Cron inherits the Bot timezone, defaulting to Asia/Shanghai. Resolved schedule and occurrence Task links

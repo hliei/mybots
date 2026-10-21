@@ -75,8 +75,7 @@ test("stop a Run, inspect late evidence, and keep an unconfirmed stop from block
         await route.abort();
       } else await route.continue();
     });
-    await showFeature(page, "tasks");
-    await page.getByRole("button", { name: "Stop run", exact: true }).click();
+    await page.getByRole("button", { name: "Stop current chat Run", exact: true }).click();
     await expect(page.locator("#chat-message")).toContainText("unconfirmed");
     await page.reload();
     await showFeature(page, "chat");
@@ -84,6 +83,9 @@ test("stop a Run, inspect late evidence, and keep an unconfirmed stop from block
     await expect(page.locator("#chat-works")).toContainText(
       "Stopping until termination is confirmed",
     );
+    await expect(
+      page.getByRole("button", { name: "Stopping current chat…", exact: true }),
+    ).toBeDisabled();
     child?.send("release-stop");
     await expect(page.locator("#chat-works")).toContainText("Stopped before a final result.");
     await expect(page.locator("#chat-works")).toContainText("Hold chat");
@@ -94,6 +96,9 @@ test("stop a Run, inspect late evidence, and keep an unconfirmed stop from block
       "Late result: Late evidence after stop",
     );
     await expect(page.locator("#chat-works")).toContainText("Outcome: cancelled");
+    await expect(
+      page.getByRole("button", { name: "Stopping current chat…", exact: true }),
+    ).toHaveCount(0);
     await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Hold chat");
     await showFeature(page, "chat");

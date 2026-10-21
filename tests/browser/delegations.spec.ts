@@ -162,6 +162,19 @@ for (const action of ["allow", "approve", "deny", "expire"] as const) {
         await expect(page.locator("#chat-works")).toContainText("Origin: delegation");
         await expect(page.locator("#chat-works")).toContainText("Child Task");
         await expect(page.locator('[data-delegation-id="browser-child"]')).toHaveCount(1);
+        const card = page.locator("#work-cards article").first();
+        await expect(card).toContainText("Delegation");
+        if (action === "approve") {
+          await card.getByRole("button", { name: "Add instructions", exact: true }).click();
+          const taskId = await page.getByLabel("Input target").inputValue();
+          await page.getByLabel("Message", { exact: true }).fill("Only this delegated Task");
+          const admitted = page.waitForResponse((response) =>
+            response.url().endsWith(`/tasks/${taskId}/inputs`),
+          );
+          await page.getByRole("button", { name: "Send message", exact: true }).click();
+          expect(await (await admitted).json()).toMatchObject({ taskId });
+          await expect(page.locator("#chat-works")).toContainText("Only this delegated Task");
+        }
       } else {
         await expect(page.locator("#chat-works")).not.toContainText("Origin: delegation");
       }
