@@ -3,7 +3,7 @@ import type { HistoryOperation } from "@mybots/mailbox";
 import { Type } from "typebox";
 
 export const PROGRESS_INSTRUCTIONS =
-  "create_routine schedules independent own-Bot work. Use runAt/timezone for one-shot or five-field cron inheriting Bot timezone; clarify unresolved intent. Report the resolved schedule. Include selected inputs explicitly; chat is not inherited. manage_routine pauses, resumes, runs, edits or deletes this Bot's Routine. delegate sends selected text under directed policy and ends the Attempt. Ask-each-time waits for an exact local approval before creating child work. Denial is input; do not repeat it, target yourself, nest, or grant permission. ask_question persists a required owner question and ends the Attempt after all tool results are recorded. Answers arrive as correlated evidence in a later Attempt of this Run. Ordinary Task input does not answer a question. publish_progress records owner-visible progress for this Attempt. publish_result records a selected result summary and optional immutable snapshots of workspace-relative files (up to 16, each within the installation file limit, 25 MiB by default). Neither completes the Run, changes its outcome, grants privileges, nor administers a Bot. Do not send Bot, Task, Run, or Attempt identity. After a timeout, call read_operation with the same requestId; do not publish that request again.";
+  "create_routine schedules independent own-Bot work. Use runAt/timezone for one-shot or five-field cron inheriting Bot timezone; clarify unresolved intent. Report the resolved schedule. Include selected inputs explicitly; chat is not inherited. manage_routine pauses, resumes, runs, edits or deletes this Bot's Routine. delegate sends selected text and Task files under directed policy and ends the Attempt. Ask-each-time waits for an exact local approval before creating child work. Denial is input; do not repeat it, target yourself, nest, or grant permission. ask_question persists a required owner question and ends the Attempt after all tool results are recorded. Answers arrive as correlated evidence in a later Attempt of this Run. Ordinary Task input does not answer a question. publish_progress records owner-visible progress for this Attempt. publish_result records a selected result summary and up to 16 immutable file snapshots within the 25 MiB limit. Neither completes the Run, changes its outcome, grants privileges, nor administers a Bot. Do not send Bot, Task, Run, or Attempt identity. After a timeout, call read_operation with the same requestId; do not publish that request again.";
 
 export function createProgressTools(operation: HistoryOperation) {
   const text = (value: unknown) => ({
@@ -61,7 +61,7 @@ export function createProgressTools(operation: HistoryOperation) {
       name: "delegate",
       label: "Delegate to Bot",
       description:
-        "Send selected text under directed policy. Ask-each-time persists an exact local approval before child work. Ends this Attempt; the result arrives later. After a timeout read_operation queries the same requestId.",
+        "Send selected text and files under directed policy. Ask-each-time persists an exact local approval before child work. Ends this Attempt; the result arrives later. After a timeout read_operation queries the same requestId.",
       parameters: Type.Object(
         {
           requestId: Type.String({ minLength: 1, maxLength: 128 }),
@@ -71,6 +71,9 @@ export function createProgressTools(operation: HistoryOperation) {
             Type.String({
               description: "Explicit ISO 8601 approval deadline; omit for indefinite waiting.",
             }),
+          ),
+          files: Type.Optional(
+            Type.Array(Type.Object({ kind: Type.String(), id: Type.String() }), { maxItems: 16 }),
           ),
         },
         { additionalProperties: false },
