@@ -181,3 +181,8 @@ dialog::backdrop { background: #0009; }
 
 .decision-card { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
 .decision-card textarea { width: 100%; min-height: 76px; resize: vertical; }
+
+#file-deliveries article, #attachment-list article { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 12px 0; }
+#file-deliveries p, #attachment-scope, #attachment-list p { color: var(--secondary); font-size: 12px; }
+#workspace-files { padding-left: 18px; }
+#workspace-files li { margin: 12px 0; font-size: 13px; }

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -377,4 +377,22 @@ it("stops transferring an attachment after the installation limit falls below it
     { path: "shared/ok.bin" },
   );
   expect(saved.status).toBe(413);
+});
+
+it("bounds the Bot workspace file listing without following symlinks", async () => {
+  await start();
+  const botId = await createBot("Files");
+  const bots = await (await fetch(`${base}/api/bots`, { headers })).json();
+  const workspace = join(root, bots.bots.find((bot: { id: string }) => bot.id === botId).workspace);
+  await Promise.all(
+    Array.from({ length: 1005 }, (_, index) =>
+      writeFile(join(workspace, `file-${index}.txt`), "bounded"),
+    ),
+  );
+  await symlink(join(root, "data"), join(workspace, "outside"));
+  const response = await fetch(`${base}/api/bots/${botId}/workspace/files`, { headers });
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body.files).toHaveLength(1000);
+  expect(body.files.every((file: { path: string }) => file.path.startsWith("file-"))).toBe(true);
 });

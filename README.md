@@ -122,6 +122,12 @@ approved model, tools and workspace; settings persist across Host restart. The
 desktop shell keeps the Bot sidebar and composer visible while the conversation
 scrolls. Open the Bot identity or Bot menu for Overview and Files, Tasks for Run
 evidence and owner decisions, and Search conversation for original history.
+Files separates immutable deliveries with producing Task/Run links, selected Task
+attachments, and mutable Bot workspace files. Use Message actions → Upload to a
+Task or Upload to this Task in Task details, then choose an existing Task before
+uploading. Download links return actual bytes; Save to Bot workspace deliberately
+makes an attachment available to this Bot’s other Tasks. Files does not create a
+Task for a first-message attachment or share materials with another Bot.
 Settings in the sidebar or Bot overview opens the current Bot's configuration,
 memory, Skills, collaboration and Routines. Close settings or press Escape to
 return to the conversation. The page refreshes status while visible. The Host

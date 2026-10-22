@@ -46,7 +46,7 @@
             <label for="message-text">Message</label>
             <div id="composer-target" hidden><span id="composer-target-label"></span><button id="return-thread" type="button" aria-label="Return to Thread">×</button></div>
             <textarea id="message-text" required="" maxlength="32000" rows="1" placeholder="Message your Bot…"></textarea>
-            <div class="composer-actions"><button id="message-actions" type="button" aria-label="Message actions" aria-expanded="false" aria-controls="composer-menu" class="icon-button">+</button><div id="composer-menu" hidden><button id="new-task" type="button">New task</button></div></div>
+            <div class="composer-actions"><button id="message-actions" type="button" aria-label="Message actions" aria-expanded="false" aria-controls="composer-menu" class="icon-button">+</button><div id="composer-menu" hidden><button id="new-task" type="button">New task</button><button id="attach-to-task" type="button">Upload to a Task</button></div></div>
             <button type="submit" aria-label="Send message" title="Send message" class="icon-button">↑</button>
 
           </form><div id="background-selection" hidden><span id="background-selection-count" aria-live="polite"></span><button id="clear-background-selection" type="button">Clear selection</button></div><div id="chat-stop"></div><p id="chat-message" aria-live="polite"></p><button id="retry-chat" type="button" hidden="">Retry chat request</button></div>
@@ -59,6 +59,7 @@
           <div class="panel-content">
             <div data-detail-mount="overview"><article id="selected-bot" aria-label="Selected Bot" hidden=""></article><div id="host-execution"></div><button id="bot-settings" type="button">Bot settings</button><button id="reset-background" type="button" hidden>Reset chat background</button></div>
             <div data-detail-mount="files" hidden><section id="attachments">
+            <h3>Delivered files</h3><p>Immutable snapshots from the loaded Tasks and Runs. Later workspace changes do not replace these bytes.</p><div id="file-deliveries" role="region" aria-label="Immutable deliveries"></div>
             <h3>Task attachments</h3>
             <p>An upload belongs to the selected Task and is not given to every Task in this Thread. Save a file into the Bot workspace when other Tasks of this Bot should reuse it. The Host stores and downloads the bytes; it does not interpret, preview, or edit the file format.</p>
             <form id="attachment-form">
@@ -68,10 +69,11 @@
               <input id="attachment-file" type="file" required="">
               <button type="submit">Upload attachment</button>
             </form>
+            <p id="attachment-scope"></p>
             <p id="attachment-message" aria-live="polite"></p>
             <div id="attachment-list" aria-label="Selected Task attachments"></div>
             <h3>Bot workspace</h3>
-            <p>These are regular files in this Bot workspace, including a file saved from a Task attachment. Another Bot does not receive them.</p>
+            <p>Mutable files shared by this Bot’s Tasks. Another Bot does not receive them. This bounded list shows up to 1,000 files.</p>
             <ul id="workspace-files"></ul>
           </section></div>
             <div data-detail-mount="tasks" hidden><h3 id="selected-chat"></h3><div id="chat-works" aria-label="Tasks and Runs"></div><section id="run-history" aria-label="Recorded Run evidence"></section></div>

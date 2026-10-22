@@ -1,4 +1,4 @@
-import { showAttachments } from "./attachments.ts";
+import { openTaskAttachments, showAttachments } from "./attachments.ts";
 import { showCollaboration } from "./collaboration.ts";
 import {
   clearBackgroundSelection,
@@ -549,6 +549,10 @@ actions.addEventListener("click", () => {
   actions.setAttribute("aria-expanded", String(!menu.hidden));
   if (!menu.hidden) element("new-task").focus();
 });
+element("attach-to-task").addEventListener("click", () => {
+  closeComposerMenu();
+  openTaskAttachments(target.value && target.value !== "new-task" ? target.value : undefined);
+});
 element("new-task").addEventListener("click", () => {
   target.value = "new-task";
   saveDraft();
@@ -643,6 +647,8 @@ export async function showChat(
   else if (next) availability = next;
   if (botId !== selectedBotId) {
     works.setAttribute("aria-busy", "true");
+    renderFileDeliveries([]);
+    void showAttachments(undefined, []);
     expandedTasks.clear();
     cards.replaceChildren();
     delete cards.dataset.cards;
@@ -679,6 +685,7 @@ export async function showChat(
   if (!botId) {
     showCollaboration(undefined, [], () => undefined);
     await showHistory(undefined, []);
+    renderFileDeliveries([]);
     await showAttachments(undefined, []);
     return;
   }
@@ -791,6 +798,7 @@ export async function showChat(
       detail.tasks.map((task) => task.id),
     );
     if (current !== version) return;
+    renderFileDeliveries(detail.tasks);
     renderWorkCards(detail.tasks);
     if (
       document.activeElement instanceof HTMLTextAreaElement &&
@@ -832,6 +840,11 @@ export async function showChat(
         const content = document.createElement("div");
         evidence.append(content);
         content.append(paragraph(`Task ID: ${task.id} · Origin: ${task.origin}`));
+        const upload = document.createElement("button");
+        upload.type = "button";
+        upload.textContent = "Upload to this Task";
+        upload.addEventListener("click", () => openTaskAttachments(task.id));
+        content.append(upload);
         if (task.routine)
           content.append(paragraph(`Routine: ${task.routine.text} · ${task.routine.id}`));
         const addition = additionButton(task);
@@ -868,10 +881,7 @@ export async function showChat(
                 ),
               );
               for (const file of result.artifacts) {
-                const download = document.createElement("a");
-                download.href = `/api/bots/${encodeURIComponent(result.botId)}/runs/${encodeURIComponent(result.runId)}/artifacts/${encodeURIComponent(file.id)}`;
-                download.download = file.name.split("/").at(-1) as string;
-                download.textContent = `Download ${file.name} (${file.bytes} bytes)`;
+                const download = artifactDownload(result, file);
                 const row = document.createElement("p");
                 row.append(download);
                 section.append(row);
@@ -1588,3 +1598,69 @@ element("confirm-reset").addEventListener("click", () => {
   localStorage.setItem(pendingKey, JSON.stringify(pending));
   void submit();
 });
+
+function renderFileDeliveries(tasks: Task[]): void {
+  const list = element("file-deliveries");
+  const results = tasks.flatMap((task) => task.runs.flatMap((run) => run.selectedResults));
+  const signature = JSON.stringify(results);
+  if (list.dataset.results === signature) return;
+  list.dataset.results = signature;
+  list.replaceChildren();
+  for (const result of results) {
+    for (const file of result.artifacts) {
+      const row = document.createElement("article");
+      row.append(
+        paragraph(
+          `Bot: ${result.botId} · Task: ${result.taskId} · Run: ${result.runId}${result.delegationId ? ` · Delegation: ${result.delegationId}` : ""}${result.originatingRunId ? ` · Originating Run: ${result.originatingRunId}` : ""}`,
+        ),
+      );
+      const taskLink = document.createElement("button");
+      taskLink.type = "button";
+      taskLink.textContent = "View producing Task";
+      taskLink.addEventListener("click", () => showProducingTask(result));
+      const runLink = document.createElement("button");
+      runLink.type = "button";
+      runLink.textContent = "Inspect producing Run";
+      runLink.addEventListener("click", () => void showRunHistory(result.runId));
+      row.append(artifactDownload(result, file), taskLink, runLink);
+      if (result.delegationId) {
+        const delegation = document.createElement("button");
+        delegation.type = "button";
+        delegation.textContent = `View delegation ${result.delegationId}`;
+        delegation.addEventListener("click", () => showProducingTask(result, result.delegationId));
+        row.append(delegation);
+      }
+      list.append(row);
+    }
+  }
+  if (!list.childElementCount)
+    list.append(paragraph("No delivered files in the loaded Tasks and Runs."));
+}
+
+function artifactDownload(
+  result: SelectedResult,
+  file: SelectedResult["artifacts"][number],
+): HTMLAnchorElement {
+  const link = document.createElement("a");
+  link.href = `/api/bots/${encodeURIComponent(result.botId)}/runs/${encodeURIComponent(result.runId)}/artifacts/${encodeURIComponent(file.id)}`;
+  link.download = file.name.split("/").at(-1) ?? file.name;
+  link.textContent = `Download ${file.name} (${file.bytes} bytes)`;
+  return link;
+}
+
+function showProducingTask(result: SelectedResult, delegationId: string | null = null): void {
+  openDetail("tasks");
+  const task = document.getElementById(`task-${result.taskId}`);
+  const details = task?.querySelector("details");
+  if (!details) return;
+  details.open = true;
+  const destination = delegationId
+    ? [...details.querySelectorAll<HTMLElement>("[data-delegation-id]")].find(
+        (node) => node.dataset.delegationId === delegationId,
+      )
+    : details.querySelector("summary");
+  if (destination) {
+    destination.tabIndex = -1;
+    destination.focus();
+  }
+}

@@ -1,5 +1,5 @@
 import { type ChildProcess, fork } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -181,6 +181,13 @@ test("approves a selected attachment and downloads the receiving copy after rest
       { headers: { Authorization: `Bearer ${ready.credential}` } },
     );
     expect(Buffer.from(await again.body())).toEqual(Buffer.from("browser-note"));
+    const [saved] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByRole("link", { name: "Download note.txt", exact: true }).click(),
+    ]);
+    const copyPath = join(root, "downloaded-copy.txt");
+    await saved.saveAs(copyPath);
+    expect(await readFile(copyPath)).toEqual(Buffer.from("browser-note"));
     expect(errors).toEqual([]);
   } finally {
     if (child) await stop();

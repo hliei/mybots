@@ -1,5 +1,5 @@
 import { fork } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,7 +52,9 @@ test("uploads bytes to the selected Task and deliberately saves them for that Bo
       mimeType: "application/octet-stream",
       buffer: Buffer.from([1, 2, 3, 4]),
     });
-    await showFeature(page, "files");
+    await page.getByRole("button", { name: "Message actions", exact: true }).click();
+    await page.getByRole("button", { name: "Upload to a Task", exact: true }).click();
+    await expect(tasks).toBeFocused();
     await page.getByRole("button", { name: "Upload attachment" }).click();
     await expect(page.locator("#attachment-list")).toContainText(`${filename} · 4 bytes`);
     await expect(
@@ -81,12 +83,40 @@ test("uploads bytes to the selected Task and deliberately saves them for that Bo
 
     await showFeature(page, "files");
 
-    await tasks.selectOption(first);
+    await showFeature(page, "tasks");
+    await page
+      .locator(`#task-${first}`)
+      .getByRole("button", { name: "Upload to this Task", exact: true })
+      .click();
+    await expect(tasks).toHaveValue(first);
     await showFeature(page, "files");
     await page.getByLabel(`Workspace path for ${filename}`).fill("shared/sample.bin");
     await showFeature(page, "files");
     await page.getByRole("button", { name: "Save to Bot workspace" }).click();
     await expect(page.locator("#workspace-files")).toContainText("shared/sample.bin · 4 bytes");
+    for (const name of [`Download ${filename}`, "Download workspace shared/sample.bin"]) {
+      const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        page.getByRole("link", { name, exact: true }).click(),
+      ]);
+      const path = join(root, "download.bin");
+      await download.saveAs(path);
+      expect(await readFile(path)).toEqual(Buffer.from([1, 2, 3, 4]));
+    }
+    for (const viewport of [
+      { width: 1280, height: 900 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      await page.locator("#detail-surface").evaluate((panel) => {
+        panel.scrollTop = 0;
+      });
+      await page.screenshot({ path: `/tmp/mybots-files-${viewport.width}.png` });
+    }
 
     await showFeature(page, "create");
     await page.getByLabel("Bot name").fill("Writer");
@@ -95,6 +125,13 @@ test("uploads bytes to the selected Task and deliberately saves them for that Bo
     await page.getByRole("button", { name: "Create Bot", exact: true }).click();
     await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Writer" }).click();
+    await showFeature(page, "files");
+    await expect(page.locator("#attachment-scope")).toContainText(
+      "Select an existing Task. First-message attachments are unavailable.",
+    );
+    await expect(
+      page.getByRole("button", { name: "Upload attachment", exact: true }),
+    ).toBeDisabled();
     await expect(page.locator("#workspace-files")).toContainText("No workspace files.");
     await expect(page.locator("#workspace-files")).not.toContainText("shared/sample.bin");
 

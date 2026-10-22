@@ -157,6 +157,7 @@ async function collectWorkspaceFiles(
 ): Promise<void> {
   if (files.length >= 1000) return;
   for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (files.length >= 1000) return;
     if (entry.isSymbolicLink()) continue;
     const full = join(directory, entry.name);
     const info = await lstat(full);
