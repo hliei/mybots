@@ -5,6 +5,7 @@ const settings = node("settings-surface") as HTMLDialogElement;
 const creation = node("create-surface") as HTMLDialogElement;
 let detailReturn: HTMLElement | undefined;
 let settingsReturn: HTMLElement | undefined;
+let settingsToTasks = false;
 let creationReturn: HTMLElement | undefined;
 let currentBot: string | undefined;
 
@@ -100,19 +101,20 @@ node("choose-skill-revisions").addEventListener("click", () => {
   node("saved-skills").scrollIntoView({ block: "center" });
   (node("saved-skills").querySelector("select") ?? node("saved-role")).focus();
 });
-node("collaboration-work").addEventListener("click", () => {
+function showSettingsTasks(): void {
+  settingsToTasks = true;
   settings.close();
-  openDetail("tasks", node("open-tasks"));
+}
+node("collaboration-work").addEventListener("click", showSettingsTasks);
+settings.addEventListener("close", () => {
+  if (settingsToTasks) {
+    settingsToTasks = false;
+    openDetail("tasks", node("open-tasks"));
+  } else resolveBotTrigger(settingsReturn, "open-settings").focus();
 });
-settings.addEventListener("close", () =>
-  resolveBotTrigger(settingsReturn, "open-settings").focus(),
-);
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-settings]"))
   button.addEventListener("click", () => selectSettings(button.dataset.settings as Settings));
-node("notification-details").addEventListener("click", () => {
-  settings.close();
-  openDetail("tasks", node("open-tasks"));
-});
+node("notification-details").addEventListener("click", showSettingsTasks);
 node("open-create").addEventListener("click", () => {
   creationReturn = document.activeElement as HTMLElement;
   creation.showModal();

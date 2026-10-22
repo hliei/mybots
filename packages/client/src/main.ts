@@ -447,9 +447,11 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     }
     if (active.availability === "deleted") {
       settingsFields.disabled = true;
-      saveSettings.disabled = true;
+      saveSettings.disabled = settingsSending || pendingSettings?.botId !== active.id;
       settingsMessage.textContent =
-        "Deleted Bot configuration stays inspectable. Active edits are not available.";
+        pendingSettings?.botId === active.id
+          ? "Deleted Bot configuration stays inspectable. Retry only the saved request to establish its outcome; new edits are not available."
+          : "Deleted Bot configuration stays inspectable. Active edits are not available.";
     }
   } else {
     settingsSection.hidden = true;
@@ -768,7 +770,10 @@ settingsForm.addEventListener("submit", async (event) => {
       : "Could not save the configuration request in this browser. Check local storage and retry.";
   } finally {
     settingsSending = false;
-    saveSettings.disabled = !!pendingSettings && pendingSettings.botId !== selectedId;
+    saveSettings.disabled =
+      (!!pendingSettings && pendingSettings.botId !== selectedId) ||
+      (!pendingSettings &&
+        summaries.find((bot) => bot.id === selectedId)?.availability === "deleted");
     showSettingsRecovery();
   }
 });

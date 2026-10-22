@@ -432,12 +432,14 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await page.getByLabel("Bot role").fill("Edited writer role.");
     await showFeature(page, "Configuration");
     const settingsRequests: { botId: string; body: unknown }[] = [];
+    let loseNextSettings = true;
     await page.route("**/api/bots/*/settings", async (route) => {
       settingsRequests.push({
         botId: new URL(route.request().url()).pathname.split("/")[3] as string,
         body: route.request().postDataJSON(),
       });
-      if (settingsRequests.length === 1) {
+      if (loseNextSettings) {
+        loseNextSettings = false;
         await route.fetch();
         await route.abort();
       } else await route.continue();
@@ -552,6 +554,40 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
       "Saved and effective configuration 2",
     );
     await expect(page.getByLabel("Connection credential")).toBeHidden();
+    // Deleting the owner of an unconfirmed save must not strand every other Bot's settings.
+    await showFeature(page, "Configuration");
+    await page.getByLabel("Bot role").fill("Last Writer configuration.");
+    loseNextSettings = true;
+    await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+    await expect(page.locator("#settings-message")).toContainText("unconfirmed");
+    expect(
+      (
+        await page.request.post(new URL(`/api/bots/${writerId}/delete`, ready.url).href, {
+          data: { requestId: "delete-pending-settings-bot" },
+        })
+      ).ok(),
+    ).toBe(true);
+    await page.reload();
+    await showFeature(page, "Configuration");
+    await page.getByRole("button", { name: "Recover configuration request", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Retry configuration", exact: true }),
+    ).toBeEnabled();
+    await page.getByRole("button", { name: "Retry configuration", exact: true }).click();
+    await expect(page.locator("#settings-recovery")).toBeHidden();
+    expect(settingsRequests[3]).toEqual(settingsRequests[2]);
+    await expect(page.getByLabel("Bot role")).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Save configuration", exact: true }),
+    ).toBeDisabled();
+    await showFeature(page, "chat");
+    await page.getByRole("button", { name: "Select Researcher", exact: true }).click();
+    await showFeature(page, "Configuration");
+    await page.getByLabel("Bot role").fill("Researcher can still save configuration.");
+    await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+    await expect(page.locator("#settings-versions")).toContainText(
+      "Saved and effective configuration 2",
+    );
     expect(errors).toEqual([]);
   } finally {
     if (child) await stop();

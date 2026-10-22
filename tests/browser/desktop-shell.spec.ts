@@ -133,9 +133,18 @@ test("desktop shell pairs, sends to a real Thread and returns focus from shared 
       await expect(page.locator("#settings-bot")).toHaveText("Shell test Bot");
       await page.screenshot({ path: `/tmp/mybots-settings-${section.toLowerCase()}.png` });
     }
-    await page.getByRole("button", { name: "Open Tasks and decisions", exact: true }).click();
+    await Promise.all([
+      page.locator("#settings-surface").evaluate(
+        (dialog) =>
+          new Promise<void>((resolve) => {
+            dialog.addEventListener("close", () => resolve(), { once: true });
+          }),
+      ),
+      page.getByRole("button", { name: "Open Tasks and decisions", exact: true }).click(),
+    ]);
     await expect(page.getByRole("complementary", { name: "Bot details" })).toBeVisible();
     await expect(page.locator("#detail-title")).toHaveText("Tasks and Runs");
+    await expect(page.getByRole("button", { name: "Close details", exact: true })).toBeFocused();
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: "Back to conversation", exact: true }).click();
     await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeFocused();
