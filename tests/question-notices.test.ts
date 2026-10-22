@@ -628,11 +628,17 @@ it("leaves a successful Run successful when Telegram delivery fails", async () =
   attach(telegram.url, configuration);
   const { sent, mailbox } = await ask(driver, "destination", "Which city?");
   await vi.waitFor(async () =>
-    expect((await get("/api/bots/personal/thread")).notices[0]?.attempts).toBe(1),
+    expect((await get("/api/bots/personal/thread")).notices[0]).toMatchObject({
+      attempts: 1,
+      nextAttemptAt: "2026-10-21T00:00:05.000Z",
+    }),
   );
   now += 5000;
   await vi.waitFor(async () =>
-    expect((await get("/api/bots/personal/thread")).notices[0]?.attempts).toBe(2),
+    expect((await get("/api/bots/personal/thread")).notices[0]).toMatchObject({
+      attempts: 2,
+      nextAttemptAt: "2026-10-21T00:00:35.000Z",
+    }),
   );
   now += 30000;
   await vi.waitFor(async () =>

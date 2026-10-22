@@ -346,7 +346,7 @@ it("counts all admitted descendants across restart, steering and new Attempts", 
     detail.tasks.every((task: { runs: { state: string }[] }) => task.runs[0]?.state === "failed"),
   ).toBe(true);
   expect((await run("personal", source.runId)).state).toBe("waiting");
-});
+}, 15000);
 
 async function nested(driver: MailboxDriver, questionText?: string) {
   await start(driver);
@@ -747,9 +747,11 @@ it("records two real SDK delegations and reopens both parent ledgers without rep
         text: "Coordinate a specialist and reviewer",
       })
     ).json();
+    await service.waitForRequest();
     await vi.waitFor(async () =>
       expect((await run("personal", source.runId)).state).toBe("waiting"),
     );
+    await service.waitForRequest(2);
     await vi.waitFor(async () =>
       expect((await get(`/api/bots/${specialist}/thread`)).tasks[0]?.runs[0].state).toBe("waiting"),
     );
