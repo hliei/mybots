@@ -1292,6 +1292,7 @@ it.each(["allow", "ask-each-time"])(
           text: `Delegate this summary to ${targetId}`,
         })
       ).json();
+      await service.waitForRequest();
       await vi.waitFor(async () =>
         expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("waiting"),
       );
