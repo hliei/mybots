@@ -60,10 +60,11 @@ let signature = "";
 let busy = false;
 
 function controls(): void {
-  for (const node of form.querySelectorAll<
-    HTMLInputElement | HTMLSelectElement | HTMLButtonElement
-  >("input, select, button"))
-    node.disabled = busy || !botId || task.options.length === 0;
+  for (const container of [form, list])
+    for (const node of container.querySelectorAll<
+      HTMLInputElement | HTMLSelectElement | HTMLButtonElement
+    >("input, select, button"))
+      node.disabled = busy || !botId || task.options.length === 0;
 }
 
 function limitMessage(): string {
@@ -203,6 +204,7 @@ function render(attachments: Attachment[], drafts: Map<string | undefined, strin
     article.append(save);
     list.append(article);
   }
+  controls();
 }
 
 async function saveToWorkspace(item: Attachment, path: string): Promise<void> {

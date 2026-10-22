@@ -91,8 +91,21 @@ test("uploads bytes to the selected Task and deliberately saves them for that Bo
     await expect(tasks).toHaveValue(first);
     await showFeature(page, "files");
     await page.getByLabel(`Workspace path for ${filename}`).fill("shared/sample.bin");
+    let finishSaveRefresh: (() => Promise<void>) | undefined;
+    await page.route("**/workspace/files", async (route) => {
+      const response = await route.fetch();
+      finishSaveRefresh = () => route.fulfill({ response });
+    });
     await showFeature(page, "files");
-    await page.getByRole("button", { name: "Save to Bot workspace" }).click();
+    const save = page.getByRole("button", { name: "Save to Bot workspace" });
+    await save.click();
+    await expect(page.locator("#attachment-message")).toContainText("Saved");
+    await expect.poll(() => Boolean(finishSaveRefresh)).toBe(true);
+    await expect(save).toBeDisabled();
+    await expect(page.getByLabel(`Workspace path for ${filename}`)).toBeDisabled();
+    await finishSaveRefresh?.();
+    await page.unroute("**/workspace/files");
+    await expect(save).toBeEnabled();
     await expect(page.locator("#workspace-files")).toContainText("shared/sample.bin · 4 bytes");
     const workspaceReads: (() => Promise<void>)[] = [];
     await page.route("**/workspace/files", async (route) => {
