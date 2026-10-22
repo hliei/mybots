@@ -601,6 +601,13 @@ let availability: "active" | "disabled" | "deleted" = "active";
 let version = 0;
 let refreshTimer = 0;
 let locatedQuestion = false;
+document.addEventListener("inspect-task", (event) => {
+  const taskId = (event as CustomEvent<string>).detail;
+  expandedTasks.add(taskId);
+  locatedQuestion = false;
+  location.hash = `task-${taskId}`;
+  if (botId) void showChat(botId);
+});
 let sending = false;
 let hostAvailable = false;
 export function setHostAvailable(value: boolean): void {

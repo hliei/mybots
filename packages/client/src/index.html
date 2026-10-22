@@ -171,7 +171,9 @@
             <button id="collaboration-retry" type="button" hidden="">Retry delegation permission</button>
           </section></div>
         <div data-settings-mount="routines" hidden><section id="routines">
-            <h3>Routines</h3>
+            <h2>Routines</h2>
+            <p>Schedule independent work for this Bot. Each occurrence has its own Task and Run.</p>
+            <h3>Schedule timezone</h3>
             <form id="bot-timezone-form">
               <label for="bot-timezone">Bot timezone</label>
               <input id="bot-timezone" required="" placeholder="Asia/Shanghai">
@@ -180,8 +182,11 @@
             <p id="bot-timezone-notice" aria-live="polite"></p>
             <button id="bot-timezone-retry" type="button" hidden="">Retry Bot timezone</button>
             <p>Cron uses this Bot timezone (default Asia/Shanghai). Changes apply immediately to future scheduling. Admitted work and one-shot instants stay fixed. Missed slots create no backlog; one unfinished occurrence blocks the next.</p>
+            <details class="routine-help"><summary>Scheduling and work controls</summary>
             <p>Work runs while the Host is available, even after you disconnect. Each occurrence gets its own Task and independent Run context. Include any selected prior inputs in the instructions.</p>
             <p>Pause blocks automatic starts and lets current work finish. Resume skips cron slots missed while paused; an overdue one-shot runs once. Run now works while paused and does not turn recurrence back on. Deleting a Routine cancels unfinished occurrences and future starts, and keeps the definition and results. Stopping one occurrence does not pause or delete the Routine. An explicit retry keeps the Task and the earlier Run outcome.</p>
+            </details>
+            <h3>Create Routine</h3>
             <form id="routine-form">
               <label for="routine-text">Routine instructions</label>
               <textarea id="routine-text" required="" maxlength="32000" rows="3"></textarea>
@@ -209,6 +214,8 @@
             <p id="routine-notice" aria-live="polite"></p>
             <button id="routine-retry" type="button" hidden="">Retry Routine creation</button>
             <button id="routine-command-retry" type="button" hidden="">Retry Routine command</button>
+            <h3>Saved Routines and occurrences</h3>
+            <p>Open an occurrence to inspect its admitted definition, add instructions, stop its Run or explicitly retry. These controls target that Task; definition edits apply to later occurrences.</p>
             <div id="routine-list" aria-label="Routines"></div>
           </section></div>
         <div data-settings-mount="connection" hidden><h2>Connection and notifications</h2><p>The Host must be running on this computer. Pair this browser using the connection credential in <code>data/client-credential</code>. Telegram topic repair and eligible notice resend are available in Tasks.</p><button id="notification-details" type="button">Open notification details</button></div>

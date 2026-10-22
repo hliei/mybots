@@ -83,7 +83,18 @@ test("one-shot Routine survives overdue restart and accepts targeted occurrence 
     await expect(
       routines.first().getByRole("link", { name: /Inspect occurrence Task/ }),
     ).toBeVisible();
-    await showFeature(page, "chat");
+    const occurrenceLink = routines.first().getByRole("link", { name: /Inspect occurrence Task/ });
+    await occurrenceLink.focus();
+    for (let index = 0; index < 2; index++)
+      await page.waitForResponse((response) =>
+        response.url().endsWith("/api/bots/personal/routines"),
+      );
+    await expect(occurrenceLink).toBeFocused();
+    await occurrenceLink.press("Enter");
+    await expect(page.getByRole("dialog", { name: "Settings", exact: true })).toBeHidden();
+    await expect(
+      work.getByRole("button", { name: "Inspect Run evidence", exact: true }),
+    ).toBeVisible();
     const taskId = await work.getAttribute("data-task-id");
     const card = page.locator(`#work-cards article[data-task-id="${taskId}"]`);
     await expect(card).toContainText("Routine · active");
@@ -235,6 +246,17 @@ test("cron choices inherit Bot timezone and show separate occurrences without a 
     await showFeature(page, "Routines");
     await page.getByLabel("Routine instructions", { exact: true }).fill("Hourly archive");
     await showFeature(page, "Routines");
+    await page.getByLabel("Routine schedule", { exact: true }).selectOption("custom");
+    await page.getByLabel("Cron expression", { exact: true }).fill("60 * * * *");
+    const invalid = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/bots/personal/routines") &&
+        response.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Create cron Routine", exact: true }).click();
+    expect((await invalid).status()).toBe(400);
+    await expect(page.locator("#routine-notice")).not.toBeEmpty();
+    await expect(page.locator("#routine-list article")).toHaveCount(0);
     await page.getByLabel("Routine schedule", { exact: true }).selectOption("hourly");
     await showFeature(page, "Routines");
     await page.getByRole("button", { name: "Create cron Routine", exact: true }).click();
@@ -264,13 +286,35 @@ test("cron choices inherit Bot timezone and show separate occurrences without a 
     await showFeature(page, "Routines");
     await expect(routines.getByRole("link", { name: /Inspect occurrence Task/ })).toHaveCount(2);
     await expect(routines).toContainText("2026-10-22T06:00:00.000Z");
-    await page.screenshot({ path: join(root, "cron-desktop.png"), fullPage: true });
-    await page.setViewportSize({ width: 1920, height: 1080 });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
-      true,
-    );
-    await page.locator("#routines").scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(root, "cron-wide.png") });
+    for (const viewport of [
+      { width: 1280, height: 900 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await routines.scrollIntoViewIfNeeded();
+      await expect(
+        routines.getByRole("button", { name: "Save Routine edit", exact: true }),
+      ).toBeVisible();
+      expect(
+        await page
+          .locator(".settings-main")
+          .evaluate((node) => node.scrollWidth <= node.clientWidth),
+      ).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      await page.screenshot({ path: `/tmp/mybots-routines-${viewport.width}.png` });
+    }
+    const routineId = await routines.getAttribute("data-routine-id");
+    await routines.getByLabel(`Edit cron for ${routineId}`).fill("30 * * * *");
+    await routines.getByRole("button", { name: "Save Routine edit", exact: true }).click();
+    await expect(routines).toContainText("Cron: 30 * * * *");
+    await expect(routines).toContainText("2026-10-22T06:30:00.000Z");
+    await page.reload();
+    await showFeature(page, "Routines");
+    await expect(routines).toContainText("Cron: 30 * * * *");
+    await expect(routines.getByRole("link", { name: /Inspect occurrence Task/ })).toHaveCount(2);
     expect(errors).toEqual([]);
   } finally {
     if (child) await stop();
@@ -339,9 +383,28 @@ test("owner can edit, pause, run and delete a Routine without losing its evidenc
     await showFeature(page, "Routines");
     const id = ((await routines.innerText()).match(/Routine ID: ([0-9a-f-]+)/) ?? [])[1] as string;
     await showFeature(page, "Routines");
+    const pauseRequests: string[] = [];
+    await page.route("**/api/bots/personal/routines/*/pause", async (route) => {
+      pauseRequests.push(route.request().postData() as string);
+      if (pauseRequests.length === 1) {
+        await route.fetch();
+        await route.abort();
+      } else await route.continue();
+    });
     await routines.getByRole("button", { name: "Pause routine" }).click();
-    await expect(routines).toContainText("Paused. Automatic starts are blocked.");
+    await expect(page.locator("#routine-notice")).toContainText("unconfirmed");
+    await expect(
+      page.getByRole("button", { name: "Create one-shot Routine", exact: true }),
+    ).toBeDisabled();
+    await stop();
+    await start(Number(new URL(ready.url).port));
     await page.reload();
+    await showFeature(page, "Routines");
+    await expect(page.locator("#routine-notice")).toContainText(id);
+    await page.getByRole("button", { name: "Retry Routine command", exact: true }).click();
+    await expect(page.locator("#routine-command-retry")).toBeHidden();
+    expect(pauseRequests).toHaveLength(2);
+    expect(pauseRequests[1]).toBe(pauseRequests[0]);
     await expect(routines).toContainText("Paused. Automatic starts are blocked.");
     await showFeature(page, "Routines");
     await routines.getByRole("button", { name: "Run now" }).click();
@@ -349,8 +412,18 @@ test("owner can edit, pause, run and delete a Routine without losing its evidenc
     await expect(work).toHaveCount(1);
     await expect(work).toContainText("Read the archive");
     await expect(work).toContainText("Execution: active");
+    await routines.getByRole("button", { name: "Run now", exact: true }).click();
+    await expect(page.locator("#routine-notice")).toContainText("unfinished occurrence");
+    await expect(work).toHaveCount(1);
     await showFeature(page, "Routines");
     await routines.getByLabel(`Edit instructions for ${id}`).fill("Shelf 3 only");
+    // Observe two real refreshes while the occurrence remains active.
+    for (let index = 0; index < 2; index++)
+      await page.waitForResponse((response) =>
+        response.url().endsWith("/api/bots/personal/routines"),
+      );
+    await expect(routines.getByLabel(`Edit instructions for ${id}`)).toHaveValue("Shelf 3 only");
+    await expect(routines.getByLabel(`Edit instructions for ${id}`)).toBeFocused();
     await showFeature(page, "Routines");
     await routines.getByRole("button", { name: "Save Routine edit" }).click();
     await expect(routines).toContainText("Shelf 3 only");
@@ -359,7 +432,23 @@ test("owner can edit, pause, run and delete a Routine without losing its evidenc
     await showFeature(page, "Routines");
     await routines.getByRole("button", { name: "Resume routine" }).click();
     await expect(routines).toContainText("Automatic starts are on.");
+    await routines.getByRole("link", { name: /Inspect occurrence Task/ }).click();
+    const occurrenceTask = await work.getAttribute("data-task-id");
+    await work.getByRole("button", { name: "Stop run", exact: true }).click();
+    await expect(work).toContainText("Outcome: cancelled");
     await showFeature(page, "Routines");
+    await expect(routines).toContainText("Automatic starts are on.");
+    await expect(routines.getByRole("link", { name: /Inspect occurrence Task/ })).toHaveCount(1);
+    await routines.getByRole("link", { name: /Inspect occurrence Task/ }).click();
+    await work.getByRole("button", { name: "Retry run", exact: true }).click();
+    await expect(work).toContainText("Explicit retry of Run:");
+    await expect(work).toContainText("Outcome: cancelled");
+    await expect(work).toContainText("Execution: active");
+    await expect(work).toHaveAttribute("data-task-id", occurrenceTask as string);
+    await expect(work).toHaveCount(1);
+    await showFeature(page, "Routines");
+    await expect(routines).toContainText("Shelf 3 only");
+    await expect(routines).toContainText("Automatic starts are on.");
     await routines.getByRole("button", { name: "Delete routine" }).click();
     await expect(routines).toContainText("Definition and results are retained.");
     await expect(routines).toContainText("Shelf 3 only");

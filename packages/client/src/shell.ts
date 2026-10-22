@@ -106,6 +106,13 @@ function showSettingsTasks(): void {
   settings.close();
 }
 node("collaboration-work").addEventListener("click", showSettingsTasks);
+node("routine-list").addEventListener("click", (event) => {
+  const link = (event.target as HTMLElement).closest<HTMLAnchorElement>("a");
+  if (!link?.hash.startsWith("#task-")) return;
+  event.preventDefault();
+  showSettingsTasks();
+  document.dispatchEvent(new CustomEvent("inspect-task", { detail: link.hash.slice(6) }));
+});
 settings.addEventListener("close", () => {
   if (settingsToTasks) {
     settingsToTasks = false;

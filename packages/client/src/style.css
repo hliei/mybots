@@ -200,3 +200,17 @@ dialog::backdrop { background: #0009; }
 #file-deliveries p, #attachment-scope, #attachment-list p { color: var(--secondary); font-size: 12px; }
 #workspace-files { padding-left: 18px; }
 #workspace-files li { margin: 12px 0; font-size: 13px; }
+
+.routine-help { margin: 20px 0; color: var(--secondary); font-size: 13px; }
+.routine-help summary { cursor: pointer; }
+.routine-card { gap: 20px; }
+.routine-summary { display: grid; gap: 8px; }
+.routine-summary p:first-child { color: var(--muted); font-size: 11px; }
+.routine-summary p:nth-child(2) { color: #eee; font-size: 16px; white-space: pre-wrap; }
+.routine-card fieldset { background: #171717; }
+.routine-card legend { color: var(--secondary); font-size: 12px; padding: 0 6px; }
+.routine-card label { display: grid; gap: 8px; }
+.settings-main .routine-card textarea { min-height: 88px; }
+.routine-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.routine-occurrences { display: grid; gap: 12px; font-size: 13px; }
+#routine-once-fields, #routine-cron-fields { display: grid; gap: 12px; }

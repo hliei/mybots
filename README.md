@@ -168,7 +168,13 @@ Settings → Routines creates one-shot Routines from an absolute instant with of
 and an IANA timezone, or recurring Routines from common cron choices or a custom
 five-field expression. Cron inherits the Bot timezone, defaulting to Asia/Shanghai. Resolved schedule and occurrence Task links
 remain inspectable after disconnect or Host restart. Each due occurrence has an
-independent Run context; choose its Task in Input target to add instructions.
+independent Run context. Open an occurrence link to leave Settings and inspect
+that Task's admitted definition and Run evidence. Add instructions, Stop run and
+explicit Retry run target that occurrence; they do not edit or pause its Routine.
+Definition edits apply to later occurrences. Pause leaves current work running;
+Run now can start work while paused without enabling recurrence. Unconfirmed
+Routine commands retain their original request for explicit retry after reload
+or Host restart.
 Bots can resolve a natural-language schedule through their scoped `create_routine`
 tool and can pause, resume, run, edit or logically delete their own Routines with
 `manage_routine`. See [Routines](docs/host-runtime.md#routines).
