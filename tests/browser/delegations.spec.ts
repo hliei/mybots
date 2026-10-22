@@ -109,7 +109,7 @@ for (const action of ["allow", "approve", "deny", "expire"] as const) {
         await page.getByRole("button", { name: "Select Writer" }).click();
         await expect(page.locator("#chat-works")).toContainText("Origin: delegation");
       } else {
-        const card = page.locator('[data-approval-id="browser-child"]');
+        const card = page.locator('#work-cards [data-approval-id="browser-child"]');
         await expect(card).toContainText("Operation: delegate");
         await expect(card).toContainText(writerId);
         await expect(card).toContainText("Inputs: Selected browser text");
@@ -122,7 +122,7 @@ for (const action of ["allow", "approve", "deny", "expire"] as const) {
       await showFeature(page, "chat");
       await page.getByRole("button", { name: "Select Personal" }).click();
       if (action !== "allow") {
-        const card = page.locator('[data-approval-id="browser-child"]');
+        const card = page.locator('#work-cards [data-approval-id="browser-child"]');
         await expect(card).toContainText("pending");
         if (action === "expire") {
           child?.send("exhaust-budget");

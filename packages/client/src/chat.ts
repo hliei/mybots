@@ -624,6 +624,8 @@ function controls(): void {
       !text.validity.valid ||
       target.selectedOptions[0]?.dataset.unavailable === "true" ||
       (selectedBackgroundIds().length > 0 && target.value !== "new-task");
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-owner-decision]"))
+    button.disabled = !hostAvailable || sending || !!pending;
   resetBackground.disabled = !admitting || sending || !!pending;
   element<HTMLButtonElement>("confirm-reset").disabled = resetBackground.disabled;
   retry.hidden = !pending;
@@ -884,7 +886,9 @@ export async function showChat(
                 task.id,
                 run,
                 question,
-                detail.notices.find((notice) => notice.questionId === question.id),
+                detail.notices.find(
+                  (notice) => notice.runId === run.id && notice.questionId === question.id,
+                ),
               ),
             );
           for (const notice of detail.notices.filter(
@@ -1063,6 +1067,11 @@ function renderWorkCards(tasks: Task[]): void {
     hostAvailable,
   ]);
   if (cards.dataset.cards === signature) return;
+  const focused = document.activeElement;
+  const answer =
+    focused instanceof HTMLTextAreaElement && cards.contains(focused) ? focused : undefined;
+  const answerCardId = answer?.closest("section")?.id;
+  const selection = answer ? ([answer.selectionStart, answer.selectionEnd] as const) : undefined;
   cards.dataset.cards = signature;
   cards.replaceChildren(
     ...surfaced.map((task) => {
@@ -1074,13 +1083,13 @@ function renderWorkCards(tasks: Task[]): void {
         paragraph(`${sourceLabel(task)} · ${run?.state ?? "no Runs"}`),
         paragraph(taskTitle(task)),
       );
-      const decisions = task.runs.flatMap((run) => [
-        ...run.questions.map((q) => `Question: ${q.text.slice(0, 180)} · ${q.state}`),
-        ...run.delegations
-          .filter((d) => d.approval)
-          .map((d) => `Action approval · ${d.approval?.state}`),
-      ]);
-      if (decisions.length) article.append(paragraph(decisions.join(" · ")));
+      for (const decisionRun of task.runs) {
+        for (const question of decisionRun.questions)
+          article.append(questionCard(task.id, decisionRun, question, undefined, true));
+        for (const delegation of decisionRun.delegations)
+          if (delegation.approval)
+            article.append(approvalCard(delegation, delegation.approval, decisionRun, true));
+      }
       if (run?.stopError) article.append(paragraph(run.stopError));
       const inspect = document.createElement("button");
       inspect.type = "button";
@@ -1099,6 +1108,11 @@ function renderWorkCards(tasks: Task[]): void {
       return article;
     }),
   );
+  if (answerCardId && selection) {
+    const restored = document.getElementById(answerCardId)?.querySelector("textarea");
+    restored?.focus({ preventScroll: true });
+    restored?.setSelectionRange(...selection);
+  }
   restoreReadingPosition();
 }
 function delegationCard(run: Run, delegation: Delegation): HTMLElement {
@@ -1143,10 +1157,18 @@ function delegationCard(run: Run, delegation: Delegation): HTMLElement {
   if (delegation.approval) section.append(approvalCard(delegation, delegation.approval, run));
   return section;
 }
-function approvalCard(source: Delegation, approval: Approval, run: Run): HTMLElement {
+function approvalCard(
+  source: Delegation,
+  approval: Approval,
+  run: Run,
+  inConversation = false,
+): HTMLElement {
   const section = document.createElement("section");
   section.dataset.approvalId = approval.id;
-  section.id = `approval-${approval.id}`;
+  section.id = inConversation
+    ? `card-approval-${run.id}-${approval.id}`
+    : `approval-${approval.id}`;
+  section.className = "decision-card";
   section.append(
     paragraph(`Action approval ${approval.id} · ${approval.state}`),
     paragraph(`Operation: ${approval.operation} · Target Bot: ${approval.targetBotId}`),
@@ -1158,6 +1180,10 @@ function approvalCard(source: Delegation, approval: Approval, run: Run): HTMLEle
         : "Waits for your decision without a deadline.",
     ),
   );
+  for (const file of source.files)
+    section.append(
+      paragraph(`Selected file: ${file.kind} ${file.id} · ${file.filename} (${file.bytes} bytes)`),
+    );
   if (approval.decision) section.append(paragraph(`Owner decision: ${approval.decision}`));
   if (approval.state === "expired")
     section.append(
@@ -1173,14 +1199,16 @@ function approvalCard(source: Delegation, approval: Approval, run: Run): HTMLEle
     );
   if (
     approval.state === "pending" &&
+    !source.revokedAt &&
     source.parentRunId === run.id &&
     ["active", "waiting"].includes(run.state)
   ) {
     for (const decision of ["approve", "deny"] as const) {
       const button = document.createElement("button");
       button.type = "button";
+      button.dataset.ownerDecision = "true";
       button.textContent = decision === "approve" ? "Approve action" : "Deny action";
-      button.disabled = sending || !!pending;
+      button.disabled = sending || !!pending || !hostAvailable;
       button.addEventListener("click", () => {
         if (!botId || sending || pending) return;
         pending = {
@@ -1286,13 +1314,19 @@ function questionCard(
   run: Run,
   question: Question,
   notice: Notice | undefined,
+  inConversation = false,
 ): HTMLElement {
   const section = document.createElement("section");
   section.dataset.questionId = question.id;
-  section.id = `question-${question.id}`;
+  section.id = inConversation
+    ? `card-question-${run.id}-${question.id}`
+    : `question-${question.id}`;
+  section.className = "decision-card";
+  const draftKey = JSON.stringify([botId, run.id, question.id]);
   section.append(
     paragraph(`Question: ${question.text}`),
     paragraph(`Request: ${question.id} · ${question.state}`),
+    paragraph(`Source Task ${taskId} · Run ${run.id}`),
   );
   if (notice) {
     section.dataset.noticeState = notice.state;
@@ -1310,12 +1344,19 @@ function questionCard(
     input.setAttribute("aria-label", `Answer to ${question.text}`);
     input.required = true;
     input.maxLength = 32000;
-    input.value = answerDrafts.get(question.id) ?? "";
-    input.addEventListener("input", () => answerDrafts.set(question.id, input.value));
+    input.value = answerDrafts.get(draftKey) ?? "";
+    input.dataset.answerDraft = draftKey;
+    input.addEventListener("input", () => {
+      answerDrafts.set(draftKey, input.value);
+      for (const other of document.querySelectorAll<HTMLTextAreaElement>("[data-answer-draft]"))
+        if (other !== input && other.dataset.answerDraft === draftKey) other.value = input.value;
+    });
     const button = document.createElement("button");
     button.type = "submit";
+    button.dataset.ownerDecision = "true";
     button.textContent = "Answer question";
-    input.disabled = button.disabled = sending || !!pending;
+    input.disabled = sending || !!pending;
+    button.disabled = sending || !!pending || !hostAvailable;
     form.append(input, button);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -1473,7 +1514,8 @@ async function submit(): Promise<void> {
       throw new Error();
     localStorage.removeItem(pendingKey);
     pending = undefined;
-    if (admitted.questionId) answerDrafts.delete(admitted.questionId);
+    if (admitted.questionId)
+      answerDrafts.delete(JSON.stringify([admitted.botId, admitted.runId, admitted.questionId]));
     if (admitted.selectedMessageIds?.length) clearBackgroundSelection();
     if (
       !runOperation &&

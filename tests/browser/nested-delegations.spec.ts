@@ -160,7 +160,7 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
         `Originating Run ${ready.sessionId}`,
       );
       if (outcome === "uncertain") {
-        const card = page.locator('[data-approval-id="browser-review"]');
+        const card = page.locator('#chat-works [data-approval-id="browser-review"]');
         await showFeature(page, "tasks");
         await card.getByRole("button", { name: "Approve action" }).click();
         await expect(card).toContainText("executed");
@@ -233,7 +233,7 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
         await expect
           .poll(() => pendingMailbox.historyResponse("revocation-pending"))
           .toMatchObject({ result: { approval: { state: "pending" } } });
-        const approvalCard = page.locator('[data-approval-id="revocation-pending"]');
+        const approvalCard = page.locator('#chat-works [data-approval-id="revocation-pending"]');
         await expect(approvalCard).toContainText("Exact pending operation");
         const queued = await (
           await page.request.post(`${ready.url}/api/bots/${reviewerId}/thread/tasks`, {
@@ -257,6 +257,13 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
           `to ${writerId} is deny.`,
         );
         await expect(approvalCard).toContainText("stale");
+        const conversationApproval = page.locator(
+          '#work-cards [data-approval-id="revocation-pending"]',
+        );
+        await expect(conversationApproval).toContainText("stale");
+        await expect(
+          conversationApproval.getByRole("button", { name: "Approve action" }),
+        ).toHaveCount(0);
         await expect(approvalCard.getByRole("button", { name: "Approve action" })).toHaveCount(0);
         await expect(page.locator('[data-delegation-id="browser-child"]')).toContainText(
           "Collaboration revoked",
@@ -294,9 +301,9 @@ for (const outcome of ["cancel", "uncertain", "revoke", "revoke-uncertain"] as c
         await expect(page.locator('[data-delegation-id="browser-child"]')).toContainText(
           "Collaboration revoked",
         );
-        await expect(page.locator('[data-approval-id="revocation-pending"]')).toContainText(
-          "stale",
-        );
+        await expect(
+          page.locator('#chat-works [data-approval-id="revocation-pending"]'),
+        ).toContainText("stale");
         if (outcome === "revoke-uncertain") {
           await expect(
             page.locator("#chat-works article").filter({ hasText: `Run ID: ${ready.sessionId}` }),

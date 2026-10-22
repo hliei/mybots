@@ -409,7 +409,7 @@ test("explicit additions to a waiting Task retain its Run and do not answer its 
   expect(await (await admitted).json()).toMatchObject({ taskId, runId: ready.sessionId });
   await expect(page.locator("#chat-works")).toContainText("Additional waiting instructions");
   await expect(page.locator("#chat-works")).toContainText("Execution: waiting");
-  await expect(page.getByLabel("Answer to Which city?")).toBeVisible();
+  await expect(page.locator("#chat-works").getByLabel("Answer to Which city?")).toBeVisible();
   await expect(page.locator("#chat-works")).not.toContainText("Owner answer:");
 });
 

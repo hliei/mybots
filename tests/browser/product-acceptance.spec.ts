@@ -203,7 +203,7 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
     });
     parentMailbox.requestDurableWait("delegation");
     await expect(parentCard).toContainText("Execution: waiting");
-    const approval = page.locator('[data-approval-id="report-delegation"]');
+    const approval = page.locator('#chat-works [data-approval-id="report-delegation"]');
     await expect(approval).toContainText(`Target Bot: ${writer}`);
     await expect(approval).toContainText("Draft the approved report");
     await expect(parentCard).toContainText("Telegram notice: delivered");
@@ -257,14 +257,20 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
     await start(port, "2026-10-21T02:00:00Z");
     await page.reload();
     await showFeature(page, "tasks");
-    await expect(page.getByLabel("Answer to Which report style?", { exact: true })).toBeVisible();
+    await expect(
+      page.locator("#chat-works").getByLabel("Answer to Which report style?", { exact: true }),
+    ).toBeVisible();
     phase = "connected";
     await showFeature(page, "tasks");
     await page
+      .locator("#chat-works")
       .getByLabel("Answer to Which report style?", { exact: true })
       .fill("Concise with citations");
     await showFeature(page, "tasks");
-    await page.getByRole("button", { name: "Answer question", exact: true }).click();
+    await page
+      .locator("#chat-works")
+      .getByRole("button", { name: "Answer question", exact: true })
+      .click();
     await expect(childCard).toContainText("Owner answer: Concise with citations");
     await expect(childCard).toContainText("Execution: active");
     await expect

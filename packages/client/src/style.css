@@ -178,3 +178,6 @@ dialog::backdrop { background: #0009; }
 .live-message .message-meta { color: #979797; }
 
 .background-divider { border-top: 1px solid var(--line); text-align: center; color: var(--secondary); padding-top: 12px; font-size: 12px; }
+
+.decision-card { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+.decision-card textarea { width: 100%; min-height: 76px; resize: vertical; }

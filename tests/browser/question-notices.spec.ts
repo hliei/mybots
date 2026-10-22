@@ -73,7 +73,10 @@ test("repairs a Bot topic and resends the question notice without changing the R
       `Local client: /?bot=personal&run=${ready.sessionId}#question-browser-city`,
     );
     child?.send("telegram-mode:ready");
-    await showFeature(page, "tasks");
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Connection", exact: true }).click();
+    await page.getByRole("button", { name: "Open notification details", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Settings", exact: true })).toBeHidden();
     await page.getByRole("button", { name: "Repair Telegram topic" }).click();
     await expect(works).toContainText("Telegram topic: mapped · 71");
     await expect(works).toContainText("Telegram topic: mapped");
@@ -99,7 +102,7 @@ test("repairs a Bot topic and resends the question notice without changing the R
     expect(locator).toBeTruthy();
     await page.evaluate(() => localStorage.removeItem("mybots.selected-bot"));
     await page.goto(new URL(locator as string, ready.url).href);
-    await expect(page.locator('[data-question-id="browser-city"]')).toBeFocused();
+    await expect(page.locator('#chat-works [data-question-id="browser-city"]')).toBeFocused();
     await expect(works).toContainText("Question: Which city?");
     const beforeRestart = sent.length;
     await stop();
@@ -253,7 +256,7 @@ test("inspects and resends a Routine outcome notice and follows its work locator
     worker.requestDurableWait("delegation");
     const approvalLocator = `/?bot=${specialist}&run=${childRunId}#approval-review`;
     await page.goto(new URL(approvalLocator, ready.url).href);
-    const approval = page.locator('[data-approval-id="review"]');
+    const approval = page.locator('#chat-works [data-approval-id="review"]');
     await expect(approval).toBeFocused();
     await expect(works).toContainText("Notice: approval");
     await expect(works).toContainText("Telegram notice: delivered");

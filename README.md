@@ -139,8 +139,14 @@ Tasks lists chat, Routine and delegated work as compact source-labelled cards.
 Expand a card to inspect its Runs, queue, active budget, ownership links and
 results, or choose Add instructions to target its current Run in the composer.
 Routine, delegated and actionable work also has a summary in the conversation;
-ordinary replies remain bubbles. Pending question and approval forms remain in
-Task details. Stop current chat Run names the active Task and Run and is available
+ordinary replies remain bubbles. Each question and approval has its own controls
+in the conversation and Task details, bound to its request and Run. Approvals show
+the operation, target, instructions and selected file identities and byte counts.
+Answered and decided cards retain their updated state; expired, cancelled or
+revoked requests cannot authorize work. Settings → Connection → Open notification
+details exposes Telegram topic repair and eligible failed-notice resend, with
+delivery state independent of work outcomes. Stop current chat Run names the
+active Task and Run and is available
 while composing ordinary chat. Use Stop run in a Task's details for other work,
 including its owned descendants. Stopping stays pending until termination is
 confirmed; failed stops and uncertain outcomes retain their evidence. Review an
