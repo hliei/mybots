@@ -655,6 +655,8 @@ document.addEventListener("detail-mode", (event) => {
 });
 function latestOriginals(): void {
   readingReturn = undefined;
+  // Concurrent status refreshes must not merge the previous reading page back in.
+  loaded = new Map();
   node("history-return").hidden = true;
   void originals({});
 }

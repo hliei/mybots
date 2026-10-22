@@ -94,6 +94,28 @@ test("uploads bytes to the selected Task and deliberately saves them for that Bo
     await showFeature(page, "files");
     await page.getByRole("button", { name: "Save to Bot workspace" }).click();
     await expect(page.locator("#workspace-files")).toContainText("shared/sample.bin · 4 bytes");
+    const workspaceReads: (() => Promise<void>)[] = [];
+    await page.route("**/workspace/files", async (route) => {
+      const response = await route.fetch();
+      workspaceReads.push(() => route.fulfill({ response }));
+    });
+    await page.getByRole("button", { name: "Refresh status", exact: true }).click();
+    await expect.poll(() => workspaceReads.length).toBe(1);
+    await page.getByRole("button", { name: "Refresh status", exact: true }).click();
+    await expect.poll(() => workspaceReads.length).toBe(2);
+    await Promise.all(workspaceReads.map((finish) => finish()));
+    await page.unroute("**/workspace/files");
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    expect(
+      await page
+        .getByRole("link", { name: "Download workspace shared/sample.bin", exact: true })
+        .count(),
+    ).toBe(1);
     for (const name of [`Download ${filename}`, "Download workspace shared/sample.bin"]) {
       const [download] = await Promise.all([
         page.waitForEvent("download"),

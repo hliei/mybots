@@ -450,6 +450,6 @@ test("confirmed admission preserves newer text even when browser draft storage f
   }, original);
   await original.dispose();
   release.resolve();
-  await expect(page.locator("#chat-message")).toContainText("Admitted to Task");
+  await expect(page.locator("#chat-message")).toHaveText("Message sent.");
   await expect(draft).toHaveValue("Newer unsaved draft");
 });

@@ -81,15 +81,27 @@ test("streamed replies grow in one correlated bubble and recover as one original
     const identity = await reply.getAttribute("data-message-id");
     await reply.evaluate((element) => Reflect.set(element, "streamBubble", true));
     drop = true;
+    await page.getByRole("button", { name: "Search conversation", exact: true }).click();
+    await page.getByLabel("Search original history").fill("火星项目");
+    await page.getByRole("button", { name: "Search history", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Conversation search results" })).toContainText(
+      "火星项目 original",
+    );
     runtime.child?.send("stream-more");
     await expect(reply).toContainText("with original text 🪐");
     await expect(reply).toHaveAttribute("data-message-id", identity as string);
     expect(await reply.evaluate((element) => Reflect.get(element, "streamBubble"))).toBe(true);
+    await page.getByRole("button", { name: "Latest originals", exact: true }).click();
+    await page.getByRole("button", { name: "Close details", exact: true }).click();
     await page.reload();
     await expect(reply).toContainText("with original text 🪐");
     await reply.evaluate((element) => Reflect.set(element, "streamBubble", true));
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Memory", exact: true }).click();
     runtime.child?.send("stream-end");
     await expect(reply).not.toContainText("In progress");
+    await page.getByRole("button", { name: "Close settings", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeFocused();
     await expect(reply).toHaveCount(1);
     await expect(reply).toHaveAttribute("data-message-id", identity as string);
     expect(await reply.evaluate((element) => Reflect.get(element, "streamBubble"))).toBe(true);
@@ -205,12 +217,31 @@ test("history anchors survive live output, Bot switching and panel reflow", asyn
     runtime.child?.send("stream-end");
     await expect(page.locator("article.live-message")).toHaveCount(0);
     await expect.poll(async () => Math.abs((await offset()) - before)).toBeLessThan(5);
+    const latestReady = Promise.withResolvers<void>();
+    const releaseLatest = Promise.withResolvers<void>();
+    await page.route(
+      "**/thread/history?",
+      async (route) => {
+        const response = await route.fetch();
+        latestReady.resolve();
+        await releaseLatest.promise;
+        await route.fulfill({ response });
+      },
+      { times: 1 },
+    );
     const latestRead = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname.endsWith("/thread/history") &&
         !new URL(response.url()).search,
     );
     await page.getByRole("button", { name: "Back to latest" }).click();
+    await latestReady.promise;
+    const refreshedHistory = page.waitForResponse((response) =>
+      new URL(response.url()).pathname.endsWith("/thread/history"),
+    );
+    await page.getByRole("button", { name: "Refresh status", exact: true }).click();
+    await (await refreshedHistory).finished();
+    releaseLatest.resolve();
     await (await latestRead).finished();
     await expect(page.locator("#thread-messages article")).toHaveCount(5);
     await expect

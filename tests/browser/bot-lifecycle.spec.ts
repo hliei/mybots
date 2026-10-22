@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { captureDesktopState } from "./desktop-acceptance.ts";
 import { showFeature } from "./navigation.ts";
 
 interface Ready {
@@ -13,7 +14,8 @@ interface Ready {
 
 test("disable a Bot, enable it without revival, and logically delete it while keeping a same-name replacement distinct", async ({
   page,
-}) => {
+}, info) => {
+  test.setTimeout(60_000);
   const root = await mkdtemp(join(tmpdir(), "mybots-browser-bot-lifecycle-"));
   let child: ChildProcess | undefined;
   let exited: Promise<number | null> | undefined;
@@ -72,6 +74,7 @@ test("disable a Bot, enable it without revival, and logically delete it while ke
       .getByRole("button", { name: "Select Personal", exact: true })
       .click({ button: "right" });
     await expect(page.getByRole("dialog", { name: "Personal", exact: true })).toBeVisible();
+    await captureDesktopState(page, info, "bot-menu");
     await page.getByRole("button", { name: "Close Bot menu", exact: true }).press("Escape");
     await expect(page.getByRole("button", { name: "Personal menu", exact: true })).toBeFocused();
     await page.getByRole("button", { name: "Personal menu", exact: true }).press("Enter");
@@ -82,6 +85,7 @@ test("disable a Bot, enable it without revival, and logically delete it while ke
     await expect(page.locator("#bot-lifecycle")).toContainText("This Bot is disabled");
     await expect(page.locator("#chat-works")).toContainText("Execution stop unconfirmed");
     await expect(page.getByLabel("Message", { exact: true })).toBeDisabled();
+    await captureDesktopState(page, info, "disabled-stop-failure");
     child?.send("allow-stop");
     await showFeature(page, "overview");
     await page.getByRole("button", { name: "Retry cancellation", exact: true }).click();

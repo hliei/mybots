@@ -8,13 +8,14 @@ import { fileURLToPath } from "node:url";
 import { RunnerMailbox } from "@mybots/mailbox/node";
 import { expect, test } from "@playwright/test";
 import type { Host } from "../../packages/host/src/host.ts";
+import { captureDesktopState } from "./desktop-acceptance.ts";
 import { showFeature } from "./navigation.ts";
 
 type ThreadDetail = Awaited<ReturnType<Host["threadDetail"]>>;
 
 test("Researcher and Writer restore a Routine, owned decisions, report and independent topic delivery", async ({
   page,
-}) => {
+}, info) => {
   test.setTimeout(60_000);
   const root = await mkdtemp(join(tmpdir(), "mybots-product-browser-"));
   const calls: { method: string; body: Record<string, unknown>; failed: boolean }[] = [];
@@ -208,6 +209,7 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
     await expect(approval).toContainText("Draft the approved report");
     await expect(parentCard).toContainText("Telegram notice: delivered");
     expect((await detail(writer)).tasks).toEqual([]);
+    await captureDesktopState(page, info, "routine-approval");
 
     phase = "restarting";
     await stop();
@@ -261,6 +263,7 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
       page.locator("#chat-works").getByLabel("Answer to Which report style?", { exact: true }),
     ).toBeVisible();
     phase = "connected";
+    await captureDesktopState(page, info, "child-question-restored");
     await showFeature(page, "tasks");
     await page
       .locator("#chat-works")

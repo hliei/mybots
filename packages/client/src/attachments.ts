@@ -240,15 +240,17 @@ async function saveToWorkspace(item: Attachment, path: string): Promise<void> {
 async function refreshWorkspace(): Promise<void> {
   const node = document.querySelector("#workspace-files");
   if (!node) return;
-  node.replaceChildren();
-  if (!botId) return;
+  if (!botId) {
+    node.replaceChildren();
+    return;
+  }
   const owner = botId;
   const response = await fetch(`/api/bots/${encodeURIComponent(owner)}/workspace/files`, {
     cache: "no-store",
   });
   if (botId !== owner) return;
   if (!response.ok) {
-    node.append(
+    node.replaceChildren(
       Object.assign(document.createElement("li"), {
         textContent: "Workspace files are unavailable.",
       }),
@@ -257,6 +259,7 @@ async function refreshWorkspace(): Promise<void> {
   }
   const body: unknown = await response.json();
   if (botId !== owner) return;
+  node.replaceChildren();
   const listed = record(body) && Array.isArray(body.files) ? body.files : undefined;
   if (
     !listed?.every(

@@ -1574,7 +1574,7 @@ async function submit(): Promise<void> {
                 ? `Chat background boundary is ${result.backgroundBoundary}. Existing Runs keep their captured background.`
                 : runOperation
                   ? `Recorded ${admitted.operation} for Run ${result.runId}. Refresh after the Run state changes.`
-                  : `Admitted to Task ${result.taskId}, Run ${result.runId}. Await its durable outcome.`;
+                  : "Message sent.";
     await showChat(botId);
   } catch {
     notice.textContent = pending

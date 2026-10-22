@@ -5,10 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { captureDesktopState } from "./desktop-acceptance.ts";
 
 test("desktop shell pairs, sends to a real Thread and returns focus from shared surfaces", async ({
   page,
-}) => {
+}, info) => {
+  test.setTimeout(60_000);
   const root = await mkdtemp(join(tmpdir(), "mybots-shell-"));
   const host = fork(
     fileURLToPath(new URL("../../scripts/client-browser-host.mjs", import.meta.url)),
@@ -29,6 +31,8 @@ test("desktop shell pairs, sends to a real Thread and returns focus from shared 
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
     await expect(page.locator("#shell-empty")).toBeVisible();
+    await captureDesktopState(page, info, "no-selection");
+    await expect(page.getByRole("button", { name: "Prototype", exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "Select Personal", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "Bot details: Personal", exact: true }),
@@ -39,19 +43,33 @@ test("desktop shell pairs, sends to a real Thread and returns focus from shared 
     await expect(page.locator("#thread-messages .assistant").last()).toContainText(
       "Final: Desktop shell round trip",
     );
-    await page.getByRole("button", { name: "Search conversation", exact: true }).click();
+    await expect(page.locator("#chat-message")).toHaveText("Message sent.");
+    await captureDesktopState(page, info, "conversation");
+    await expect(page.locator(".sidebar")).toHaveCSS("background-color", "rgb(13, 13, 13)");
+    await expect(page.locator(".message.assistant").last()).toHaveCSS(
+      "background-color",
+      "rgb(27, 27, 27)",
+    );
+    await expect(page.locator(".message.user").last()).toHaveCSS(
+      "background-color",
+      "rgb(54, 54, 54)",
+    );
+    await expect(page.locator(".message-content").last()).toHaveCSS("font-size", "17px");
+    await page.getByRole("button", { name: "Search conversation", exact: true }).press("Enter");
     await page.getByLabel("Search original history").fill("no-matching-desktop-original");
     await page.getByRole("button", { name: "Search history", exact: true }).click();
     await expect(page.getByRole("region", { name: "Conversation search results" })).toContainText(
       "No matching originals.",
     );
     await expect(page.locator("#thread-messages")).toContainText("Final: Desktop shell round trip");
+    await captureDesktopState(page, info, "empty-search");
     await page.getByRole("button", { name: "Latest originals", exact: true }).click();
     await page.getByRole("button", { name: "Close details", exact: true }).click();
     await page.getByRole("button", { name: "Bot details: Personal", exact: true }).click();
     await expect(page.getByRole("complementary", { name: "Bot details" })).toBeVisible();
     await page.getByRole("button", { name: "Files", exact: true }).click();
     await expect(page.locator("#attachments")).toBeVisible();
+    await captureDesktopState(page, info, "files");
     await page.getByRole("button", { name: "Tasks", exact: true }).click();
     await expect(page.locator("#chat-works")).toBeVisible();
     await expect(page.locator("#attachments")).toBeHidden();
@@ -106,6 +124,7 @@ test("desktop shell pairs, sends to a real Thread and returns focus from shared 
     await page.getByRole("button", { name: "Create Bot", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Create a Bot", exact: true })).toBeHidden();
     await expect(page.locator("#thread-messages")).toContainText("No messages yet");
+    await captureDesktopState(page, info, "empty-thread");
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await expect(page.locator("#settings-bot")).toHaveText("Shell test Bot");
     await page.getByRole("button", { name: "Skills", exact: true }).click();
@@ -131,7 +150,7 @@ test("desktop shell pairs, sends to a real Thread and returns focus from shared 
     for (const section of ["Memory", "Skills", "Collaboration"]) {
       await page.getByRole("button", { name: section, exact: true }).click();
       await expect(page.locator("#settings-bot")).toHaveText("Shell test Bot");
-      await page.screenshot({ path: `/tmp/mybots-settings-${section.toLowerCase()}.png` });
+      await captureDesktopState(page, info, `settings-${section.toLowerCase()}`);
     }
     await Promise.all([
       page.locator("#settings-surface").evaluate(
@@ -165,6 +184,8 @@ test("desktop shell pairs, sends to a real Thread and returns focus from shared 
     await expect(page.getByLabel("Message", { exact: true })).toHaveValue(
       "Keep this draft while offline",
     );
+    await page.keyboard.press("Escape");
+    await captureDesktopState(page, info, "host-unavailable");
     expect(errors).toEqual([]);
   } finally {
     if (host.exitCode === null) host.kill("SIGTERM");

@@ -510,7 +510,34 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
       { timeout: 15000 },
     );
     await expect(page.locator("#memory-topics")).toContainText("voice");
+    await showFeature(page, "chat");
+    await page
+      .getByLabel("Message", { exact: true })
+      .fill("Continue with saved settings and memory");
+    const continued = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" && response.url().endsWith("/thread/messages"),
+    );
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    const continuedRun = (await (await continued).json()).runId;
+    child?.send("complete");
+    await expect(page.locator("#thread-messages .assistant").last()).toContainText(
+      "Final: Continue with saved settings and memory",
+    );
+    const afterSettings = await page.request.get(`${ready.url}/api/bots/${writerId}/thread`);
+    expect(afterSettings.ok()).toBe(true);
+    const writerState = await afterSettings.json();
+    expect(writerState.tasks.flatMap((task: { runs: unknown[] }) => task.runs)).toContainEqual(
+      expect.objectContaining({
+        id: continuedRun,
+        state: "succeeded",
+        attempts: [expect.objectContaining({ configurationVersion: 2 })],
+      }),
+    );
     await showFeature(page, "Memory");
+    await expect(page.getByLabel("Memory index", { exact: true })).toHaveValue(
+      "Writer prefers short paragraphs.",
+    );
     await page.getByLabel("Memory index", { exact: true }).fill("Stale browser draft.");
     await showFeature(page, "overview");
     const memoryBot = (
@@ -583,6 +610,9 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Researcher", exact: true }).click();
     await showFeature(page, "Configuration");
+    await expect(page.locator("#saved-skills legend")).toHaveText(
+      "Skill revisions to activate on save",
+    );
     await page.getByLabel("Bot role").fill("Researcher can still save configuration.");
     await page.getByRole("button", { name: "Save configuration", exact: true }).click();
     await expect(page.locator("#settings-versions")).toContainText(
