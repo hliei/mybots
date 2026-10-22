@@ -431,9 +431,46 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     await showFeature(page, "Configuration");
     await page.getByLabel("Bot role").fill("Edited writer role.");
     await showFeature(page, "Configuration");
+    const settingsRequests: { botId: string; body: unknown }[] = [];
+    await page.route("**/api/bots/*/settings", async (route) => {
+      settingsRequests.push({
+        botId: new URL(route.request().url()).pathname.split("/")[3] as string,
+        body: route.request().postDataJSON(),
+      });
+      if (settingsRequests.length === 1) {
+        await route.fetch();
+        await route.abort();
+      } else await route.continue();
+    });
     await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+    await expect(page.locator("#settings-message")).toContainText("unconfirmed");
+    await page.reload();
+    await page.getByRole("button", { name: "Select Researcher", exact: true }).click();
+    await showFeature(page, "Configuration");
+    await expect(page.locator("#settings-recovery")).toContainText("Writer");
+    await expect(
+      page.getByRole("button", { name: "Save configuration", exact: true }),
+    ).toBeDisabled();
+    await page.getByRole("button", { name: "Recover configuration request", exact: true }).click();
+    await expect(page.locator("#settings-bot")).toHaveText("Writer");
+    await expect(page.getByLabel("Bot role")).toHaveValue("Edited writer role.");
+    await expect(page.getByLabel("Saved model", { exact: true })).toHaveValue(
+      "deepseek/deepseek-reasoner",
+    );
+    await expect(page.getByLabel("Saved tool edit", { exact: true })).toBeChecked();
+    await expect(page.getByLabel("Skill brief", { exact: true })).toHaveValue(revision as string);
+    await page.getByRole("button", { name: "Retry configuration", exact: true }).click();
+    await expect.poll(() => settingsRequests.length).toBe(2);
+    expect(settingsRequests[1]).toEqual(settingsRequests[0]);
     await expect(page.locator("#settings-versions")).toContainText(
       "Saved and effective configuration 2",
+    );
+    await showFeature(page, "Skills");
+    await expect(page.locator("#skill-activation")).toContainText(
+      `Saved Skills: brief@${revision}`,
+    );
+    await expect(page.locator("#skill-activation")).toContainText(
+      `Effective Skills: brief@${revision}`,
     );
     await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Researcher", exact: true }).click();

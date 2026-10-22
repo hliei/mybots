@@ -123,18 +123,32 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 #selected-chat { font-size: 12px; color: var(--secondary); line-height: 1.6; }
 dialog { color: #eee; background: var(--surface); border: 1px solid #3b3b3b; border-radius: 22px; padding: 29px; width: 520px; max-height: 90dvh; overflow: auto; }
 dialog::backdrop { background: #0009; }
-#settings-surface { width: calc(100vw - 80px); height: calc(100dvh - 80px); max-width: 1400px; padding: 0; }
-#settings-surface[open] { display: grid; grid-template-columns: 250px minmax(0, 1fr); }
-.settings-nav { padding: 29px 17px; border-right: 1px solid var(--line); display: flex; flex-direction: column; background: #101010; }
-.settings-nav h2 { margin: 2px 15px 16px; }
-.settings-nav .current-bot { border: 1px solid #303030; border-radius: 13px; padding: 16px; }
-.settings-nav button { text-align: left; margin: 3px 0; background: transparent; border: 0; padding: 14px 16px; }
-.settings-nav button[aria-pressed="true"] { background: var(--raised); }
-.settings-main { overflow: auto; padding: 40px 5vw; position: relative; }
-#close-settings { position: sticky; top: 0; float: right; z-index: 1; }
-.settings-main section { margin: 30px 0; max-width: 900px; }
-.settings-main p { color: #aaa; font-size: 13px; }
+#settings-surface { width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; overflow: hidden; background: #111; }
+#settings-surface[open] { display: grid; grid-template-columns: 270px minmax(0, 1fr); }
+.settings-nav { min-height: 0; overflow: auto; padding: 29px 17px; border-right: 1px solid var(--line); display: flex; flex-direction: column; background: #101010; }
+.settings-nav h2 { margin: 2px 15px 28px; font-size: 21px; }
+.settings-context { margin: 0 15px; font-size: 11px; color: var(--secondary); }
+.settings-nav .current-bot { border: 1px solid #303030; border-radius: 13px; padding: 16px; margin: 10px 9px 26px; font-size: 14px; }
+.settings-nav button { text-align: left; margin: 3px 0; background: transparent; border: 0; padding: 14px 16px; font-size: 14px; color: #aaa; }
+.settings-nav button:hover { background: #1c1c1c; }
+.settings-nav button[aria-pressed="true"] { background: var(--raised); color: #fff; }
+#return-conversation { margin-top: auto; }
+.settings-main { min-width: 0; overflow: auto; padding: 56px 6vw 50px; position: relative; scrollbar-gutter: stable; }
+#close-settings { position: fixed; top: 22px; right: 25px; z-index: 1; }
+.settings-main section { margin: 0; max-width: 900px; }
+.settings-main h2 { margin: 0 0 10px; font-size: 25px; font-weight: 550; letter-spacing: -.7px; }
+.settings-main h3 { font-size: 13px; font-weight: 500; color: #aaa; }
+.settings-main p { color: var(--secondary); font-size: 13px; line-height: 1.8; }
 .settings-main form { margin: 24px 0; }
+.settings-main .settings-card, .settings-main form:not(#settings-form), #saved-tools, #saved-skills { background: #1d1d1d; border: 1px solid #2c2c2c; border-radius: 18px; padding: 25px; }
+.settings-card { display: grid; gap: 12px; margin: 24px 0; min-width: 0; }
+.settings-card p { margin: 0; }
+.settings-main input, .settings-main select, .settings-main textarea { font-size: 13px; background: #171717; }
+.settings-main textarea { width: 100%; min-height: 145px; }
+#settings-fields { border: 0; padding: 0; gap: 24px; }
+#settings-fields .settings-card { margin: 0; }
+#save-settings { justify-self: start; }
+#skill-library details { margin: 16px 0; border: 1px solid var(--line); border-radius: 18px; padding: 20px; background: #1d1d1d; }
 #close-create { float: right; }
 #tools, #saved-tools { display: flex; flex-wrap: wrap; gap: 16px; }
 #tools label, #saved-tools label { display: inline-flex; align-items: center; gap: 6px; }

@@ -201,6 +201,26 @@ interface SettingsDraft extends Creation {
   skills?: SkillSelection[];
 }
 let pendingSettings: SettingsDraft | undefined;
+let settingsSending = false;
+let settingsBotId: string | undefined;
+
+function showSettingsRecovery(): void {
+  const recovery = document.getElementById("settings-recovery") as HTMLElement;
+  recovery.hidden = !pendingSettings;
+  if (pendingSettings) {
+    const name =
+      summaries.find((bot) => bot.id === pendingSettings?.botId)?.name ?? pendingSettings.botId;
+    (document.getElementById("settings-recovery-message") as HTMLElement).textContent =
+      `Configuration response unconfirmed for ${name} (${pendingSettings.botId}). Recover the saved request before saving another Bot's configuration.`;
+  }
+  (document.getElementById("recover-settings") as HTMLButtonElement).disabled = settingsSending;
+}
+document.getElementById("recover-settings")?.addEventListener("click", () => {
+  if (!pendingSettings || settingsSending) return;
+  selectBot(pendingSettings.botId);
+  settingsIdentity = "";
+  void load();
+});
 interface LifecycleDraft {
   botId: string;
   requestId: string;
@@ -298,6 +318,7 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
   );
   const active = managed.find((bot) => bot.id === selectedId);
   setShellBot(active);
+  showSettingsRecovery();
   selected.hidden = !active;
   selected.replaceChildren();
   const execution = document.getElementById("host-execution") as HTMLElement;
@@ -378,9 +399,34 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
       active.savedVersion === active.effectiveVersion
         ? `Saved and effective configuration ${active.savedVersion}.`
         : `Saved configuration ${active.savedVersion}. Effective configuration ${active.effectiveVersion}. The current Attempt finishes under the effective role, model, and tools.`;
+    const skillNames = (skills: Bot["skills"]) =>
+      skills.map((skill) => `${skill.id}@${skill.revision}`).join(", ") || "None";
+    (document.getElementById("skill-activation") as HTMLElement).textContent =
+      `Saved Skills: ${skillNames(active.skills)}. Effective Skills: ${skillNames(active.effective.skills)}.`;
+    const effective = document.getElementById("settings-effective") as HTMLElement;
+    effective.hidden = active.savedVersion === active.effectiveVersion;
+    effective.replaceChildren();
+    if (!effective.hidden) {
+      for (const text of [
+        `Effective role: ${active.effective.instructions}`,
+        `Effective model: ${active.effective.model.provider}/${active.effective.model.id}`,
+        `Effective tools: ${active.effective.tools.join(", ") || "None"}`,
+        `Effective Skills: ${skillNames(active.effective.skills)}`,
+      ])
+        effective.append(Object.assign(document.createElement("p"), { textContent: text }));
+    }
     const identity = `${active.id}:${active.savedVersion}`;
     const editing = settingsFields.disabled || settingsFields.matches(":focus-within");
-    if (!editing && (identity !== settingsIdentity || pendingSettings?.botId === active.id)) {
+    if (
+      settingsBotId !== active.id ||
+      (!editing && (identity !== settingsIdentity || pendingSettings?.botId === active.id))
+    ) {
+      if (settingsBotId !== active.id)
+        settingsMessage.textContent =
+          pendingSettings?.botId === active.id
+            ? "Configuration response unconfirmed. Retry the saved request to confirm its outcome."
+            : "";
+      settingsBotId = active.id;
       settingsIdentity = identity;
       savedRole.value =
         pendingSettings?.botId === active.id ? pendingSettings.instructions : active.instructions;
@@ -393,9 +439,11 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     if (pendingSettings?.botId === active.id) {
       settingsFields.disabled = true;
       saveSettings.textContent = "Retry configuration";
+      saveSettings.disabled = settingsSending;
     } else if (active.availability !== "deleted") {
       settingsFields.disabled = false;
-      saveSettings.disabled = false;
+      saveSettings.disabled = settingsSending || !!pendingSettings;
+      saveSettings.textContent = "Save configuration";
     }
     if (active.availability === "deleted") {
       settingsFields.disabled = true;
@@ -655,7 +703,9 @@ createForm.addEventListener("submit", async (event) => {
 });
 settingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!selectedId) return;
+  if (!selectedId || settingsSending || (pendingSettings && pendingSettings.botId !== selectedId))
+    return;
+  settingsSending = true;
   saveSettings.disabled = true;
   try {
     if (!pendingSettings || pendingSettings.botId !== selectedId) {
@@ -674,6 +724,7 @@ settingsForm.addEventListener("submit", async (event) => {
       localStorage.setItem(pendingSettingsKey, JSON.stringify(pendingSettings));
     }
     settingsFields.disabled = true;
+    showSettingsRecovery();
     saveSettings.textContent = "Retry configuration";
     const response = await fetch(
       `/api/bots/${encodeURIComponent(pendingSettings.botId)}/settings`,
@@ -716,7 +767,9 @@ settingsForm.addEventListener("submit", async (event) => {
       ? "Configuration response unconfirmed. Retry configuration to keep the same request, including after reload."
       : "Could not save the configuration request in this browser. Check local storage and retry.";
   } finally {
-    saveSettings.disabled = false;
+    settingsSending = false;
+    saveSettings.disabled = !!pendingSettings && pendingSettings.botId !== selectedId;
+    showSettingsRecovery();
   }
 });
 refresh.addEventListener("click", () => void load());

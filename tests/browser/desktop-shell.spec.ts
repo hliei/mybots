@@ -108,7 +108,39 @@ test("desktop shell pairs, sends to a real Thread and returns focus from shared 
     await expect(page.locator("#thread-messages")).toContainText("No messages yet");
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await expect(page.locator("#settings-bot")).toHaveText("Shell test Bot");
-    await page.screenshot({ path: "/tmp/mybots-shell-settings.png" });
+    await page.getByRole("button", { name: "Skills", exact: true }).click();
+    await expect(page.locator("#skill-activation")).toContainText("Saved Skills: None");
+    await expect(page.locator("#skill-activation")).toContainText("Effective Skills: None");
+    await page.getByRole("button", { name: "Choose protected revisions", exact: true }).click();
+    await expect(page.getByLabel("Bot role")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Configuration", exact: true })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    for (const width of [1280, 1440, 1920]) {
+      await page.setViewportSize({ width, height: width === 1920 ? 1080 : 900 });
+      const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
+      const box = await dialog.boundingBox();
+      expect(box?.width).toBe(width);
+      expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+        true,
+      );
+      await page.screenshot({ path: `/tmp/mybots-settings-${width}.png` });
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    for (const section of ["Memory", "Skills", "Collaboration"]) {
+      await page.getByRole("button", { name: section, exact: true }).click();
+      await expect(page.locator("#settings-bot")).toHaveText("Shell test Bot");
+      await page.screenshot({ path: `/tmp/mybots-settings-${section.toLowerCase()}.png` });
+    }
+    await page.getByRole("button", { name: "Open Tasks and decisions", exact: true }).click();
+    await expect(page.getByRole("complementary", { name: "Bot details" })).toBeVisible();
+    await expect(page.locator("#detail-title")).toHaveText("Tasks and Runs");
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Back to conversation", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeFocused();
+    await expect(page.locator("#bot-identity-name")).toHaveText("Shell test Bot");
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.keyboard.press("Escape");
     await page.getByLabel("Message", { exact: true }).fill("Keep this draft while offline");
     host.kill("SIGTERM");

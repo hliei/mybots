@@ -88,20 +88,22 @@
       </div>
     </main>
     <dialog id="settings-surface" aria-labelledby="settings-heading">
-      <nav class="settings-nav" aria-label="Settings sections"><h2 id="settings-heading">Settings</h2><p id="settings-bot" class="current-bot">No Bot selected</p>
+      <nav class="settings-nav" aria-label="Settings sections"><h2 id="settings-heading">Settings</h2><span class="settings-context">Current Bot</span><p id="settings-bot" class="current-bot">No Bot selected</p>
         <button type="button" data-settings="configuration">Configuration</button><button type="button" data-settings="memory">Memory</button><button type="button" data-settings="skills">Skills</button><button type="button" data-settings="collaboration">Collaboration</button><button type="button" data-settings="routines">Routines</button><button type="button" data-settings="connection">Connection</button>
+        <button id="return-conversation" type="button" aria-label="Back to conversation">← Back to conversation</button>
       </nav>
       <div class="settings-main"><button id="close-settings" type="button" aria-label="Close settings" class="icon-button">×</button>
+        <div id="settings-recovery" class="settings-card" hidden><p id="settings-recovery-message" role="status"></p><button id="recover-settings" type="button">Recover configuration request</button></div>
         <p id="settings-empty">Select a Bot to manage its configuration, memory, permissions and Routines.</p>
         <div data-settings-mount="configuration"><section id="settings" hidden="">
           <h2>Bot configuration</h2>
-          <p id="settings-versions"></p>
+          <p id="settings-versions"></p><p>Changes apply at the next permitted Attempt boundary. An active Attempt keeps its captured configuration; later inputs continue with the saved version.</p><div id="settings-effective" class="settings-card" hidden></div>
           <form id="settings-form">
             <fieldset id="settings-fields">
-              <label for="saved-role">Bot role</label>
-              <textarea id="saved-role" required="" maxlength="32000" rows="4"></textarea>
-              <label for="saved-model">Saved model</label>
-              <select id="saved-model" required=""></select>
+              <div class="settings-card"><label for="saved-role">Bot role</label>
+              <textarea id="saved-role" required="" maxlength="32000" rows="4"></textarea></div>
+              <div class="settings-card"><label for="saved-model">Saved model</label>
+              <select id="saved-model" required=""></select></div>
               <fieldset id="saved-tools"><legend>Saved tools</legend></fieldset>
               <fieldset id="saved-skills"><legend>Skill revisions to activate on save</legend></fieldset>
             </fieldset>
@@ -141,7 +143,7 @@
           <p id="memory-message" aria-live="polite"></p>
         </section></div>
         <div data-settings-mount="skills" hidden><section id="local-skills" hidden="">
-          <h2>Local Skills</h2>
+          <h2>Skills</h2><div class="settings-card"><h3>Bot activation</h3><p id="skill-activation"></p><p>Activation belongs to the current Bot. Importing into the shared library does not change saved or effective revisions.</p><button id="choose-skill-revisions" type="button">Choose protected revisions</button></div><h3>Shared local Skill library</h3>
           <p>Import a local directory on this Host, including proposed files from a Bot workspace. Imported revisions remain inactive until selected and saved. Limits: 256 files, 4 MiB; links are rejected.</p>
           <form id="skill-import">
             <label for="skill-id">Skill ID</label><input id="skill-id" name="skill-id" required="" pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}">
@@ -152,8 +154,8 @@
           <div id="skill-library"></div>
         </section></div>
         <div data-settings-mount="collaboration" hidden><section id="collaboration">
-            <h3>Delegation</h3>
-            <p>Directed collaboration defaults to deny. Allow lets this Bot delegate selected text to the named Bot. This Bot cannot grant itself, and the reverse direction needs its own permission. Ask each time requires a local decision for the exact target and inputs before creating child work.</p>
+            <h2>Collaboration</h2><h3>Directed permissions</h3>
+            <p>Directed collaboration defaults to deny. Allow lets this Bot delegate selected text to the named Bot. This Bot cannot grant itself, and the reverse direction needs its own permission. Ask each time requires a local decision for the exact target and inputs before creating child work. Deny immediately blocks new requests and pending approvals and cancels unfinished delegations through this direction and their owned descendants. Cancellation still requires confirmed termination; completed effects and delivered files remain.</p><button id="collaboration-work" type="button">Open Tasks and decisions</button>
             <form id="collaboration-form">
               <label for="collaboration-target">Target Bot</label>
               <select id="collaboration-target" required=""></select>

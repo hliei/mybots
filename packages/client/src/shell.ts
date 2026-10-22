@@ -47,8 +47,13 @@ function closeDetail(): void {
 function selectSettings(mode: Settings): void {
   for (const mount of document.querySelectorAll<HTMLElement>("[data-settings-mount]"))
     mount.hidden = mount.dataset.settingsMount !== mode || (!currentBot && mode !== "connection");
-  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-settings]"))
-    button.setAttribute("aria-pressed", String(button.dataset.settings === mode));
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-settings]")) {
+    const selected = button.dataset.settings === mode;
+    button.setAttribute("aria-pressed", String(selected));
+    if (selected) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  }
+  node("settings-surface").querySelector(".settings-main")?.scrollTo(0, 0);
 }
 export function openSettings(trigger = document.activeElement): void {
   settingsReturn = trigger as HTMLElement;
@@ -85,6 +90,20 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-detail]
 node("open-settings").addEventListener("click", () => openSettings());
 node("bot-settings").addEventListener("click", () => openSettings());
 node("close-settings").addEventListener("click", () => settings.close());
+node("recover-settings").addEventListener("click", () => {
+  selectSettings("configuration");
+  node("close-settings").focus();
+});
+node("return-conversation").addEventListener("click", () => settings.close());
+node("choose-skill-revisions").addEventListener("click", () => {
+  selectSettings("configuration");
+  node("saved-skills").scrollIntoView({ block: "center" });
+  (node("saved-skills").querySelector("select") ?? node("saved-role")).focus();
+});
+node("collaboration-work").addEventListener("click", () => {
+  settings.close();
+  openDetail("tasks", node("open-tasks"));
+});
 settings.addEventListener("close", () =>
   resolveBotTrigger(settingsReturn, "open-settings").focus(),
 );

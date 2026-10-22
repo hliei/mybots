@@ -128,8 +128,13 @@ Task or Upload to this Task in Task details, then choose an existing Task before
 uploading. Download links return actual bytes; Save to Bot workspace deliberately
 makes an attachment available to this Bot’s other Tasks. Files does not create a
 Task for a first-message attachment or share materials with another Bot.
-Settings in the sidebar or Bot overview opens the current Bot's configuration,
-memory, Skills, collaboration and Routines. Close settings or press Escape to
+Settings in the sidebar, Bot menu or Bot overview opens the current Bot's
+configuration, memory, Skills, collaboration and Routines. The shared Skill library
+shows imported revisions separately from the current Bot's saved and effective
+activation. Choose protected revisions in Configuration and save explicitly to
+activate them. Unconfirmed configuration requests remain recoverable across Bot
+switching and reload; recover that request before saving another Bot's
+configuration. Use Back to conversation, close settings or press Escape to
 return to the conversation. The page refreshes status while visible. The Host
 must stay running, and desktop localhost is not reachable from a phone. See [local client access](docs/host-runtime.md#local-client-access).
 
