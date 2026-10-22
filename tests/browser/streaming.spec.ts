@@ -188,7 +188,7 @@ test("history anchors survive live output, Bot switching and panel reflow", asyn
       .poll(() => region.evaluate((e) => e.scrollHeight - e.clientHeight))
       .toBeGreaterThan(100);
     await region.evaluate((e) => {
-      e.scrollTop = 100;
+      e.scrollTop = Math.floor((e.scrollHeight - e.clientHeight) / 2);
     });
     await expect(page.getByRole("button", { name: "Back to latest" })).toBeVisible();
     const readingTop = await region.evaluate((e) => e.scrollTop);
