@@ -86,7 +86,7 @@ test("reset chat background while a Run continues, then select an earlier messag
     await page.getByRole("button", { name: "Bot menu", exact: true }).click();
     await page.getByRole("button", { name: "Reset chat background", exact: true }).click();
     await confirmation.getByRole("button", { name: "Reset background", exact: true }).click();
-    await expect(page.locator("#chat-message")).toContainText("Chat background boundary is");
+    await expect(page.locator("#chat-message")).toContainText("Chat background reset.");
     await expect(page.locator("#selected-chat")).not.toContainText("Chat background boundary: 0");
     await expect(page.locator("#thread-messages")).toContainText("Hold chat");
     await expect(

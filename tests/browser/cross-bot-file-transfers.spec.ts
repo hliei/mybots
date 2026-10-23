@@ -124,9 +124,8 @@ test("approves a selected attachment and downloads the receiving copy after rest
     const approval = page.locator('#work-cards [data-approval-id="browser-copy"]');
     const unrelated = page.locator('#work-cards [data-approval-id="browser-unrelated"]');
     await expect(approval).toBeVisible();
-    await expect(approval).toContainText(
-      `Selected file: attachment ${attachmentId} · note.txt (12 bytes)`,
-    );
+    await expect(approval).toContainText("Selected file: note.txt (12 bytes)");
+    await expect(approval).not.toContainText(attachmentId);
     await expect(unrelated.getByRole("button", { name: "Approve action" })).toBeVisible();
     const decided = page.waitForRequest("**/approvals/browser-copy/decision");
     await approval.getByRole("button", { name: "Approve action" }).click();

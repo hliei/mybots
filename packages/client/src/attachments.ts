@@ -75,9 +75,9 @@ function limitMessage(): string {
 
 export async function showAttachments(
   selectedBot: string | undefined,
-  ids: string[],
+  tasks: { id: string; name: string }[],
 ): Promise<void> {
-  const nextIds = ids.join("\n");
+  const nextIds = JSON.stringify(tasks);
   if (botId !== selectedBot) {
     task.replaceChildren();
     scope.textContent = "Select an existing Task. First-message attachments are unavailable.";
@@ -98,10 +98,10 @@ export async function showAttachments(
   if (taskIds !== nextIds) {
     const previous = task.value;
     task.replaceChildren(
-      ...ids.map((id) =>
+      ...tasks.map(({ id, name }) =>
         Object.assign(document.createElement("option"), {
           value: id,
-          textContent: `Task ${id}`,
+          textContent: name,
         }),
       ),
     );
@@ -137,7 +137,7 @@ async function refresh(): Promise<void> {
     return;
   }
   if (botId !== owner || task.value !== selectedTask) return;
-  scope.textContent = `Bot ${owner} · Task ${selectedTask}`;
+  scope.textContent = `Files for: ${task.selectedOptions[0]?.textContent ?? "Selected Task"}`;
   if (typeof body.maxBytes === "number") maxBytes = body.maxBytes;
   const next = JSON.stringify(body.attachments);
   if (next === signature) return;
@@ -168,13 +168,19 @@ function render(attachments: Attachment[], drafts: Map<string | undefined, strin
         textContent: `${item.filename} · ${item.bytes} bytes`,
       }),
     );
-    article.append(
+    const details = document.createElement("details");
+    details.className = "technical-details";
+    const summary = document.createElement("summary");
+    summary.textContent = "File source";
+    details.append(summary);
+    article.append(details);
+    details.append(
       Object.assign(document.createElement("p"), {
         textContent: `Bot ${botId} · Task ${task.value}${item.runId ? ` · Run ${item.runId}` : ""}`,
       }),
     );
     if (item.source)
-      article.append(
+      details.append(
         Object.assign(document.createElement("p"), {
           textContent: `Receiving Bot ${botId} · Task ${task.value} · Run ${item.runId} · Delegation ${item.source.delegationId} · Source ${item.source.kind} ${item.source.fileId} · Bot ${item.source.botId} · Task ${item.source.taskId} · Run ${item.source.runId}`,
         }),

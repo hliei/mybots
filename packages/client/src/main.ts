@@ -320,7 +320,9 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
   setShellBot(active);
   showSettingsRecovery();
   selected.hidden = !active;
+  const expanded = selected.dataset.botId === active?.id && selected.querySelector("details")?.open;
   selected.replaceChildren();
+  selected.dataset.botId = active?.id ?? "";
   const execution = document.getElementById("host-execution") as HTMLElement;
   execution.replaceChildren();
   if (active) {
@@ -331,7 +333,17 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     }
     const heading = document.createElement("h2");
     heading.textContent = active.name;
-    selected.append(heading);
+    const role = document.createElement("p");
+    role.textContent = active.instructions;
+    const model = document.createElement("p");
+    model.textContent = active.model.id;
+    const details = document.createElement("details");
+    details.className = "technical-details";
+    details.open = !!expanded;
+    const summary = document.createElement("summary");
+    summary.textContent = "Configuration details";
+    details.append(summary);
+    selected.append(heading, role, model, details);
     const lines = [
       `Bot ID: ${active.id}`,
       `Workspace: ${active.workspace}`,
@@ -354,7 +366,7 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     ]) {
       const paragraph = document.createElement("p");
       paragraph.textContent = text;
-      selected.append(paragraph);
+      details.append(paragraph);
     }
     const lifecycle = document.createElement("p");
     lifecycle.id = "bot-lifecycle";
@@ -364,7 +376,8 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
         : active.availability === "disabled"
           ? "This Bot is disabled. New chat, tasks, retries, Routines, and delegations are not admitted. Enabling does not revive cancelled work."
           : "Disabling blocks new chat, tasks, retries, Routines, and delegations and cancels unfinished owned work.";
-    selected.append(lifecycle);
+    if (active.availability === "active") details.append(lifecycle);
+    else selected.append(lifecycle);
     const actions = document.createElement("p");
     const operation = (name: "disable" | "enable" | "delete", label: string): HTMLButtonElement => {
       const button = document.createElement("button");
@@ -385,7 +398,8 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
       actions.append(operation("delete", "Logically delete Bot"));
       const disclosure = document.createElement("p");
       disclosure.textContent = logicalDeletionRetention;
-      selected.append(actions, disclosure);
+      selected.append(actions);
+      details.append(disclosure);
     }
     void showSkills(
       active.id,
@@ -605,14 +619,13 @@ async function load(): Promise<void> {
     render(snapshot, managed.bots);
     pairing.hidden = true;
     status.hidden = false;
-    connection.textContent = "Connected to your local Host";
+    connection.textContent = "Connected";
     (document.querySelector<HTMLElement>("#updated") as HTMLElement).textContent =
       `Last checked ${new Date().toLocaleTimeString()}`;
   } catch {
     setHostAvailable(false);
     setNavigationAvailable(false);
-    connection.textContent =
-      "Host unavailable. Displayed status may be stale. Keep the Host running; this page will reconnect automatically.";
+    connection.textContent = "Host unavailable · Reconnecting…";
   } finally {
     loading = false;
     refresh.disabled = false;

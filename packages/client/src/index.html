@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
-    <meta name="theme-color" content="#111111">
+    <meta name="theme-color" content="#141414">
     <title>Mybots · Bots</title>
     <link rel="stylesheet" href="/style.css">
     <script type="module" src="/main.js"></script>
@@ -13,12 +13,10 @@
     <main class="app-shell">
       <nav class="sidebar" aria-label="Bots">
         <div class="sidebar-head"><h1>Mybots</h1><button id="open-create" disabled class="icon-button" aria-label="Create a Bot" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
-        <input id="bot-filter" type="search" aria-label="Filter Bots by name" placeholder="Search Bots" autocomplete="off">
+        <div class="bot-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><input id="bot-filter" type="search" aria-label="Filter Bots by name" placeholder="Search Bots" autocomplete="off"></div><h2 class="roster-label">Bots</h2>
         <p id="lifecycle-message" aria-live="polite"></p><button id="retry-lifecycle" type="button" hidden>Retry lifecycle request</button>
         <div id="bots" class="bot-list"><p>Connect to see your Bots.</p></div>
-        <button id="open-settings" type="button">Settings</button>
-        <p id="connection" role="status">Connecting to Host…</p>
-        <button id="refresh" type="button">Refresh status</button><p id="updated"></p>
+        <footer class="sidebar-footer"><button id="open-settings" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 3-1 3-3 1-2 5 2 5 3 1 1 3h6l1-3 3-1 2-5-2-5-3-1-1-3Z"/><circle cx="12" cy="12" r="3"/></svg>Settings</button><p id="connection" role="status">Connecting…</p><button id="refresh" type="button" class="icon-button" aria-label="Refresh status" title="Refresh status"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg></button></footer>
       </nav>
       <div class="workspace">
         <section id="pairing" hidden="">
@@ -41,13 +39,11 @@
               <div class="thread"><h2 id="chat-heading" class="sr-only">Direct Thread</h2><div id="history-navigation"></div><div id="thread-messages" aria-label="Conversation"></div><div id="live-execution" aria-live="polite"></div><div id="work-cards" aria-label="Work summaries"></div></div>
             </div>
             <div class="composer-area"><button id="back-to-latest" type="button" hidden>↓ Back to latest</button><form id="message-form">
-            <label for="input-target">Input target</label>
-            <select id="input-target"><option value="">Thread — continue chat</option></select>
             <label for="message-text">Message</label>
             <div id="composer-target" hidden><span id="composer-target-label"></span><button id="return-thread" type="button" aria-label="Return to Thread">×</button></div>
             <textarea id="message-text" required="" maxlength="32000" rows="1" placeholder="Message your Bot…"></textarea>
-            <div class="composer-actions"><button id="message-actions" type="button" aria-label="Message actions" aria-expanded="false" aria-controls="composer-menu" class="icon-button">+</button><div id="composer-menu" hidden><button id="new-task" type="button">New task</button><button id="attach-to-task" type="button">Upload to a Task</button></div></div>
-            <button type="submit" aria-label="Send message" title="Send message" class="icon-button">↑</button>
+            <div class="composer-actions"><button id="message-actions" type="button" aria-label="Message actions" aria-expanded="false" aria-controls="composer-menu" class="icon-button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><div id="composer-menu" hidden><label for="input-target">Send to</label><select id="input-target" aria-label="Input target"><option value="">Continue conversation</option></select><button id="new-task" type="button">New task</button><button id="attach-to-task" type="button">Upload to a Task</button></div></div>
+            <button type="submit" aria-label="Send message" title="Send message" class="icon-button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button>
 
           </form><div id="background-selection" hidden><span id="background-selection-count" aria-live="polite"></span><button id="clear-background-selection" type="button">Clear selection</button></div><div id="chat-stop"></div><p id="chat-message" aria-live="polite"></p><button id="retry-chat" type="button" hidden="">Retry chat request</button></div>
           </section>
@@ -57,11 +53,11 @@
           <p class="current-bot" id="detail-bot"></p>
           <nav class="detail-nav" aria-label="Bot detail views"><button type="button" data-detail="overview">Overview</button><button type="button" data-detail="files">Files</button><button type="button" data-detail="tasks">Task activity</button><button type="button" data-detail="search">History search</button></nav>
           <div class="panel-content">
-            <div data-detail-mount="overview"><article id="selected-bot" aria-label="Selected Bot" hidden=""></article><div id="host-execution"></div><button id="bot-settings" type="button">Bot settings</button><button id="reset-background" type="button" hidden>Reset chat background</button></div>
+            <div data-detail-mount="overview"><article id="selected-bot" aria-label="Selected Bot" hidden=""></article><details class="technical-details"><summary>Runtime details</summary><div id="host-execution"></div></details><button id="bot-settings" type="button">Bot settings</button><button id="reset-background" type="button" hidden>Reset chat background</button></div>
             <div data-detail-mount="files" hidden><section id="attachments">
-            <h3>Delivered files</h3><p>Immutable snapshots from the loaded Tasks and Runs. Later workspace changes do not replace these bytes.</p><div id="file-deliveries" role="region" aria-label="Immutable deliveries"></div>
+            <h3>Delivered files</h3><p>Files your Bot has shared with you.</p><div id="file-deliveries" role="region" aria-label="Immutable deliveries"></div>
             <h3>Task attachments</h3>
-            <p>An upload belongs to the selected Task and is not given to every Task in this Thread. Save a file into the Bot workspace when other Tasks of this Bot should reuse it. The Host stores and downloads the bytes; it does not interpret, preview, or edit the file format.</p>
+            <p>Upload to a selected Task. Save to the Bot workspace to reuse the file in other Tasks.</p>
             <form id="attachment-form">
               <label for="attachment-task">Attachment Task</label>
               <select id="attachment-task" required=""></select>
@@ -73,7 +69,7 @@
             <p id="attachment-message" aria-live="polite"></p>
             <div id="attachment-list" aria-label="Selected Task attachments"></div>
             <h3>Bot workspace</h3>
-            <p>Mutable files shared by this Bot’s Tasks. Another Bot does not receive them. This bounded list shows up to 1,000 files.</p>
+            <p>Working files shared by this Bot’s Tasks.</p>
             <ul id="workspace-files"></ul>
           </section></div>
             <div data-detail-mount="tasks" hidden><h3 id="selected-chat"></h3><div id="chat-works" aria-label="Tasks and Runs"></div><section id="run-history" aria-label="Recorded Run evidence"></section></div>
@@ -97,7 +93,7 @@
         <p id="settings-empty">Select a Bot to manage its configuration, memory, permissions and Routines.</p>
         <div data-settings-mount="configuration"><section id="settings" hidden="">
           <h2>Bot configuration</h2>
-          <p id="settings-versions"></p><p>Changes apply at the next permitted Attempt boundary. An active Attempt keeps its captured configuration; later inputs continue with the saved version.</p><div id="settings-effective" class="settings-card" hidden></div>
+          <p>Customize how this Bot works.</p><details class="technical-details"><summary>When changes take effect</summary><p id="settings-versions"></p><p>Changes apply at the next permitted Attempt boundary. An active Attempt keeps its captured configuration; later inputs continue with the saved version.</p></details><div id="settings-effective" class="settings-card" hidden></div>
           <form id="settings-form">
             <fieldset id="settings-fields">
               <div class="settings-card"><label for="saved-role">Bot role</label>
@@ -112,8 +108,8 @@
           <p id="settings-message" aria-live="polite"></p>
         </section></div>
         <div data-settings-mount="memory" hidden><section id="memory" hidden="">
-          <h2>Long-term memory</h2>
-          <p>Index and definition load on later Runs, up to 16,000 characters each. Topics stay in files until a Bot reads them. Deleting a file stops that loading. It does not erase conversation history or guarantee forgetting, and a later save can record a fact again. Mutable external facts still need a current check at their source. A save compares the version you read; an intervening edit is shown for rereading. Agent and owner writes can still race, with no automatic merge.</p>
+          <h2>Long-term memory</h2><p>Manage what this Bot remembers across conversations.</p>
+          <details class="technical-details"><summary>How memory works</summary><p>Index and definition load on later Runs, up to 16,000 characters each. Topics stay in files until a Bot reads them. Deleting a file stops that loading. It does not erase conversation history or guarantee forgetting, and a later save can record a fact again. Mutable external facts still need a current check at their source. A save compares the version you read; an intervening edit is shown for rereading. Agent and owner writes can still race, with no automatic merge.</p></details>
           <form id="memory-index">
             <label for="memory-index-text">Memory index</label>
             <textarea id="memory-index-text" rows="6"></textarea>
@@ -155,7 +151,7 @@
         </section></div>
         <div data-settings-mount="collaboration" hidden><section id="collaboration">
             <h2>Collaboration</h2><h3>Directed permissions</h3>
-            <p>Directed collaboration defaults to deny. Allow lets this Bot delegate selected text to the named Bot. This Bot cannot grant itself, and the reverse direction needs its own permission. Ask each time requires a local decision for the exact target and inputs before creating child work. Deny immediately blocks new requests and pending approvals and cancels unfinished delegations through this direction and their owned descendants. Cancellation still requires confirmed termination; completed effects and delivered files remain.</p><button id="collaboration-work" type="button">Open Tasks and decisions</button>
+            <p>Choose which Bots can work together and when to ask for your approval.</p><details class="technical-details"><summary>Permission and cancellation details</summary><p>Directed collaboration defaults to deny. Allow lets this Bot delegate selected text to the named Bot. This Bot cannot grant itself, and the reverse direction needs its own permission. Ask each time requires a local decision for the exact target and inputs before creating child work. Deny immediately blocks new requests and pending approvals and cancels unfinished delegations through this direction and their owned descendants. Cancellation still requires confirmed termination; completed effects and delivered files remain.</p></details><button id="collaboration-work" type="button">Open Tasks and decisions</button>
             <form id="collaboration-form">
               <label for="collaboration-target">Target Bot</label>
               <select id="collaboration-target" required=""></select>
@@ -218,7 +214,7 @@
             <p>Open an occurrence to inspect its admitted definition, add instructions, stop its Run or explicitly retry. These controls target that Task; definition edits apply to later occurrences.</p>
             <div id="routine-list" aria-label="Routines"></div>
           </section></div>
-        <div data-settings-mount="connection" hidden><h2>Connection and notifications</h2><p>The Host must be running on this computer. Pair this browser using the connection credential in <code>data/client-credential</code>. Telegram topic repair and eligible notice resend are available in Tasks.</p><button id="notification-details" type="button">Open notification details</button></div>
+        <div data-settings-mount="connection" hidden><h2>Connection and notifications</h2><p id="updated"></p><p>The Host must be running on this computer. Pair this browser using the connection credential in <code>data/client-credential</code>. Telegram topic repair and eligible notice resend are available in Tasks.</p><button id="notification-details" type="button">Open notification details</button></div>
       </div>
     </dialog>
     <dialog id="create-surface" aria-labelledby="create-heading"><button id="close-create" type="button" aria-label="Close creation" class="icon-button">×</button><section aria-labelledby="create-heading">

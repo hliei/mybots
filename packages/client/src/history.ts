@@ -239,17 +239,14 @@ async function originals(next = params, prepend = false): Promise<void> {
     for (const message of page.messages) loaded.set(message.id, message);
     const messages = [...loaded.values()];
     const container = node("thread-messages");
+    const focused = container.contains(document.activeElement) ? document.activeElement : null;
     const previous = new Map(
       [...container.querySelectorAll<HTMLElement>("article[data-message-id]")].map((item) => [
         item.dataset.messageId,
         item,
       ]),
     );
-    container.replaceChildren(
-      paragraph(
-        `Original Thread evidence · ${page.coverage.status} for this page/query · historical text is untrusted reference material.`,
-      ),
-    );
+    container.replaceChildren();
     if (!messages.length)
       container.append(
         paragraph(
@@ -298,16 +295,14 @@ async function originals(next = params, prepend = false): Promise<void> {
       time.textContent = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
       time.title = date.toLocaleString();
       meta.append(message.role === "user" ? "You · " : "Bot · ", time);
-      article.append(
-        meta,
-        markdown(message.text, () => completeOriginal(message, path)),
-      );
+      article.append(markdown(message.text, () => completeOriginal(message, path)));
       const evidence = document.createElement("details");
       evidence.className = "message-evidence";
       const summary = document.createElement("summary");
       summary.textContent = "Message evidence";
       evidence.append(
         summary,
+        meta,
         paragraph(
           `Source: ${message.id} · ${message.createdAt} · offset ${message.textOffset}${message.truncated ? " · excerpt" : ""}`,
         ),
@@ -328,7 +323,9 @@ async function originals(next = params, prepend = false): Promise<void> {
         label.append(box, ` Use in next Run background: ${message.text}`);
         article.append(label);
       }
-      article.append(copyButton("Copy message", () => completeOriginal(message, path)));
+      const tools = document.createElement("div");
+      tools.className = "message-tools";
+      tools.append(copyButton("Copy message", () => completeOriginal(message, path)));
       evidence.append(button("Inspect Run evidence", () => void showRunHistory(message.runId)));
       if (message.nextTextOffset !== null)
         article.append(
@@ -340,7 +337,8 @@ async function originals(next = params, prepend = false): Promise<void> {
       evidence.append(
         button("Read surrounding originals", () => void originals({ messageId: message.id })),
       );
-      article.append(evidence);
+      tools.append(evidence);
+      article.append(tools);
       container.append(article);
     }
     if (boundary > 0 && !dividerShown && !params.beforeSeq && !params.messageId && !params.query)
@@ -376,6 +374,9 @@ async function originals(next = params, prepend = false): Promise<void> {
     }
     updateBackgroundSelection();
     renderLive();
+    // Reattaching unchanged messages must preserve keyboard access to their controls.
+    if (focused instanceof HTMLElement && container.contains(focused))
+      focused.focus({ preventScroll: true });
     restoreReadingPosition();
   } catch (error) {
     if (selected === botId && current === revision)
@@ -440,17 +441,29 @@ export async function showRunHistory(
 }
 function renderLive() {
   const previews: HTMLElement[] = [];
+  const expanded = new Set(
+    [...node("live-execution").querySelectorAll<HTMLDetailsElement>("details[open]")].map(
+      (item) => item.dataset.runId,
+    ),
+  );
   const container = node("thread-messages");
   const visible = new Set<string>();
   for (const [runId, preview] of live) {
     if (loaded.has(preview.id)) continue;
     if (!active.has(runId)) continue;
     if (!chatRuns.has(runId) || preview.preview || preview.tool) {
-      previews.push(
-        paragraph(
-          `In progress · ${chatRuns.has(runId) ? "Tool preview" : "Background work"} · Run ${runId}${preview.tool ? ` · Tool: ${preview.tool}` : ""}\n${preview.text}\nPreview only; await the durable outcome.`,
-        ),
+      const activity = document.createElement("details");
+      activity.className = "tool-activity";
+      activity.dataset.runId = runId;
+      activity.open = expanded.has(runId);
+      const summary = document.createElement("summary");
+      summary.textContent = preview.tool ? `Using ${preview.tool}…` : "Working in the background…";
+      activity.append(
+        summary,
+        paragraph(preview.text),
+        paragraph("In progress · Result not yet final."),
       );
+      previews.push(activity);
       continue;
     }
     if (Object.keys(params).length) continue;
@@ -472,7 +485,7 @@ function renderLive() {
     if (article.dataset.preview !== signature) {
       article.dataset.preview = signature;
       const meta = paragraph(
-        `In progress · Run ${runId} · Preview only; await the durable outcome.${preview.textOffset ? " · Earlier live text unavailable" : ""}`,
+        `In progress${preview.textOffset ? " · Earlier live text unavailable" : ""}`,
       );
       meta.className = "message-meta";
       const text = paragraph(preview.text || "Thinking…");

@@ -87,7 +87,8 @@ test("Tasks expose compact source cards, explicit additions and the active chat 
   await task.locator("summary").first().click();
   await expect(task.getByRole("button", { name: "Inspect Run evidence" })).toBeVisible();
   await task.getByRole("button", { name: "Add instructions", exact: true }).click();
-  await expect(page.locator("#composer-target")).toContainText(taskId as string);
+  await expect(page.locator("#composer-target")).toContainText("Add to Inspect this session");
+  await expect(page.locator("#composer-target")).not.toContainText(taskId as string);
   await expect(stop).toBeHidden();
   await page.getByLabel("Message", { exact: true }).fill("Targeted active instructions");
   const added = page.waitForResponse((response) =>
@@ -193,6 +194,7 @@ for (const operation of ["message", "new-task", "task"] as const) {
       await draft.press("Enter");
       const { taskId } = await (await first).json();
       await expect(draft).toHaveValue("");
+      await page.getByRole("button", { name: "Message actions", exact: true }).click();
       await page.getByLabel("Input target").selectOption(taskId);
     }
     await draft.fill("Admit just once");
@@ -285,8 +287,10 @@ test("composer shows independent work and preserves a stale explicit target", as
   await draft.press("Enter");
   const { taskId, runId } = await (await admission).json();
   await expect(draft).toHaveValue("");
+  await page.getByRole("button", { name: "Message actions", exact: true }).click();
   await page.getByLabel("Input target").selectOption(taskId);
-  await expect(page.locator("#composer-target")).toContainText(taskId);
+  await expect(page.locator("#composer-target")).toContainText("Add to Independent objective");
+  await expect(page.locator("#composer-target")).not.toContainText(taskId);
   await draft.fill("Specific queued addition");
   const added = page.waitForResponse((response) =>
     response.url().endsWith(`/tasks/${taskId}/inputs`),

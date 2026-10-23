@@ -1,4 +1,4 @@
-import { openDetail, openSettings, resolveBotTrigger } from "./shell.ts";
+import { openDetail, openSettings, resolveBotTrigger, showAvatar } from "./shell.ts";
 
 export interface BotSummary {
   id: string;
@@ -73,7 +73,7 @@ function render(): void {
       const avatar = document.createElement("span");
       avatar.className = "avatar";
       avatar.setAttribute("aria-hidden", "true");
-      avatar.textContent = Array.from(bot.name.trim())[0]?.toLocaleUpperCase() ?? "?";
+      showAvatar(avatar, bot.name, bot.id);
       const heading = document.createElement("h3");
       heading.textContent = bot.name;
       const preview = document.createElement("p");

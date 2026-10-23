@@ -102,7 +102,7 @@ test("Researcher and Writer restore a Routine, owned decisions, report and indep
     await page.getByRole("button", { name: "Create Bot", exact: true }).click();
     await expect(page.locator("#selected-bot")).toContainText(role);
     await showFeature(page, "overview");
-    const id = (await page.locator("#selected-bot").innerText()).match(/Bot ID: (\S+)/)?.[1];
+    const id = await page.locator("#selected-bot").getAttribute("data-bot-id");
     if (!id) throw new Error("Created Bot identity missing");
     await showFeature(page, "Memory");
     await page.getByLabel("Memory index", { exact: true }).fill(memory);

@@ -119,9 +119,13 @@ queue state, Attempts and final outcomes. The Host prints the URL at startup. Co
 generated `data/client-credential` into the pairing form once; the browser keeps
 an HttpOnly connection cookie for later visits. Each new Bot has its own role,
 approved model, tools and workspace; settings persist across Host restart. The
-desktop shell keeps the Bot sidebar and composer visible while the conversation
-scrolls. Open the Bot identity or Bot menu for Overview and Files, Tasks for Run
-evidence and owner decisions, and Search conversation for original history.
+desktop shell uses a compact Bot sidebar, content-sized message bubbles and a
+single-row composer that stays visible while the conversation scrolls. Open the
+Bot identity or Bot menu for Overview and Files, Tasks for Run evidence and owner
+decisions, and Search conversation for original history.
+Message copy and evidence controls appear on hover or keyboard focus; runtime
+identifiers stay inside explicit detail disclosures. Message actions (the plus
+button) contains the Input target selector for independent Tasks and additions.
 Files separates immutable deliveries with producing Task/Run links, selected Task
 attachments, and mutable Bot workspace files. Use Message actions → Upload to a
 Task or Upload to this Task in Task details, then choose an existing Task before
@@ -156,9 +160,9 @@ the operation, target, instructions and selected file identities and byte counts
 Answered and decided cards retain their updated state; expired, cancelled or
 revoked requests cannot authorize work. Settings → Connection → Open notification
 details exposes Telegram topic repair and eligible failed-notice resend, with
-delivery state independent of work outcomes. Stop current chat Run names the
-active Task and Run and is available
-while composing ordinary chat. Use Stop run in a Task's details for other work,
+delivery state independent of work outcomes. Stop response targets the active
+chat Run while composing ordinary chat. Inspect its Task for runtime identity.
+Use Stop run in a Task's details for other work,
 including its owned descendants. Stopping stays pending until termination is
 confirmed; failed stops and uncertain outcomes retain their evidence. Review an
 uncertain Run before explicitly closing or retrying it. Retry keeps the Task,

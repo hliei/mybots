@@ -111,7 +111,8 @@ for (const action of ["allow", "approve", "deny", "expire"] as const) {
       } else {
         const card = page.locator('#work-cards [data-approval-id="browser-child"]');
         await expect(card).toContainText("Operation: delegate");
-        await expect(card).toContainText(writerId);
+        await expect(card).toContainText("Target Bot: Writer");
+        await expect(card).not.toContainText(writerId);
         await expect(card).toContainText("Inputs: Selected browser text");
         await showFeature(page, "tasks");
         await expect(card.getByRole("button", { name: "Approve action" })).toBeVisible();
