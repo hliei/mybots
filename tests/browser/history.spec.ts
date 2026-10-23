@@ -84,6 +84,30 @@ test("real Pi history, lost live frames, reload and Host restart preserve usable
     await showFeature(page, "chat");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await expect(page.locator("#live-execution")).toContainText("Live original lookup");
+    const toolActivity = page.locator("#live-execution details").first();
+    const toolSummary = toolActivity.locator("summary");
+    await toolSummary.focus();
+    await toolSummary.press("Space");
+    await expect(toolActivity).toHaveAttribute("open", "");
+    // Refresh without deliberately moving focus away from the live disclosure.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          const observer = new MutationObserver(() => {
+            observer.disconnect();
+            requestAnimationFrame(() => resolve());
+          });
+          observer.observe(document.getElementById("live-execution") as HTMLElement, {
+            childList: true,
+            subtree: true,
+          });
+          document.getElementById("refresh")?.click();
+        }),
+    );
+    await expect(toolSummary).toBeFocused();
+    await expect(toolActivity).toHaveAttribute("open", "");
+    await toolSummary.press("Space");
+    await expect(toolActivity).not.toHaveAttribute("open");
     await expect(page.locator("#chat-works article").last()).toContainText("Outcome: unresolved");
     await page.reload();
     await expect(page.locator("#live-execution")).toContainText("Live original lookup");

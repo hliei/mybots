@@ -599,6 +599,7 @@ text.addEventListener("keydown", (event) => {
   form.requestSubmit();
 });
 let collaborationBots: Detail["collaboration"] = [];
+let taskLabels = new Map<string, string>();
 let botId: string | undefined;
 let availability: "active" | "disabled" | "deleted" = "active";
 let version = 0;
@@ -656,6 +657,7 @@ export async function showChat(
   if (!selectedBotId) availability = "active";
   else if (next) availability = next;
   if (botId !== selectedBotId) {
+    taskLabels.clear();
     works.setAttribute("aria-busy", "true");
     renderFileDeliveries([]);
     void showAttachments(undefined, []);
@@ -726,6 +728,18 @@ export async function showChat(
     const detail: unknown = await response.json();
     if (!isDetail(detail)) throw new Error();
     if (current !== version) return;
+    const summaries = detail.tasks.map(taskSummary);
+    const counts = new Map<string, number>();
+    for (const summary of summaries) counts.set(summary, (counts.get(summary) ?? 0) + 1);
+    taskLabels = new Map(
+      detail.tasks.map((task, index) => {
+        const summary = summaries[index] as string;
+        return [
+          task.id,
+          (counts.get(summary) ?? 0) > 1 ? `${summary} · ${task.id.slice(0, 8)}` : summary,
+        ];
+      }),
+    );
     const executingChat = detail.tasks
       .filter((task) => task.origin === "chat")
       .flatMap((task) =>
@@ -1043,6 +1057,9 @@ function sourceLabel(task: Task): string {
       : "Chat";
 }
 function taskTitle(task: Task): string {
+  return taskLabels.get(task.id) ?? taskSummary(task);
+}
+function taskSummary(task: Task): string {
   return (
     task.routine?.text.slice(0, 100) ||
     task.runs[0]?.inputs[0]?.text.slice(0, 100) ||
@@ -1182,7 +1199,12 @@ function delegationCard(run: Run, delegation: Delegation): HTMLElement {
   return section;
 }
 function collaborationName(id: string): string {
-  return collaborationBots.find((bot) => bot.targetBotId === id)?.name ?? "Another Bot";
+  const name = collaborationBots.find((bot) => bot.targetBotId === id)?.name;
+  return !name
+    ? `Unavailable Bot · ${id.slice(0, 8)}`
+    : collaborationBots.filter((bot) => bot.name === name).length > 1
+      ? `${name} · ${id.slice(0, 8)}`
+      : name;
 }
 function approvalCard(
   source: Delegation,
@@ -1221,6 +1243,16 @@ function approvalCard(
         `Selected file: ${inConversation ? "" : `${file.kind} ${file.id} · `}${file.filename} (${file.bytes} bytes)`,
       ),
     );
+  if (inConversation) {
+    const details = document.createElement("details");
+    details.className = "technical-details";
+    const summary = document.createElement("summary");
+    summary.textContent = "Target details";
+    details.append(summary, paragraph(`Target Bot ID: ${approval.targetBotId}`));
+    for (const file of source.files)
+      details.append(paragraph(`Selected file ID: ${file.kind} ${file.id} · ${file.filename}`));
+    section.append(details);
+  }
   if (approval.decision) section.append(paragraph(`Owner decision: ${approval.decision}`));
   if (approval.state === "expired")
     section.append(

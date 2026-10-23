@@ -441,6 +441,7 @@ export async function showRunHistory(
 }
 function renderLive() {
   const previews: HTMLElement[] = [];
+  const focusedRun = document.activeElement?.closest<HTMLElement>(".tool-activity")?.dataset.runId;
   const expanded = new Set(
     [...node("live-execution").querySelectorAll<HTMLDetailsElement>("details[open]")].map(
       (item) => item.dataset.runId,
@@ -497,6 +498,11 @@ function renderLive() {
     if (!visible.has(article.dataset.messageId ?? "")) article.remove();
   }
   node("live-execution").replaceChildren(...previews);
+  if (focusedRun)
+    previews
+      .find((item) => item.dataset.runId === focusedRun)
+      ?.querySelector("summary")
+      ?.focus({ preventScroll: true });
   restoreReadingPosition();
 }
 function connect() {

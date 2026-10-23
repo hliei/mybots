@@ -77,6 +77,26 @@ test("desktop shell pairs, sends to a real Thread and returns focus from shared 
     await page.getByRole("button", { name: "Close details", exact: true }).click();
     await page.getByRole("button", { name: "Bot details: Personal", exact: true }).click();
     await expect(page.getByRole("complementary", { name: "Bot details" })).toBeVisible();
+    const configurationSummary = page.locator("#selected-bot details > summary");
+    await configurationSummary.focus();
+    await configurationSummary.press("Space");
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          const observer = new MutationObserver(() => {
+            observer.disconnect();
+            requestAnimationFrame(() => resolve());
+          });
+          observer.observe(document.getElementById("selected-bot") as HTMLElement, {
+            childList: true,
+          });
+          document.getElementById("refresh")?.click();
+        }),
+    );
+    await expect(configurationSummary).toBeFocused();
+    await expect(page.locator("#selected-bot details")).toHaveAttribute("open", "");
+    await configurationSummary.press("Space");
+    await expect(page.locator("#selected-bot details")).not.toHaveAttribute("open");
     await page.getByRole("button", { name: "Files", exact: true }).click();
     await expect(page.locator("#attachments")).toBeVisible();
     await captureDesktopState(page, info, "files");

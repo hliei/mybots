@@ -320,7 +320,10 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
   setShellBot(active);
   showSettingsRecovery();
   selected.hidden = !active;
-  const expanded = selected.dataset.botId === active?.id && selected.querySelector("details")?.open;
+  const sameBot = selected.dataset.botId === active?.id;
+  const disclosure = selected.querySelector("details");
+  const expanded = sameBot && disclosure?.open;
+  const focused = sameBot && disclosure?.querySelector("summary") === document.activeElement;
   selected.replaceChildren();
   selected.dataset.botId = active?.id ?? "";
   const execution = document.getElementById("host-execution") as HTMLElement;
@@ -344,6 +347,7 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     summary.textContent = "Configuration details";
     details.append(summary);
     selected.append(heading, role, model, details);
+    if (focused) summary.focus({ preventScroll: true });
     const lines = [
       `Bot ID: ${active.id}`,
       `Workspace: ${active.workspace}`,

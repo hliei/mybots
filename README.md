@@ -126,6 +126,9 @@ decisions, and Search conversation for original history.
 Message copy and evidence controls appear on hover or keyboard focus; runtime
 identifiers stay inside explicit detail disclosures. Message actions (the plus
 button) contains the Input target selector for independent Tasks and additions.
+Repeated Task summaries and duplicate Bot names use short identifiers when needed
+to distinguish destinations. Approval cards expose exact target and selected-file
+identities through Target details.
 Files separates immutable deliveries with producing Task/Run links, selected Task
 attachments, and mutable Bot workspace files. Use Message actions → Upload to a
 Task or Upload to this Task in Task details, then choose an existing Task before
