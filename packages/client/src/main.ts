@@ -1,5 +1,7 @@
-import { showChat } from "./chat.ts";
+import { type BotSummary, setNavigationAvailable, showBotNavigation } from "./bot-navigation.ts";
+import { setHostAvailable, showChat } from "./chat.ts";
 import { showMemory } from "./memory.ts";
+import { closeCreation, resolveBotTrigger, setShellBot } from "./shell.ts";
 import { type SkillSelection, selectedSkills, showSkills } from "./skills.ts";
 
 interface Snapshot {
@@ -105,6 +107,25 @@ function isBot(value: unknown): value is Bot {
     isStrings(value.effective.tools)
   );
 }
+function isSummary(value: unknown): value is BotSummary {
+  return (
+    record(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    ["active", "disabled", "deleted"].includes(value.availability as string) &&
+    typeof value.activityAt === "string" &&
+    typeof value.working === "boolean" &&
+    typeof value.attention === "boolean" &&
+    (value.latestMessage === null ||
+      (record(value.latestMessage) &&
+        [
+          value.latestMessage.id,
+          value.latestMessage.role,
+          value.latestMessage.excerpt,
+          value.latestMessage.createdAt,
+        ].every((field) => typeof field === "string")))
+  );
+}
 function isOptions(value: unknown): value is BotOptions {
   return (
     record(value) &&
@@ -125,7 +146,6 @@ function isCreation(value: unknown): value is Creation {
 const pairing = document.querySelector<HTMLElement>("#pairing") as HTMLElement;
 const status = document.querySelector<HTMLElement>("#status") as HTMLElement;
 const connection = document.querySelector<HTMLElement>("#connection") as HTMLElement;
-const bots = document.querySelector<HTMLElement>("#bots") as HTMLElement;
 const credential = document.querySelector<HTMLInputElement>("#credential") as HTMLInputElement;
 const pairButton = document.querySelector<HTMLButtonElement>(
   "#pair-form button",
@@ -181,6 +201,26 @@ interface SettingsDraft extends Creation {
   skills?: SkillSelection[];
 }
 let pendingSettings: SettingsDraft | undefined;
+let settingsSending = false;
+let settingsBotId: string | undefined;
+
+function showSettingsRecovery(): void {
+  const recovery = document.getElementById("settings-recovery") as HTMLElement;
+  recovery.hidden = !pendingSettings;
+  if (pendingSettings) {
+    const name =
+      summaries.find((bot) => bot.id === pendingSettings?.botId)?.name ?? pendingSettings.botId;
+    (document.getElementById("settings-recovery-message") as HTMLElement).textContent =
+      `Configuration response unconfirmed for ${name} (${pendingSettings.botId}). Recover the saved request before saving another Bot's configuration.`;
+  }
+  (document.getElementById("recover-settings") as HTMLButtonElement).disabled = settingsSending;
+}
+document.getElementById("recover-settings")?.addEventListener("click", () => {
+  if (!pendingSettings || settingsSending) return;
+  selectBot(pendingSettings.botId);
+  settingsIdentity = "";
+  void load();
+});
 interface LifecycleDraft {
   botId: string;
   requestId: string;
@@ -267,51 +307,28 @@ function renderOptions(options: BotOptions): void {
 }
 
 function render(snapshot: Snapshot, managed: Bot[]): void {
-  bots.replaceChildren();
-  for (const bot of snapshot.bots) {
-    const article = document.createElement("article");
-    const heading = document.createElement("h3");
-    heading.textContent = bot.name;
-    const identity = document.createElement("p");
-    identity.textContent = `Bot ID: ${bot.id}`;
-    const availability = document.createElement("p");
-    const managedBot = managed.find((item) => item.id === bot.id);
-    availability.textContent = `Availability: ${managedBot?.availability ?? "active"}`;
-    article.append(heading, identity, availability);
-    const sessions = snapshot.sessions.filter((session) => session.botId === bot.id);
-    if (sessions.length === 0) {
-      const empty = document.createElement("p");
-      empty.textContent = "No Runs yet.";
-      article.append(empty);
-    } else {
-      const list = document.createElement("ul");
-      for (const session of sessions) {
-        const item = document.createElement("li");
-        const id = document.createElement("code");
-        id.className = "session-id";
-        id.textContent = session.id;
-        const progress = document.createElement("span");
-        progress.textContent = `Destination: ${session.destinationId} · Run: ${session.status} · Container: ${session.containerStatus}. Inputs: ${session.inputs.pending} pending, ${session.inputs.processing} processing, ${session.inputs.acknowledged} acknowledged, ${session.inputs.failed} failed.`;
-        item.append(id, progress);
-        list.append(item);
-      }
-      article.append(list);
-    }
-    const choose = document.createElement("button");
-    choose.type = "button";
-    choose.textContent = `Select ${bot.name}`;
-    choose.setAttribute("aria-pressed", String(selectedId === bot.id));
-    choose.addEventListener("click", () => {
-      selectBot(bot.id);
+  showBotNavigation(
+    summaries,
+    selectedId,
+    (id) => {
+      selectBot(id);
       render(snapshot, managed);
-    });
-    article.append(choose);
-    bots.append(article);
-  }
+    },
+    requestAvailability,
+  );
   const active = managed.find((bot) => bot.id === selectedId);
+  setShellBot(active);
+  showSettingsRecovery();
   selected.hidden = !active;
   selected.replaceChildren();
+  const execution = document.getElementById("host-execution") as HTMLElement;
+  execution.replaceChildren();
   if (active) {
+    for (const session of snapshot.sessions.filter((item) => item.botId === active.id)) {
+      const line = document.createElement("p");
+      line.textContent = `Run ${session.id} · Destination: ${session.destinationId} · Run: ${session.status} · Container: ${session.containerStatus}. Inputs: ${session.inputs.pending} pending, ${session.inputs.processing} processing, ${session.inputs.acknowledged} acknowledged, ${session.inputs.failed} failed.`;
+      execution.append(line);
+    }
     const heading = document.createElement("h2");
     heading.textContent = active.name;
     selected.append(heading);
@@ -356,7 +373,7 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
         pendingLifecycle?.botId === active.id && pendingLifecycle.operation === name
           ? `Retry ${label}`
           : label;
-      button.addEventListener("click", () => void changeAvailability(active.id, name));
+      button.addEventListener("click", () => requestAvailability(active.id, name));
       return button;
     };
     if (active.availability === "active") actions.append(operation("disable", "Disable Bot"));
@@ -382,9 +399,34 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
       active.savedVersion === active.effectiveVersion
         ? `Saved and effective configuration ${active.savedVersion}.`
         : `Saved configuration ${active.savedVersion}. Effective configuration ${active.effectiveVersion}. The current Attempt finishes under the effective role, model, and tools.`;
+    const skillNames = (skills: Bot["skills"]) =>
+      skills.map((skill) => `${skill.id}@${skill.revision}`).join(", ") || "None";
+    (document.getElementById("skill-activation") as HTMLElement).textContent =
+      `Saved Skills: ${skillNames(active.skills)}. Effective Skills: ${skillNames(active.effective.skills)}.`;
+    const effective = document.getElementById("settings-effective") as HTMLElement;
+    effective.hidden = active.savedVersion === active.effectiveVersion;
+    effective.replaceChildren();
+    if (!effective.hidden) {
+      for (const text of [
+        `Effective role: ${active.effective.instructions}`,
+        `Effective model: ${active.effective.model.provider}/${active.effective.model.id}`,
+        `Effective tools: ${active.effective.tools.join(", ") || "None"}`,
+        `Effective Skills: ${skillNames(active.effective.skills)}`,
+      ])
+        effective.append(Object.assign(document.createElement("p"), { textContent: text }));
+    }
     const identity = `${active.id}:${active.savedVersion}`;
     const editing = settingsFields.disabled || settingsFields.matches(":focus-within");
-    if (!editing && (identity !== settingsIdentity || pendingSettings?.botId === active.id)) {
+    if (
+      settingsBotId !== active.id ||
+      (!editing && (identity !== settingsIdentity || pendingSettings?.botId === active.id))
+    ) {
+      if (settingsBotId !== active.id)
+        settingsMessage.textContent =
+          pendingSettings?.botId === active.id
+            ? "Configuration response unconfirmed. Retry the saved request to confirm its outcome."
+            : "";
+      settingsBotId = active.id;
       settingsIdentity = identity;
       savedRole.value =
         pendingSettings?.botId === active.id ? pendingSettings.instructions : active.instructions;
@@ -397,15 +439,19 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     if (pendingSettings?.botId === active.id) {
       settingsFields.disabled = true;
       saveSettings.textContent = "Retry configuration";
+      saveSettings.disabled = settingsSending;
     } else if (active.availability !== "deleted") {
       settingsFields.disabled = false;
-      saveSettings.disabled = false;
+      saveSettings.disabled = settingsSending || !!pendingSettings;
+      saveSettings.textContent = "Save configuration";
     }
     if (active.availability === "deleted") {
       settingsFields.disabled = true;
-      saveSettings.disabled = true;
+      saveSettings.disabled = settingsSending || pendingSettings?.botId !== active.id;
       settingsMessage.textContent =
-        "Deleted Bot configuration stays inspectable. Active edits are not available.";
+        pendingSettings?.botId === active.id
+          ? "Deleted Bot configuration stays inspectable. Retry only the saved request to establish its outcome; new edits are not available."
+          : "Deleted Bot configuration stays inspectable. Active edits are not available.";
     }
   } else {
     settingsSection.hidden = true;
@@ -413,21 +459,76 @@ function render(snapshot: Snapshot, managed: Bot[]): void {
     void showMemory(undefined);
   }
   void showChat(active?.id, active?.availability);
-  if (snapshot.bots.length === 0) bots.textContent = "No Bots configured.";
 }
+
+const deletion = document.getElementById("delete-surface") as HTMLDialogElement;
+let deletionBot: string | undefined;
+let deletionReturn: HTMLElement | undefined;
+function requestAvailability(botId: string, operation: LifecycleDraft["operation"]): void {
+  if (lifecycleSending) return;
+  if (
+    pendingLifecycle &&
+    (pendingLifecycle.botId !== botId || pendingLifecycle.operation !== operation)
+  ) {
+    showLifecycleRecovery();
+    return;
+  }
+  if (
+    operation !== "delete" ||
+    (pendingLifecycle?.botId === botId && pendingLifecycle.operation === "delete")
+  ) {
+    void changeAvailability(botId, operation);
+    return;
+  }
+  deletionBot = botId;
+  (document.getElementById("delete-bot") as HTMLElement).textContent =
+    summaries.find((bot) => bot.id === botId)?.name ?? botId;
+  deletionReturn = document.activeElement as HTMLElement;
+  deletion.showModal();
+  document.getElementById("cancel-delete")?.focus();
+}
+document.getElementById("cancel-delete")?.addEventListener("click", () => deletion.close());
+document.getElementById("confirm-delete")?.addEventListener("click", () => {
+  const id = deletionBot;
+  deletion.close();
+  if (id) void changeAvailability(id, "delete");
+});
+deletion.addEventListener("close", () => {
+  deletionBot = undefined;
+  resolveBotTrigger(deletionReturn, "bot-identity").focus();
+});
+
+let lifecycleSending = false;
+const lifecycleMessage = document.getElementById("lifecycle-message") as HTMLElement;
+const retryLifecycle = document.getElementById("retry-lifecycle") as HTMLButtonElement;
+function showLifecycleRecovery(): void {
+  lifecycleMessage.textContent = pendingLifecycle
+    ? `Lifecycle response unconfirmed for Bot ${pendingLifecycle.botId} (${pendingLifecycle.operation}). Retry the saved request to confirm its outcome.`
+    : "";
+  retryLifecycle.hidden = !pendingLifecycle;
+  retryLifecycle.disabled = lifecycleSending;
+}
+retryLifecycle.addEventListener("click", () => {
+  if (pendingLifecycle) void changeAvailability(pendingLifecycle.botId, pendingLifecycle.operation);
+});
+showLifecycleRecovery();
 
 async function changeAvailability(
   botId: string,
   operation: LifecycleDraft["operation"],
 ): Promise<void> {
+  if (lifecycleSending) return;
+  lifecycleSending = true;
+  retryLifecycle.disabled = true;
   try {
     if (
       !pendingLifecycle ||
       pendingLifecycle.botId !== botId ||
       pendingLifecycle.operation !== operation
     ) {
-      pendingLifecycle = { botId, requestId: crypto.randomUUID(), operation };
-      localStorage.setItem(pendingLifecycleKey, JSON.stringify(pendingLifecycle));
+      const draft = { botId, requestId: crypto.randomUUID(), operation };
+      localStorage.setItem(pendingLifecycleKey, JSON.stringify(draft));
+      pendingLifecycle = draft;
     }
     const response = await fetch(`/api/bots/${encodeURIComponent(botId)}/${operation}`, {
       method: "POST",
@@ -437,13 +538,24 @@ async function changeAvailability(
     if (response.ok || (response.status >= 400 && response.status < 500)) {
       localStorage.removeItem(pendingLifecycleKey);
       pendingLifecycle = undefined;
+      if (!response.ok) {
+        const result: unknown = await response.json();
+        lifecycleMessage.textContent =
+          record(result) && typeof result.error === "string"
+            ? result.error
+            : "Lifecycle request rejected.";
+      } else lifecycleMessage.textContent = "";
     }
   } catch {
     /* Keep the saved requestId so a later click retries the same lifecycle operation. */
   }
+  lifecycleSending = false;
+  if (pendingLifecycle) showLifecycleRecovery();
+  else retryLifecycle.hidden = true;
   await load();
 }
 
+let summaries: BotSummary[] = [];
 let loading = false;
 async function load(): Promise<void> {
   if (loading) return;
@@ -452,6 +564,9 @@ async function load(): Promise<void> {
   try {
     const response = await fetch("/api/status", { cache: "no-store" });
     if (response.status === 401) {
+      setHostAvailable(false);
+      setNavigationAvailable(false);
+      setShellBot(undefined);
       pairing.hidden = false;
       status.hidden = true;
       connection.textContent = "Pair this browser to inspect your local Host.";
@@ -464,11 +579,12 @@ async function load(): Promise<void> {
         "Host returned invalid status. Displayed status may be stale. Refresh to retry.";
       return;
     }
-    const [botResponse, optionResponse] = await Promise.all([
+    const [botResponse, optionResponse, summaryResponse] = await Promise.all([
       fetch("/api/bots"),
       fetch("/api/bot-options"),
+      fetch("/api/bot-summaries"),
     ]);
-    if (!botResponse.ok || !optionResponse.ok) throw new Error();
+    if (!botResponse.ok || !optionResponse.ok || !summaryResponse.ok) throw new Error();
     const managed: unknown = await botResponse.json();
     const options: unknown = await optionResponse.json();
     if (
@@ -478,6 +594,13 @@ async function load(): Promise<void> {
       !isOptions(options)
     )
       throw new Error();
+    const summary: unknown = await summaryResponse.json();
+    if (!record(summary) || !Array.isArray(summary.bots) || !summary.bots.every(isSummary))
+      throw new Error();
+    summaries = summary.bots;
+    setHostAvailable(true);
+    setNavigationAvailable(true);
+    (document.getElementById("open-create") as HTMLButtonElement).disabled = false;
     renderOptions(options);
     render(snapshot, managed.bots);
     pairing.hidden = true;
@@ -486,6 +609,8 @@ async function load(): Promise<void> {
     (document.querySelector<HTMLElement>("#updated") as HTMLElement).textContent =
       `Last checked ${new Date().toLocaleTimeString()}`;
   } catch {
+    setHostAvailable(false);
+    setNavigationAvailable(false);
     connection.textContent =
       "Host unavailable. Displayed status may be stale. Keep the Host running; this page will reconnect automatically.";
   } finally {
@@ -568,6 +693,7 @@ createForm.addEventListener("submit", async (event) => {
     createButton.textContent = "Create Bot";
     createForm.reset();
     createMessage.textContent = `Created ${result.bot.name}.`;
+    closeCreation();
     await load();
   } catch {
     createMessage.textContent = pending
@@ -579,7 +705,9 @@ createForm.addEventListener("submit", async (event) => {
 });
 settingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!selectedId) return;
+  if (!selectedId || settingsSending || (pendingSettings && pendingSettings.botId !== selectedId))
+    return;
+  settingsSending = true;
   saveSettings.disabled = true;
   try {
     if (!pendingSettings || pendingSettings.botId !== selectedId) {
@@ -598,6 +726,7 @@ settingsForm.addEventListener("submit", async (event) => {
       localStorage.setItem(pendingSettingsKey, JSON.stringify(pendingSettings));
     }
     settingsFields.disabled = true;
+    showSettingsRecovery();
     saveSettings.textContent = "Retry configuration";
     const response = await fetch(
       `/api/bots/${encodeURIComponent(pendingSettings.botId)}/settings`,
@@ -640,7 +769,12 @@ settingsForm.addEventListener("submit", async (event) => {
       ? "Configuration response unconfirmed. Retry configuration to keep the same request, including after reload."
       : "Could not save the configuration request in this browser. Check local storage and retry.";
   } finally {
-    saveSettings.disabled = false;
+    settingsSending = false;
+    saveSettings.disabled =
+      (!!pendingSettings && pendingSettings.botId !== selectedId) ||
+      (!pendingSettings &&
+        summaries.find((bot) => bot.id === selectedId)?.availability === "deleted");
+    showSettingsRecovery();
   }
 });
 refresh.addEventListener("click", () => void load());

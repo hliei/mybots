@@ -5,10 +5,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RunnerMailbox } from "@mybots/mailbox/node";
 import { expect, test } from "@playwright/test";
+import { showFeature } from "./navigation.ts";
 
-test("answers a persistent question through its own card after reload and Host restart", async ({
+test("answers persistent questions independently from conversation cards across restart", async ({
   page,
-}) => {
+}, testInfo) => {
   const root = await mkdtemp(join(tmpdir(), "mybots-question-browser-"));
   let child: ChildProcess | undefined;
   let exited: Promise<number | null> | undefined;
@@ -57,19 +58,68 @@ test("answers a persistent question through its own card after reload and Host r
     await expect
       .poll(() => mailbox.historyResponse("browser-city"))
       .toMatchObject({ result: { state: "pending" } });
+    mailbox.requestHistory({
+      id: "browser-style",
+      operation: "ask_question",
+      incarnation: mailbox.executionIncarnation(),
+      input: { requestId: "browser-style", text: "Which style?" },
+    });
+    await expect
+      .poll(() => mailbox.historyResponse("browser-style"))
+      .toMatchObject({ result: { state: "pending" } });
     mailbox.requestDurableWait("owner-question");
     await page.goto(ready.url);
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
+    await expect(page.locator("#bots")).toContainText("Needs attention");
     await expect(page.locator("#chat-works")).toContainText("Execution: waiting");
-    await expect(page.getByLabel("Answer to Which city?")).toBeVisible();
+    const cards = page.locator("#work-cards");
+    await expect(cards.getByLabel("Answer to Which city?")).toBeVisible();
+    await expect(cards.getByLabel("Answer to Which style?")).toBeVisible();
+    for (const [width, height] of [
+      [1280, 900],
+      [1440, 900],
+      [1920, 1080],
+    ] as const) {
+      await page.setViewportSize({ width, height });
+      await expect(cards.getByLabel("Answer to Which city?")).toBeVisible();
+      await expect(cards.getByLabel("Answer to Which style?")).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      await page.screenshot({ path: testInfo.outputPath(`questions-${width}.png`) });
+    }
+    await showFeature(page, "tasks");
+    await page
+      .locator("#chat-works")
+      .getByLabel("Answer to Which city?")
+      .fill("Draft from Task details");
+    await page.getByRole("button", { name: "Close details", exact: true }).click();
+    await expect(cards.getByLabel("Answer to Which city?")).toHaveValue("Draft from Task details");
+    await cards.getByLabel("Answer to Which city?").fill("Conversation draft");
+    await expect(page.locator("#chat-works").getByLabel("Answer to Which city?")).toHaveValue(
+      "Conversation draft",
+    );
+    await expect(cards.getByLabel("Answer to Which style?")).toHaveValue("");
+    await cards.getByLabel("Answer to Which style?").fill("Concise");
+    await cards
+      .locator('[data-question-id="browser-style"]')
+      .getByRole("button", { name: "Answer question" })
+      .click();
+    await expect(cards.locator('[data-question-id="browser-style"]')).toContainText(
+      "Owner answer: Concise",
+    );
+    await expect(cards.getByLabel("Answer to Which city?")).toHaveValue("Conversation draft");
     await page.reload();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
-    await expect(page.getByLabel("Answer to Which city?")).toBeVisible();
+    await expect(cards.getByLabel("Answer to Which city?")).toBeVisible();
     await stop();
     await start(Number(new URL(ready.url).port));
     await page.reload();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
     let dropped = false;
     await page.route("**/questions/browser-city/answer", async (route) => {
@@ -82,16 +132,21 @@ test("answers a persistent question through its own card after reload and Host r
       expect(response.status()).toBe(202);
       await route.abort("failed");
     });
-    await page.getByLabel("Answer to Which city?").fill("Hangzhou");
-    await page.getByRole("button", { name: "Answer question", exact: true }).click();
+    await cards.getByLabel("Answer to Which city?").fill("Hangzhou");
+    await cards.getByRole("button", { name: "Answer question", exact: true }).click();
     await expect(page.locator("#chat-message")).toContainText("response unconfirmed");
     await page.reload();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Retry chat request", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "Retry chat request", exact: true }),
     ).toBeHidden();
     await expect(page.locator("#chat-works")).toContainText("Owner answer: Hangzhou");
+    await expect(cards).toContainText("Owner answer: Hangzhou");
+    await expect(cards).toContainText("Owner answer: Concise");
+    await expect(cards.getByRole("button", { name: "Answer question" })).toHaveCount(0);
     child?.send("complete");
     await expect(page.locator("#chat-works")).toContainText("Execution: succeeded");
     await expect(page.locator("#chat-works")).toContainText(`Run ID: ${ready.sessionId}`);

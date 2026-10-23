@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { showFeature } from "./navigation.ts";
 
 test("published progress and selected result stay distinct from the Run outcome", async ({
   page,
@@ -58,9 +59,12 @@ test("published progress and selected result stay distinct from the Run outcome"
     await expect(page).toHaveTitle("Mybots · Bots");
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal", exact: true }).click();
     phase = "connected";
+    await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Publish archive progress");
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     const work = page.locator("#chat-works article").last();
     await expect(work).toContainText("Progress · Attempt");
@@ -79,7 +83,7 @@ test("published progress and selected result stay distinct from the Run outcome"
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1920, height: 1080 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );

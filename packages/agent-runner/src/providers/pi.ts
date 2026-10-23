@@ -329,6 +329,8 @@ export class PiProvider implements AgentProvider {
             outstanding--;
             emit(pendingResult);
             pendingResult = undefined;
+          } else if (event.type === "message_start" && event.message.role === "assistant") {
+            emit({ type: "assistant-start" });
           } else if (
             event.type === "message_update" &&
             event.assistantMessageEvent.type === "text_delta"

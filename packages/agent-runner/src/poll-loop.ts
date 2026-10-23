@@ -30,11 +30,15 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
   const incarnation = mailbox.executionIncarnation();
   let streamId = randomUUID();
   let streamText = "";
+  let inputId: string | undefined;
+  let preview = false;
   let tool: string | null = null;
   const snapshot = () => {
     const chars = Array.from(streamText);
     mailbox.saveSnapshot({
       id: streamId,
+      inputId,
+      preview,
       text: chars.slice(-2000).join(""),
       textOffset: Math.max(0, chars.length - 2000),
       tool,
@@ -113,6 +117,8 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
       },
     });
     streamId = randomUUID();
+    inputId = input.id;
+    preview = false;
     streamText = "";
     tool = null;
     snapshot();
@@ -175,6 +181,12 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
           case "evidence":
             mailbox.recordExecution({ ...event.record, incarnation });
             break;
+          case "assistant-start":
+            streamText = "";
+            tool = null;
+            preview = false;
+            snapshot();
+            break;
           case "text":
             streamText += event.text;
             snapshot();
@@ -191,6 +203,7 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
           case "tool":
             mailbox.activity(event.name, event.timeoutMs ?? null);
             tool = event.name;
+            if (tool) preview = true;
             snapshot();
             break;
           case "progress":
@@ -201,7 +214,7 @@ export async function runMailbox(options: PollLoopOptions): Promise<void> {
               const completed = answering.filter((row) => event.inputIds?.includes(row.id));
               if (event.isError && !completed.length) completed.push(...answering);
               mailbox.recordResultGroup(
-                randomUUID(),
+                streamId,
                 completed.map((row) => row.id),
               );
               for (const current of completed) {

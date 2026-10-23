@@ -99,29 +99,92 @@ shows an already paired owner. The setup wizard writes `TELEGRAM_BOT_TOKEN` to `
 Place shared instructions and saved materials under `groups/<folder>/`. Select
 Skills from `groups/<folder>/skills/<id>/SKILL.md` through `agent.resources.skills`.
 The repository's development Skills are not assistant resources. Reset chat
-background from the Thread page or with `/reset`. That captures a boundary for
+background from the Bot menu or with `/reset`. That captures a boundary for
 later conversational Runs. Existing Runs, Thread history, workspace files and
 memory stay. Other slash input is ordinary Agent text.
 
 Open `http://127.0.0.1:8787/` on the Host computer to create and select Bots and
-use the Bot's direct Thread. Send ordinary chat, choose New task for independent
-work, or select an active/queued Task as the input target. Reset chat background
-while other Runs continue, and choose earlier messages for the next Run. Inspect Task/Run identity,
+use the Bot's direct Thread. Enter sends and Shift+Enter inserts a newline; input-
+method candidate confirmation does not send. Choose Message actions → New task
+for independent work, or select an active, queued or waiting Task as the input
+target. The composer names the selected Task and offers Return to Thread;
+unavailable targets require a deliberate selection. Reset chat background
+from the Bot menu and confirm its future-Run scope while other Runs continue.
+The conversation marks the current boundary. Search conversation finds this Bot’s
+originals on either side of that boundary; read a result in context, then return
+to your prior reading position or close the panel. Select up to seven earlier
+originals to switch the composer to New task; viewing a result selects nothing.
+Inspect Task/Run identity,
 queue state, Attempts and final outcomes. The Host prints the URL at startup. Copy the locally
 generated `data/client-credential` into the pairing form once; the browser keeps
 an HttpOnly connection cookie for later visits. Each new Bot has its own role,
 approved model, tools and workspace; settings persist across Host restart. The
-page refreshes status while visible. The Host must stay running, and desktop localhost is not
-reachable from a phone. See [local client access](docs/host-runtime.md#local-client-access).
+desktop shell keeps the Bot sidebar and composer visible while the conversation
+scrolls. Open the Bot identity or Bot menu for Overview and Files, Tasks for Run
+evidence and owner decisions, and Search conversation for original history.
+Files separates immutable deliveries with producing Task/Run links, selected Task
+attachments, and mutable Bot workspace files. Use Message actions → Upload to a
+Task or Upload to this Task in Task details, then choose an existing Task before
+uploading. Download links return actual bytes; Save to Bot workspace deliberately
+makes an attachment available to this Bot’s other Tasks. Files does not create a
+Task for a first-message attachment or share materials with another Bot.
+Settings in the sidebar, Bot menu or Bot overview opens the current Bot's
+configuration, memory, Skills, collaboration and Routines. The shared Skill library
+shows imported revisions separately from the current Bot's saved and effective
+activation. Choose protected revisions in Configuration and save explicitly to
+activate them. Unconfirmed configuration requests remain recoverable across Bot
+switching and reload; recover that request before saving another Bot's
+configuration. Use Back to conversation, close settings or press Escape to
+return to the conversation. The page refreshes status while visible. The Host
+must stay running, and desktop localhost is not reachable from a phone. See [local client access](docs/host-runtime.md#local-client-access).
 
-The selected Bot page creates one-shot Routines from an absolute instant with offset
+Unsent drafts and their selected targets are saved per Bot in this browser across
+switching and reload. Drafts remain editable during submission and Host outages.
+Submission stays unavailable while the Host is unreachable; reconnecting does
+not send drafts automatically. An unconfirmed request keeps its original Bot,
+operation, Task/Run and request identity. Retry chat request recovers that saved
+admission, even after switching Bots or restarting the Host, without discarding a
+newer draft. Losing live observation alone does not disable HTTP submission.
+
+Tasks lists chat, Routine and delegated work as compact source-labelled cards.
+Expand a card to inspect its Runs, queue, active budget, ownership links and
+results, or choose Add instructions to target its current Run in the composer.
+Routine, delegated and actionable work also has a summary in the conversation;
+ordinary replies remain bubbles. Each question and approval has its own controls
+in the conversation and Task details, bound to its request and Run. Approvals show
+the operation, target, instructions and selected file identities and byte counts.
+Answered and decided cards retain their updated state; expired, cancelled or
+revoked requests cannot authorize work. Settings → Connection → Open notification
+details exposes Telegram topic repair and eligible failed-notice resend, with
+delivery state independent of work outcomes. Stop current chat Run names the
+active Task and Run and is available
+while composing ordinary chat. Use Stop run in a Task's details for other work,
+including its owned descendants. Stopping stays pending until termination is
+confirmed; failed stops and uncertain outcomes retain their evidence. Review an
+uncertain Run before explicitly closing or retrying it. Retry keeps the Task,
+starts a linked new Run and preserves the earlier outcome.
+
+Settings → Routines creates one-shot Routines from an absolute instant with offset
 and an IANA timezone, or recurring Routines from common cron choices or a custom
 five-field expression. Cron inherits the Bot timezone, defaulting to Asia/Shanghai. Resolved schedule and occurrence Task links
 remain inspectable after disconnect or Host restart. Each due occurrence has an
-independent Run context; choose its Task in Input target to add instructions.
+independent Run context. Open an occurrence link to leave Settings and inspect
+that Task's admitted definition and Run evidence. Add instructions, Stop run and
+explicit Retry run target that occurrence; they do not edit or pause its Routine.
+Definition edits apply to later occurrences. Pause leaves current work running;
+Run now can start work while paused without enabling recurrence. Unconfirmed
+Routine commands retain their original request for explicit retry after reload
+or Host restart.
 Bots can resolve a natural-language schedule through their scoped `create_routine`
 tool and can pause, resume, run, edit or logically delete their own Routines with
 `manage_routine`. See [Routines](docs/host-runtime.md#routines).
+
+The Thread shows dated user and assistant bubbles with Markdown text, lists,
+links, tables and code blocks. Wide tables and code scroll inside the message.
+Copy message retrieves the complete original, including continuation pages;
+Copy code copies that code block. Message evidence exposes source identity and
+Run details. Raw HTML stays inert, unsafe links are disabled, and Markdown images
+never load remote content.
 
 The Thread includes local original-history search and paginated reading. Inspect
 Run evidence to page through complete inputs, Attempts and recorded model/tool

@@ -102,6 +102,8 @@ export interface ExecutionRecord {
 }
 export interface ExecutionSnapshot {
   id: string;
+  inputId?: string;
+  preview?: boolean;
   textOffset: number;
   text: string;
   tool: string | null;

@@ -313,6 +313,7 @@ export class ThreadStore {
       text: string;
       newTask: boolean;
       taskId?: string;
+      expectedRunId?: string;
       selectedMessageIds?: string[];
       routine?: Routine;
       delegation?: {
@@ -339,6 +340,11 @@ export class ThreadStore {
      WHERE t.id = ? AND t.thread_id = ? ORDER BY r.rowid DESC LIMIT 1`)
           .get(input.taskId, thread.id) as unknown as RunRow | undefined;
         if (!run) throw new ChatRequestError("Task not found for this Bot.", 404);
+        if (input.expectedRunId && run.id !== input.expectedRunId)
+          throw new ChatRequestError(
+            "Selected Run is no longer current for this Task. Select the target again.",
+            409,
+          );
         if (!["queued", "active", "waiting"].includes(run.state))
           throw new ChatRequestError("Task does not accept additions.", 409);
       } else if (!input.newTask) {

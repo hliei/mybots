@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { showFeature } from "./navigation.ts";
 
 interface Ready {
   url: string;
@@ -52,10 +53,13 @@ test("inspect budget exhaustion, confirmed stop and an explicit new-Run retry", 
     await page.goto(ready.url);
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal", exact: true }).click();
     child?.send("complete");
     await expect(page.locator("#chat-works")).toContainText("Execution: succeeded");
+    await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Hold chat");
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     const task = page.locator("#chat-works article").nth(1);
     await expect(task).toContainText("Execution: active");
@@ -66,9 +70,14 @@ test("inspect budget exhaustion, confirmed stop and an explicit new-Run retry", 
     await expect(task).toContainText("Stopping until termination is confirmed");
     child?.send("release-stop");
     await expect(task).toContainText("Execution: closed");
+    await showFeature(page, "tasks");
     await task.getByRole("button", { name: "Retry run", exact: true }).click();
     await expect(task).toContainText("Active budget: 0.0 / 60 minutes");
     await expect(task).toContainText("Execution: active");
+    await expect(task).toContainText("Explicit retry of Run:");
+    await expect(
+      task.locator("details.task-details > div > p").filter({ hasText: /^Run ID:/ }),
+    ).toHaveCount(2);
     await page.reload();
     await expect(page.locator("#chat-works article").nth(1)).toContainText(
       "exhausted; completed effects are retained",

@@ -147,12 +147,13 @@ function controls() {
   for (const node of form.querySelectorAll<
     HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement | HTMLSelectElement
   >("input, textarea, button, select"))
-    node.disabled = !admitting || sending || !!pending;
+    node.disabled = !admitting || sending || !!pending || !!command || commanding;
   const once = schedule.value === "once";
   (document.getElementById("routine-once-fields") as HTMLElement).hidden = !once;
   (document.getElementById("routine-cron-fields") as HTMLElement).hidden = once;
-  instant.disabled = timezone.disabled = !once || sending || !!pending;
-  cron.disabled = once || sending || !!pending;
+  instant.disabled = timezone.disabled =
+    !admitting || !once || sending || !!pending || !!command || commanding;
+  cron.disabled = !admitting || once || sending || !!pending || !!command || commanding;
   cron.required = !once;
   cron.readOnly = schedule.value !== "custom";
   create.textContent = once ? "Create one-shot Routine" : "Create cron Routine";
@@ -160,6 +161,18 @@ function controls() {
   retry.disabled = sending;
   commandRetry.hidden = !command;
   commandRetry.disabled = commanding;
+  for (const control of list.querySelectorAll<
+    HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement
+  >("button, input, textarea")) {
+    const action = control.dataset.action;
+    control.disabled =
+      sending ||
+      !!pending ||
+      commanding ||
+      !!command ||
+      availability === "deleted" ||
+      (availability !== "active" && (action === "run" || action === "resume"));
+  }
 }
 export async function showRoutines(
   selectedBot: string,
@@ -198,86 +211,142 @@ export async function showRoutines(
   if (botId !== selectedBot) return false;
   if (!botTimezoneForm.matches(":focus-within")) botTimezone.value = data.timezone;
   if (changed && document.activeElement !== timezone) timezone.value = data.timezone;
-  list.replaceChildren(
-    ...data.routines.map((routine) => {
-      const article = document.createElement("article");
-      article.dataset.routineId = routine.id;
-      const line = (text: string) =>
-        Object.assign(document.createElement("p"), { textContent: text });
-      article.append(
-        line(`Routine ID: ${routine.id}`),
-        line(routine.text),
-        line(
-          `${routine.cron ? `Cron: ${routine.cron}` : `Resolved instant: ${routine.runAt}`} · Timezone: ${routine.timezone}`,
-        ),
-        line(
-          `Next occurrence: ${routine.nextOccurrence ?? (routine.cron ? "held until current occurrence ends" : "none — one-shot admitted")}`,
-        ),
-        line(
-          routine.deletedAt
-            ? `Deleted at ${routine.deletedAt}. Definition and results are retained.`
-            : routine.paused
-              ? "Paused. Automatic starts are blocked."
-              : "Automatic starts are on.",
-        ),
+  const articles = data.routines.map((routine) => {
+    const article =
+      [...list.querySelectorAll<HTMLElement>("article")].find(
+        (item) => item.dataset.routineId === routine.id,
+      ) ?? document.createElement("article");
+    article.dataset.routineId = routine.id;
+    article.className = "settings-card routine-card";
+    let summary = article.querySelector<HTMLElement>(".routine-summary");
+    if (!summary) {
+      summary = document.createElement("div");
+      summary.className = "routine-summary";
+      article.append(summary);
+    }
+    const line = (text: string) =>
+      Object.assign(document.createElement("p"), { textContent: text });
+    summary.replaceChildren(
+      line(`Routine ID: ${routine.id}`),
+      line(routine.text),
+      line(
+        `${routine.cron ? `Cron: ${routine.cron}` : `Resolved instant: ${routine.runAt}`} · Timezone: ${routine.timezone}`,
+      ),
+      line(
+        `Next occurrence: ${routine.nextOccurrence ?? (routine.cron ? "held until current occurrence ends" : "none — one-shot admitted")}`,
+      ),
+      line(
+        routine.deletedAt
+          ? `Deleted at ${routine.deletedAt}. Definition and results are retained.`
+          : routine.paused
+            ? "Paused. Automatic starts are blocked."
+            : "Automatic starts are on.",
+      ),
+    );
+    const definition = JSON.stringify([
+      routine.text,
+      routine.cron,
+      routine.runAt,
+      routine.timezone,
+    ]);
+    let fields = article.querySelector<HTMLFieldSetElement>("fieldset");
+    if (routine.deletedAt) fields?.remove();
+    else if (
+      !fields ||
+      (fields.dataset.definition !== definition && !fields.matches(":focus-within"))
+    ) {
+      fields?.remove();
+      fields = document.createElement("fieldset");
+      fields.dataset.definition = definition;
+      const legend = document.createElement("legend");
+      legend.textContent = "Edit definition for later occurrences";
+      fields.append(legend);
+      const editor = document.createElement("textarea");
+      editor.value = routine.text;
+      editor.maxLength = 32000;
+      editor.rows = 2;
+      editor.setAttribute("aria-label", `Edit instructions for ${routine.id}`);
+      const schedule = document.createElement("input");
+      schedule.value = routine.cron ?? routine.runAt;
+      schedule.dataset.kind = routine.cron ? "cron" : "once";
+      schedule.setAttribute(
+        "aria-label",
+        routine.cron ? `Edit cron for ${routine.id}` : `Edit instant for ${routine.id}`,
       );
-      if (!routine.deletedAt) {
-        const editor = document.createElement("textarea");
-        editor.value = routine.text;
-        editor.maxLength = 32000;
-        editor.rows = 2;
-        editor.setAttribute("aria-label", `Edit instructions for ${routine.id}`);
-        const schedule = document.createElement("input");
-        schedule.value = routine.cron ?? routine.runAt;
-        schedule.dataset.kind = routine.cron ? "cron" : "once";
-        schedule.setAttribute(
-          "aria-label",
-          routine.cron ? `Edit cron for ${routine.id}` : `Edit instant for ${routine.id}`,
-        );
-        const zone = document.createElement("input");
-        zone.value = routine.timezone;
-        zone.hidden = !!routine.cron;
-        zone.setAttribute("aria-label", `Edit timezone for ${routine.id}`);
-        const save = document.createElement("button");
-        save.type = "button";
-        save.dataset.action = "update";
-        save.textContent = "Save Routine edit";
-        const pause = document.createElement("button");
-        pause.type = "button";
-        pause.dataset.action = routine.paused ? "resume" : "pause";
-        pause.textContent = routine.paused ? "Resume routine" : "Pause routine";
-        const run = document.createElement("button");
-        run.type = "button";
-        run.dataset.action = "run";
-        run.textContent = "Run now";
-        const remove = document.createElement("button");
-        remove.type = "button";
-        remove.dataset.action = "delete";
-        remove.textContent = "Delete routine";
-        for (const control of [editor, schedule, zone, save, pause, run, remove])
-          control.disabled = commanding || !!command;
-        run.disabled = run.disabled || availability !== "active";
-        if (routine.paused) pause.disabled = pause.disabled || availability === "deleted";
-        if (availability === "deleted")
-          for (const control of [editor, schedule, zone, save, pause, run, remove])
-            control.disabled = true;
-        article.append(editor, schedule, zone, save, pause, run, remove);
+      const zone = document.createElement("input");
+      zone.value = routine.timezone;
+      zone.hidden = !!routine.cron;
+      zone.setAttribute("aria-label", `Edit timezone for ${routine.id}`);
+      const save = document.createElement("button");
+      save.type = "button";
+      save.dataset.action = "update";
+      save.textContent = "Save Routine edit";
+      const pause = document.createElement("button");
+      pause.type = "button";
+      pause.dataset.action = routine.paused ? "resume" : "pause";
+      pause.textContent = routine.paused ? "Resume routine" : "Pause routine";
+      const run = document.createElement("button");
+      run.type = "button";
+      run.dataset.action = "run";
+      run.textContent = "Run now";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.dataset.action = "delete";
+      remove.textContent = "Delete routine";
+      for (const [labelText, control] of [
+        ["Instructions", editor],
+        [routine.cron ? "Cron expression" : "Run at (ISO instant with offset)", schedule],
+        ...(!routine.cron ? [["Schedule timezone", zone] as const] : []),
+      ] as const) {
+        const label = document.createElement("label");
+        label.textContent = labelText;
+        label.append(control);
+        fields.append(label);
       }
+      if (routine.cron) fields.append(zone);
+      const actions = document.createElement("div");
+      actions.className = "routine-actions";
+      actions.append(save, pause, run, remove);
+      fields.append(actions);
+      article.append(fields);
+    }
+    const pause = fields?.querySelector<HTMLButtonElement>(
+      '[data-action="pause"], [data-action="resume"]',
+    );
+    if (pause) {
+      pause.dataset.action = routine.paused ? "resume" : "pause";
+      pause.textContent = routine.paused ? "Resume routine" : "Pause routine";
+    }
+    let links = article.querySelector<HTMLElement>(".routine-occurrences");
+    if (!links) {
+      links = document.createElement("div");
+      links.className = "routine-occurrences";
+      article.append(links);
+    }
+    const linkSignature = JSON.stringify([routine.source, routine.occurrences]);
+    if (links.dataset.signature !== linkSignature) {
+      links.dataset.signature = linkSignature;
+      links.replaceChildren();
       if (routine.source.kind === "run") {
         const source = document.createElement("a");
         source.href = `#task-${routine.source.taskId}`;
         source.textContent = `Created from Task ${routine.source.taskId}, Run ${routine.source.runId}`;
-        article.append(source);
-      } else article.append(line("Created by owner"));
+        links.append(source);
+      } else links.append(line("Created by owner"));
       for (const occurrence of routine.occurrences) {
         const link = document.createElement("a");
         link.href = `#task-${occurrence.taskId}`;
         link.textContent = `Inspect occurrence Task ${occurrence.taskId} · Due: ${occurrence.dueAt}`;
-        article.append(link);
+        links.append(link);
       }
-      return article;
-    }),
-  );
+    }
+    return article;
+  });
+  for (const child of [...list.children])
+    if (!articles.includes(child as HTMLElement)) child.remove();
+  for (const [index, article] of articles.entries())
+    if (list.children[index] !== article) list.insertBefore(article, list.children[index] ?? null);
+  controls();
   return data.routines.some((routine) => routine.nextOccurrence !== null);
 }
 async function submit() {
@@ -395,6 +464,7 @@ async function sendCommand() {
           : "Routine command unconfirmed. Retry the saved request.";
       return;
     }
+    if (!isRoutine(result) || result.id !== current.routineId) throw new Error();
     command = undefined;
     localStorage.removeItem(commandKey);
     notice.textContent =

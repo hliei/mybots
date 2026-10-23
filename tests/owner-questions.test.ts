@@ -115,10 +115,20 @@ it("persists a scoped question, waits for a correlated answer, and resumes the s
       )
     ).error,
   ).toBe("Execution scope is no longer active.");
+  expect((await get("/api/bot-summaries")).bots[0]).toMatchObject({
+    id: "personal",
+    working: true,
+    attention: true,
+    latestMessage: { excerpt: "Plan a trip", role: "user" },
+  });
   mailbox.requestDurableWait("owner-question");
   await vi.waitFor(async () =>
     expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("waiting"),
   );
+  expect((await get("/api/bot-summaries")).bots[0]).toMatchObject({
+    working: false,
+    attention: true,
+  });
   const waiting = (await get("/api/bots/personal/thread")).tasks[0].runs[0];
   expect(waiting.outcome).toBeNull();
   expect(waiting.questions).toEqual([

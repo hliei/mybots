@@ -374,6 +374,23 @@ selectors and available tool names. `GET /api/bots` returns `{ bots }` with each
 Bot's `id`, `name`, `workspace` (relative to the installation root), `instructions`,
 `model` selector and `tools`. Endpoints and credentials are not public settings.
 
+`GET /api/bot-summaries` returns authenticated `{ bots }` for navigation, including
+stable identity, availability, creation and activity timestamps, a latest ordinary
+chat message (`id`, `role`, plain-text `excerpt` of at most 200 characters, and
+`createdAt`), plus `working` and `attention` booleans. Empty Threads return a null
+message and use Bot creation time for activity. Rows sort by activity descending,
+then Bot ID ascending. Routine/delegation output, selection and configuration
+saves do not advance chat activity. Active/stopping Runs mark working; pending or
+expired questions, pending or expired action approvals and uncertain/held Runs mark attention.
+This query reads SQLite originals without opening SDK sessions. Schema version 28
+adds read indexes for these lookups and retains existing records and file paths.
+
+The sidebar filters names locally and separates disabled Bots and retained deleted
+identities. Row right-click and ellipsis menus expose inspection and applicable
+lifecycle actions. Logical deletion requires a retention disclosure and confirmation.
+An unconfirmed lifecycle response retains its exact Bot, operation and request ID
+with an explicit retry control, including after reload and logical deletion.
+
 `POST /api/bots` accepts this creation payload:
 
 ```json
@@ -438,7 +455,7 @@ response loss or reload. The old `/api/sessions` operations return 404.
 | `GET /api/bots/<id>/thread` | `{ thread, tasks, messages }` with original message IDs and linked Run IDs. |
 | `POST /api/bots/<id>/thread/messages` | `{ requestId, text }`; 202 with `{ requestId, botId, threadId, taskId, runId, messageId, replayed }`. |
 | `POST /api/bots/<id>/thread/tasks` | Same payload/response; always creates independent work. |
-| `POST /api/bots/<id>/tasks/<taskId>/inputs` | Same payload/response; appends only to that Bot's eligible Task. |
+| `POST /api/bots/<id>/tasks/<taskId>/inputs` | Same payload/response, with optional `expectedRunId`; appends only to that Bot's eligible Task. A different latest Run returns 409; an already admitted request still replays its original association. |
 | `POST /api/bots/<id>/runs/<runId>/stop` | `{ requestId }`; 202 acknowledges a stop. The Run stays `stopping` until termination is confirmed. |
 | `POST /api/bots/<id>/tasks/<taskId>/stop` | Same payload; stops that Task's unfinished Run. |
 | `POST /api/bots/<id>/runs/<runId>/retry` | `{ requestId }`; confirms stop, preserves the old outcome, and admits a linked Run under the same Task. |
@@ -699,11 +716,23 @@ mailbox input; no parallel local routing store is created.
 
 Authenticated `execution` WebSocket envelopes carry `botId`, `threadId`,
 `taskId`, `runId` and a bounded `snapshot` (`id`, executor `incarnation`, `text`,
-Unicode `textOffset`, current `tool`). The runner publishes accumulated previews,
-so a missed frame does not require concatenating subsequent fragments. A preview
+Unicode `textOffset`, current `tool`, correlated `inputId` and tool-commentary
+`preview` flag). The runner publishes accumulated previews,
+resetting text at each assistant message and labelling tool commentary separately.
+The stream `id` becomes the grouped durable Thread reply ID when that exchange
+settles; text alone never establishes settlement. Run history snapshots also
+carry Bot, Thread, Task and Run scope.
+A missed frame is repaired from the current bounded snapshot. A preview
 is progress only; the persisted Run outcome establishes completion. The browser
 repairs missed frames and reloads from HTTP snapshots, including after Host
 restart. Preview text can be shorter than the complete recorded originals.
+
+The desktop conversation grows live chat text in its reply bubble and replaces
+that projection with the matching original. Tool previews and independent work
+remain labelled activity. Reading follows new output only at the bottom; scrolling
+into history shows Back to latest. Per-Bot message anchors and the choice to
+follow survive panel reflow and settings, even when the whole history temporarily
+fits. Older original pages prepend without replacing the reading anchor.
 
 Every connected client observes live host envelopes: `inbound` for accepted input
 (`session_id`, `message_id`, `destination`, `channel_type`, `platform_id`,

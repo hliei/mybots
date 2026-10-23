@@ -157,6 +157,25 @@ it("streams real Pi activity before completion and retrieves originals through f
       expect((await get(path)).tasks.at(-1).runs[0].state).toBe("succeeded"),
     );
     expect((await get(`${path}/history?query=search_history`)).messages).toEqual([]);
+    const settled = await get(evidencePath);
+    expect(settled).toMatchObject({
+      botId: "personal",
+      runId: sent.runId,
+      threadId: sent.threadId,
+      taskId: sent.taskId,
+    });
+    expect(settled.snapshot).toMatchObject({
+      inputId: sent.messageId,
+      preview: false,
+      text: "查阅原文后完成",
+    });
+    expect((await get(`${path}/history`)).messages).toContainEqual(
+      expect.objectContaining({
+        id: settled.snapshot.id,
+        runId: sent.runId,
+        text: "查阅原文后完成",
+      }),
+    );
     socket.close();
     await channel.close();
     await host.stop();

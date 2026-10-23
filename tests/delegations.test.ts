@@ -395,6 +395,9 @@ it.each([false, true])(
         }),
       ],
     });
+    expect(
+      (await get("/api/bot-summaries")).bots.find((bot: { id: string }) => bot.id === "personal"),
+    ).toMatchObject({ working: false, attention: true });
     expect((await post(path, { ...decision, requestId: "expired-late" })).status).toBe(409);
     expect((await get(`/api/bots/${targetId}/thread`)).tasks).toEqual([]);
     expect(
@@ -1289,6 +1292,7 @@ it.each(["allow", "ask-each-time"])(
           text: `Delegate this summary to ${targetId}`,
         })
       ).json();
+      await service.waitForRequest();
       await vi.waitFor(async () =>
         expect((await get("/api/bots/personal/thread")).tasks[0].runs[0].state).toBe("waiting"),
       );

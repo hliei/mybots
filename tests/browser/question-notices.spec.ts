@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RunnerMailbox } from "@mybots/mailbox/node";
 import { expect, test } from "@playwright/test";
+import { showFeature } from "./navigation.ts";
 
 test("repairs a Bot topic and resends the question notice without changing the Run", async ({
   page,
@@ -61,6 +62,7 @@ test("repairs a Bot topic and resends the question notice without changing the R
     await page.goto(ready.url);
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
     const works = page.locator("#chat-works");
     await expect(works).toContainText("Execution: waiting");
@@ -71,9 +73,14 @@ test("repairs a Bot topic and resends the question notice without changing the R
       `Local client: /?bot=personal&run=${ready.sessionId}#question-browser-city`,
     );
     child?.send("telegram-mode:ready");
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Connection", exact: true }).click();
+    await page.getByRole("button", { name: "Open notification details", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Settings", exact: true })).toBeHidden();
     await page.getByRole("button", { name: "Repair Telegram topic" }).click();
     await expect(works).toContainText("Telegram topic: mapped · 71");
     await expect(works).toContainText("Telegram topic: mapped");
+    await showFeature(page, "tasks");
     await page.getByRole("button", { name: "Resend Telegram notice" }).click();
     await expect(works).toContainText("Telegram notice: delivered · 1 of 3 attempts");
     await expect(works).toContainText("This is not a read receipt");
@@ -95,12 +102,13 @@ test("repairs a Bot topic and resends the question notice without changing the R
     expect(locator).toBeTruthy();
     await page.evaluate(() => localStorage.removeItem("mybots.selected-bot"));
     await page.goto(new URL(locator as string, ready.url).href);
-    await expect(page.locator('[data-question-id="browser-city"]')).toBeFocused();
+    await expect(page.locator('#chat-works [data-question-id="browser-city"]')).toBeFocused();
     await expect(works).toContainText("Question: Which city?");
     const beforeRestart = sent.length;
     await stop();
     await start(Number(new URL(ready.url).port));
     await page.reload();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
     await expect(works).toContainText("Telegram notice: delivered · 1 of 3 attempts");
     await expect(works).toContainText("Execution: waiting");
@@ -156,14 +164,17 @@ test("inspects and resends a Routine outcome notice and follows its work locator
     await page.goto(ready.url);
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
     const works = page.locator("#chat-works");
     await expect(works).toContainText(`Routine: ${routine.id}`);
     await expect(works).toContainText("Work succeeded.");
     await expect(works).toContainText("Telegram notice: failed");
     child.send("telegram-mode:ready");
+    await showFeature(page, "tasks");
     await page.getByRole("button", { name: "Repair Telegram topic" }).click();
     await expect(works).toContainText("Telegram topic: mapped");
+    await showFeature(page, "tasks");
     await page.getByRole("button", { name: "Resend Telegram notice" }).click();
     await expect(works).toContainText("Telegram notice: delivered · 1 of 3 attempts");
     await expect(works).toContainText("This is not a read receipt");
@@ -176,7 +187,7 @@ test("inspects and resends a Routine outcome notice and follows its work locator
     expect(locator).toBeTruthy();
     await page.goto(new URL(locator as string, ready.url).href);
     await expect(
-      page.locator("[data-task-id]").filter({ hasText: `Routine: ${routine.id}` }),
+      page.locator("#chat-works [data-task-id]").filter({ hasText: `Routine: ${routine.id}` }),
     ).toBeFocused();
     const headers = { Authorization: `Bearer ${ready.credential}` };
     async function post(path: string, data: unknown) {
@@ -245,7 +256,7 @@ test("inspects and resends a Routine outcome notice and follows its work locator
     worker.requestDurableWait("delegation");
     const approvalLocator = `/?bot=${specialist}&run=${childRunId}#approval-review`;
     await page.goto(new URL(approvalLocator, ready.url).href);
-    const approval = page.locator('[data-approval-id="review"]');
+    const approval = page.locator('#chat-works [data-approval-id="review"]');
     await expect(approval).toBeFocused();
     await expect(works).toContainText("Notice: approval");
     await expect(works).toContainText("Telegram notice: delivered");
@@ -253,10 +264,11 @@ test("inspects and resends a Routine outcome notice and follows its work locator
       "href",
       `/?bot=personal&run=${source.runId}#task-${source.taskId}`,
     );
+    await showFeature(page, "tasks");
     await approval.getByRole("button", { name: "Deny action" }).click();
     await expect(works).toContainText("Owner decision: deny");
     await works.getByRole("link", { name: /Source Bot: personal/ }).click();
-    await expect(page.locator(`[data-task-id="${source.taskId}"]`)).toBeFocused();
+    await expect(page.locator(`#chat-works [data-task-id="${source.taskId}"]`)).toBeFocused();
     expect(errors).toEqual([]);
   } finally {
     child.kill("SIGTERM");

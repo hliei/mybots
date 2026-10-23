@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { sendNewTask, showFeature } from "./navigation.ts";
 
 interface Ready {
   url: string;
@@ -55,11 +56,15 @@ test("stop a Run, inspect late evidence, and keep an unconfirmed stop from block
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
     await expect(page.getByRole("heading", { name: "Personal", exact: true })).toBeVisible();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal", exact: true }).click();
     child?.send("complete");
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Refresh status" }).click();
-    await expect(page.locator("#bots")).toContainText("1 acknowledged");
+    await expect(page.locator("#host-execution")).toContainText("1 acknowledged");
+    await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Hold chat");
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await expect(page.locator("#chat-works")).toContainText("Execution: active");
     let lostStop = false;
@@ -70,45 +75,63 @@ test("stop a Run, inspect late evidence, and keep an unconfirmed stop from block
         await route.abort();
       } else await route.continue();
     });
-    await page.getByRole("button", { name: "Stop run", exact: true }).click();
+    await page.getByRole("button", { name: "Stop current chat Run", exact: true }).click();
     await expect(page.locator("#chat-message")).toContainText("unconfirmed");
     await page.reload();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Retry chat request", exact: true }).click();
     await expect(page.locator("#chat-works")).toContainText(
       "Stopping until termination is confirmed",
     );
+    await expect(
+      page.getByRole("button", { name: "Stopping current chat…", exact: true }),
+    ).toBeDisabled();
     child?.send("release-stop");
     await expect(page.locator("#chat-works")).toContainText("Stopped before a final result.");
     await expect(page.locator("#chat-works")).toContainText("Hold chat");
     child?.send("write-late");
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Refresh status" }).click();
     await expect(page.locator("#chat-works")).toContainText(
       "Late result: Late evidence after stop",
     );
     await expect(page.locator("#chat-works")).toContainText("Outcome: cancelled");
+    await expect(
+      page.getByRole("button", { name: "Stopping current chat…", exact: true }),
+    ).toHaveCount(0);
+    await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Hold chat");
-    await page.getByRole("button", { name: "New task", exact: true }).click();
+    await showFeature(page, "chat");
+    await sendNewTask(page);
     await expect(page.locator("#chat-works article").nth(2)).toContainText("Execution: active");
     child?.send("fail-stop");
+    await showFeature(page, "tasks");
     await page
       .locator("#chat-works article")
       .nth(2)
       .getByRole("button", { name: "Stop run" })
       .click();
     await expect(page.locator("#chat-works")).toContainText("Execution stop unconfirmed");
+    await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Still queued");
-    await page.getByRole("button", { name: "New task", exact: true }).click();
+    await showFeature(page, "chat");
+    await sendNewTask(page);
     await expect(page.locator("#chat-works article").nth(3)).toContainText("Execution: queued");
+    await showFeature(page, "create");
     await page.getByLabel("Bot name").fill("Writer");
     await page.getByLabel("Role instructions").fill("Write clear reports.");
     await page.getByLabel("Model", { exact: true }).selectOption("deepseek/deepseek-chat");
     await page.getByRole("button", { name: "Create Bot", exact: true }).click();
     await expect(page.locator("#selected-bot")).toContainText("Writer");
+    await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Writer continues");
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await expect(page.locator("#chat-works")).toContainText("Final: Writer continues");
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Refresh status" }).click();
     await expect(page.locator("#chat-works")).toContainText("Final: Writer continues");
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal", exact: true }).click();
     await expect(page.locator("#chat-works article").nth(3)).toContainText("Execution: queued");
     await expect(page.locator("#chat-works")).toContainText("Execution stop unconfirmed");

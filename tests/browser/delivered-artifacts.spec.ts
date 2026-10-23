@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RunnerMailbox } from "@mybots/mailbox/node";
 import { expect, test } from "@playwright/test";
+import { showFeature } from "./navigation.ts";
 
 test("downloads a selected result unchanged after workspace edits and a fresh Host", async ({
   page,
@@ -60,16 +61,19 @@ test("downloads a selected result unchanged after workspace edits and a fresh Ho
     await page.goto(ready.url);
     await page.getByLabel("Connection credential").fill(ready.credential);
     await page.getByRole("button", { name: "Pair with Host" }).click();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
     const link = page.getByRole("link", {
       name: `Download report.txt (${original.length} bytes)`,
       exact: true,
     });
-    await expect(link).toBeVisible();
     await expect(page.locator("#chat-works")).toContainText("Report ready");
+    await showFeature(page, "tasks");
+    await expect(link).toBeVisible();
     await expect(page.locator("#chat-works")).toContainText("Bot: personal · Task:");
     await writeFile(workspaceFile, "Replaced working report\n");
     async function download() {
+      await showFeature(page, "tasks");
       const [saved] = await Promise.all([page.waitForEvent("download"), link.click()]);
       expect(saved.suggestedFilename()).toBe("report.txt");
       const target = join(root, "downloaded-report.txt");
@@ -77,14 +81,44 @@ test("downloads a selected result unchanged after workspace edits and a fresh Ho
       expect(await readFile(target)).toEqual(original);
     }
     await download();
+    await showFeature(page, "files");
+    const deliveries = page.getByRole("region", { name: "Immutable deliveries" });
+    await expect(deliveries).toContainText("report.txt");
+    await expect(deliveries).toContainText("Bot: personal · Task:");
+    await deliveries.getByRole("button", { name: "View producing Task", exact: true }).click();
+    await expect(page.locator("#chat-works > article > details[open]")).toContainText(
+      "Report ready",
+    );
+    await showFeature(page, "files");
+    await deliveries.getByRole("button", { name: "Inspect producing Run", exact: true }).click();
+    await expect(page.locator("#run-history")).toContainText("Recorded Run evidence:");
+    await showFeature(page, "files");
+    const [fileDownload] = await Promise.all([
+      page.waitForEvent("download"),
+      deliveries.getByRole("link", { name: /Download report.txt/ }).click(),
+    ]);
+    const deliveredPath = join(root, "files-report.txt");
+    await fileDownload.saveAs(deliveredPath);
+    expect(await readFile(deliveredPath)).toEqual(original);
     child?.send("complete");
     await expect(page.locator("#chat-works")).toContainText("Controlled reply");
     await stop();
     await start(Number(new URL(ready.url).port));
     await page.reload();
+    await showFeature(page, "chat");
     await page.getByRole("button", { name: "Select Personal" }).click();
+    await expect(page.locator("#chat-works")).toContainText("Report ready");
+    await showFeature(page, "tasks");
     await expect(link).toBeVisible();
     await download();
+    await showFeature(page, "files");
+    await expect(deliveries).toContainText("report.txt");
+    const [restored] = await Promise.all([
+      page.waitForEvent("download"),
+      deliveries.getByRole("link", { name: /Download report.txt/ }).click(),
+    ]);
+    await restored.saveAs(deliveredPath);
+    expect(await readFile(deliveredPath)).toEqual(original);
     expect(errors).toEqual([]);
   } finally {
     if (child) await stop();

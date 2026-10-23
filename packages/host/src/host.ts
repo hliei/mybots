@@ -967,6 +967,10 @@ export class Host {
     };
   }
 
+  botSummaries() {
+    return this.store.botSummaries();
+  }
+
   managedBots() {
     return this.store.managedBots();
   }
@@ -2117,6 +2121,8 @@ export class Host {
     const result = {
       botId,
       runId,
+      threadId: this.store.threads.session(runId).thread_id,
+      taskId: this.store.threads.run(runId).task_id,
       records,
       snapshot: execution.mailbox.executionSnapshot() ?? null,
       coverage: selected.length > 5 ? "partial" : "exhausted",
@@ -2159,7 +2165,12 @@ export class Host {
     mode: "message" | "new-task" = "message",
     taskId?: string,
   ) {
-    const input = chatInput(value, ["text"]);
+    const input = chatInput(value, [
+      "text",
+      ...(taskId && value && typeof value === "object" && "expectedRunId" in value
+        ? ["expectedRunId"]
+        : []),
+    ]);
     await this.threadDetail(botId);
     if (this.stopped) throw new Error("Host is stopped");
     const admitted = this.store.threads.send(
@@ -2169,6 +2180,7 @@ export class Host {
         text: input.text as string,
         newTask: mode === "new-task",
         ...(taskId ? { taskId } : {}),
+        ...(input.expectedRunId ? { expectedRunId: input.expectedRunId } : {}),
         ...(input.selectedMessageIds ? { selectedMessageIds: input.selectedMessageIds } : {}),
       },
       this.timestamp(),

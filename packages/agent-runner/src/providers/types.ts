@@ -25,6 +25,7 @@ export type ProviderEvent =
   | { type: "init"; continuation: string }
   | { type: "activity" }
   | { type: "tool"; name: string | null; timeoutMs?: number }
+  | { type: "assistant-start" }
   | { type: "text"; text: string }
   | { type: "progress"; message: string }
   | { type: "result"; text: string | null; isError?: boolean; error?: string; inputIds?: string[] };

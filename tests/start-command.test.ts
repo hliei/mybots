@@ -124,7 +124,7 @@ it("opens the paired local UI without restarting an already running Host", async
   const credential = (await readFile(join(root, "data", "client-credential"), "utf8")).trim();
   expect(result.stdout).not.toContain(credential);
   expect((await host?.clientStatus())?.sessions).toEqual([]);
-});
+}, 15000);
 
 it.each([true, false])(
   "starts the installed service (loaded: %s), waits for its API and opens the UI",

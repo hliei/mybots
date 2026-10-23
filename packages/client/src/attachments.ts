@@ -1,3 +1,5 @@
+import { openDetail } from "./shell.ts";
+
 interface AttachmentSource {
   delegationId: string;
   botId: string;
@@ -48,6 +50,7 @@ const form = document.querySelector<HTMLFormElement>("#attachment-form") as HTML
 const task = document.querySelector<HTMLSelectElement>("#attachment-task") as HTMLSelectElement;
 const file = document.querySelector<HTMLInputElement>("#attachment-file") as HTMLInputElement;
 const message = document.querySelector<HTMLElement>("#attachment-message") as HTMLElement;
+const scope = document.querySelector<HTMLElement>("#attachment-scope") as HTMLElement;
 const list = document.querySelector<HTMLElement>("#attachment-list") as HTMLElement;
 const DEFAULT_LIMIT = 25 * 1024 * 1024;
 let botId: string | undefined;
@@ -57,10 +60,11 @@ let signature = "";
 let busy = false;
 
 function controls(): void {
-  for (const node of form.querySelectorAll<
-    HTMLInputElement | HTMLSelectElement | HTMLButtonElement
-  >("input, select, button"))
-    node.disabled = busy || !botId || task.options.length === 0;
+  for (const container of [form, list])
+    for (const node of container.querySelectorAll<
+      HTMLInputElement | HTMLSelectElement | HTMLButtonElement
+    >("input, select, button"))
+      node.disabled = busy || !botId || task.options.length === 0;
 }
 
 function limitMessage(): string {
@@ -75,6 +79,10 @@ export async function showAttachments(
 ): Promise<void> {
   const nextIds = ids.join("\n");
   if (botId !== selectedBot) {
+    task.replaceChildren();
+    scope.textContent = "Select an existing Task. First-message attachments are unavailable.";
+    taskIds = "";
+    maxBytes = DEFAULT_LIMIT;
     message.textContent = "";
     list.replaceChildren();
     file.value = "";
@@ -112,10 +120,13 @@ async function refresh(): Promise<void> {
     signature = "";
     return;
   }
+  const owner = botId;
+  const selectedTask = task.value;
   const response = await fetch(
-    `/api/bots/${encodeURIComponent(botId)}/tasks/${encodeURIComponent(task.value)}/attachments`,
+    `/api/bots/${encodeURIComponent(owner)}/tasks/${encodeURIComponent(selectedTask)}/attachments`,
     { cache: "no-store" },
   );
+  if (botId !== owner || task.value !== selectedTask) return;
   if (!response.ok) {
     message.textContent = "Task attachments are unavailable.";
     return;
@@ -125,6 +136,8 @@ async function refresh(): Promise<void> {
     message.textContent = "Task attachments are unavailable.";
     return;
   }
+  if (botId !== owner || task.value !== selectedTask) return;
+  scope.textContent = `Bot ${owner} · Task ${selectedTask}`;
   if (typeof body.maxBytes === "number") maxBytes = body.maxBytes;
   const next = JSON.stringify(body.attachments);
   if (next === signature) return;
@@ -153,6 +166,11 @@ function render(attachments: Attachment[], drafts: Map<string | undefined, strin
     article.append(
       Object.assign(document.createElement("p"), {
         textContent: `${item.filename} · ${item.bytes} bytes`,
+      }),
+    );
+    article.append(
+      Object.assign(document.createElement("p"), {
+        textContent: `Bot ${botId} · Task ${task.value}${item.runId ? ` · Run ${item.runId}` : ""}`,
       }),
     );
     if (item.source)
@@ -186,10 +204,13 @@ function render(attachments: Attachment[], drafts: Map<string | undefined, strin
     article.append(save);
     list.append(article);
   }
+  controls();
 }
 
 async function saveToWorkspace(item: Attachment, path: string): Promise<void> {
   if (!botId || !task.value || busy) return;
+  const owner = botId;
+  const selectedTask = task.value;
   busy = true;
   controls();
   try {
@@ -202,11 +223,16 @@ async function saveToWorkspace(item: Attachment, path: string): Promise<void> {
       },
     );
     const payload: unknown = await response.json().catch(() => undefined);
+    if (botId !== owner || task.value !== selectedTask) return;
     const savedPath = textField(payload, "path");
     message.textContent = response.ok
       ? `Saved ${item.filename} to the Bot workspace at ${savedPath ?? path}. Other Tasks of this Bot can reuse that file.`
       : (textField(payload, "error") ?? "Workspace save failed.");
     if (response.ok) await refreshWorkspace();
+  } catch {
+    if (botId === owner && task.value === selectedTask)
+      message.textContent =
+        "Workspace save outcome is unconfirmed. Check workspace files before trying again.";
   } finally {
     busy = false;
     controls();
@@ -216,13 +242,17 @@ async function saveToWorkspace(item: Attachment, path: string): Promise<void> {
 async function refreshWorkspace(): Promise<void> {
   const node = document.querySelector("#workspace-files");
   if (!node) return;
-  node.replaceChildren();
-  if (!botId) return;
-  const response = await fetch(`/api/bots/${encodeURIComponent(botId)}/workspace/files`, {
+  if (!botId) {
+    node.replaceChildren();
+    return;
+  }
+  const owner = botId;
+  const response = await fetch(`/api/bots/${encodeURIComponent(owner)}/workspace/files`, {
     cache: "no-store",
   });
+  if (botId !== owner) return;
   if (!response.ok) {
-    node.append(
+    node.replaceChildren(
       Object.assign(document.createElement("li"), {
         textContent: "Workspace files are unavailable.",
       }),
@@ -230,6 +260,8 @@ async function refreshWorkspace(): Promise<void> {
     return;
   }
   const body: unknown = await response.json();
+  if (botId !== owner) return;
+  node.replaceChildren();
   const listed = record(body) && Array.isArray(body.files) ? body.files : undefined;
   if (
     !listed?.every(
@@ -253,11 +285,14 @@ async function refreshWorkspace(): Promise<void> {
     return;
   }
   for (const file of files) {
-    node.append(
-      Object.assign(document.createElement("li"), {
-        textContent: `${file.path} · ${file.bytes} bytes`,
-      }),
-    );
+    const row = document.createElement("li");
+    row.append(`${file.path} · ${file.bytes} bytes `);
+    const download = document.createElement("a");
+    download.href = `/api/bots/${encodeURIComponent(owner)}/workspace/files?path=${encodeURIComponent(file.path)}`;
+    download.download = file.path.split("/").at(-1) ?? file.path;
+    download.textContent = `Download workspace ${file.path}`;
+    row.append(download);
+    node.append(row);
   }
 }
 
@@ -278,11 +313,13 @@ async function upload(): Promise<void> {
     message.textContent = limitMessage();
     return;
   }
+  const owner = botId;
+  const selectedTask = task.value;
   busy = true;
   controls();
   try {
     const response = await fetch(
-      `/api/bots/${encodeURIComponent(botId)}/tasks/${encodeURIComponent(task.value)}/attachments`,
+      `/api/bots/${encodeURIComponent(owner)}/tasks/${encodeURIComponent(selectedTask)}/attachments`,
       {
         method: "POST",
         headers: { "X-Filename": encodeURIComponent(chosen.name) },
@@ -290,6 +327,7 @@ async function upload(): Promise<void> {
       },
     );
     const payload: unknown = await response.json().catch(() => undefined);
+    if (botId !== owner || task.value !== selectedTask) return;
     if (!response.ok) {
       message.textContent = textField(payload, "error") ?? "Upload failed.";
       return;
@@ -300,8 +338,22 @@ async function upload(): Promise<void> {
     file.value = "";
     signature = "";
     await refresh();
+  } catch {
+    if (botId === owner && task.value === selectedTask)
+      message.textContent =
+        "Upload outcome is unconfirmed. Check Task attachments before trying again.";
   } finally {
     busy = false;
     controls();
   }
+}
+
+/** Reuse the Task-scoped form without changing the composer's input target. */
+export function openTaskAttachments(taskId?: string): void {
+  openDetail("files");
+  if (taskId && [...task.options].some((option) => option.value === taskId)) {
+    task.value = taskId;
+    task.dispatchEvent(new Event("change"));
+  }
+  task.focus();
 }

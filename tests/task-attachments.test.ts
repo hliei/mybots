@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -79,7 +79,7 @@ it("upgrades a budget-enabled store with Task attachments and retains spent Run 
   const prior = new DatabaseSync(join(root, "data", "host.db"));
   try {
     prior.exec(`
-    DROP TABLE IF EXISTS notices; ALTER TABLE runs DROP COLUMN collaboration_waited; DROP TABLE IF EXISTS question_notices; DROP TABLE IF EXISTS telegram_topics;
+    DROP INDEX thread_messages_latest; DROP INDEX tasks_thread; DROP INDEX runs_task_state; DROP TABLE IF EXISTS notices; ALTER TABLE runs DROP COLUMN collaboration_waited; DROP TABLE IF EXISTS question_notices; DROP TABLE IF EXISTS telegram_topics;
       DROP TABLE action_approvals; DROP TABLE delegation_files; DROP TABLE delegations; DROP TABLE collaboration_grants; DROP TABLE timezone_updates; DROP TABLE bot_timezones; DROP TABLE routine_commands; DROP TABLE routine_occurrences; DROP TABLE routines; DROP TABLE owner_questions; DROP TABLE delivered_artifacts;
       DROP TABLE agent_publications;
       DROP TABLE task_attachments;
@@ -377,4 +377,22 @@ it("stops transferring an attachment after the installation limit falls below it
     { path: "shared/ok.bin" },
   );
   expect(saved.status).toBe(413);
+});
+
+it("bounds the Bot workspace file listing without following symlinks", async () => {
+  await start();
+  const botId = await createBot("Files");
+  const bots = await (await fetch(`${base}/api/bots`, { headers })).json();
+  const workspace = join(root, bots.bots.find((bot: { id: string }) => bot.id === botId).workspace);
+  await Promise.all(
+    Array.from({ length: 1005 }, (_, index) =>
+      writeFile(join(workspace, `file-${index}.txt`), "bounded"),
+    ),
+  );
+  await symlink(join(root, "data"), join(workspace, "outside"));
+  const response = await fetch(`${base}/api/bots/${botId}/workspace/files`, { headers });
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body.files).toHaveLength(1000);
+  expect(body.files.every((file: { path: string }) => file.path.startsWith("file-"))).toBe(true);
 });

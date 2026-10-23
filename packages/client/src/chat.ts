@@ -1,13 +1,16 @@
-import { showAttachments } from "./attachments.ts";
+import { openTaskAttachments, showAttachments } from "./attachments.ts";
 import { showCollaboration } from "./collaboration.ts";
 import {
   clearBackgroundSelection,
   selectedBackgroundIds,
+  selectHistoryBot,
   setBackgroundBoundary,
   showHistory,
   showRunHistory,
 } from "./history.ts";
+import { restoreReadingPosition } from "./reading-position.ts";
 import { showRoutines } from "./routines.ts";
+import { openDetail } from "./shell.ts";
 
 interface Outcome {
   kind: string;
@@ -101,6 +104,7 @@ interface Delegation {
 }
 interface Run {
   id: string;
+  priorRunId: string | null;
   state: string;
   budget: { limitMs: number; activeMs: number; exhaustedAt: string | null };
   held?: boolean;
@@ -133,6 +137,7 @@ interface Run {
 interface Task {
   id: string;
   origin: string;
+  routine: { id: string; text: string } | null;
   runs: Run[];
 }
 interface Detail {
@@ -168,6 +173,7 @@ interface Pending {
   taskId?: string;
   runId?: string;
   selectedMessageIds?: string[];
+  draftRevision?: string;
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -277,12 +283,17 @@ function isDetail(value: unknown): value is Detail {
         record(task) &&
         typeof task.id === "string" &&
         typeof task.origin === "string" &&
+        (task.routine === null ||
+          (record(task.routine) &&
+            typeof task.routine.id === "string" &&
+            typeof task.routine.text === "string")) &&
         Array.isArray(task.runs) &&
         task.runs.every(
           (run: unknown) =>
             record(run) &&
             typeof run.id === "string" &&
             typeof run.state === "string" &&
+            (run.priorRunId === null || typeof run.priorRunId === "string") &&
             record(run.budget) &&
             typeof run.budget.limitMs === "number" &&
             typeof run.budget.activeMs === "number" &&
@@ -391,6 +402,8 @@ function isPending(value: unknown): value is Pending {
       "resend",
       "repair",
     ].includes(value.operation as string) &&
+    (value.runId === undefined || typeof value.runId === "string") &&
+    (value.draftRevision === undefined || typeof value.draftRevision === "string") &&
     (value.operation !== "resend" || typeof value.noticeId === "string") &&
     (value.selectedMessageIds === undefined ||
       (Array.isArray(value.selectedMessageIds) &&
@@ -418,6 +431,10 @@ const panel = element("chat");
 const selected = element("selected-chat");
 const messages = element("thread-messages");
 const works = element("chat-works");
+const cards = element("work-cards");
+const chatStop = element("chat-stop");
+const expandedTasks = new Set<string>();
+let chatExecution: { taskId: string; runId: string; state: string } | undefined;
 const notice = element("chat-message");
 const form = element<HTMLFormElement>("message-form");
 const text = element<HTMLTextAreaElement>("message-text");
@@ -425,12 +442,178 @@ const target = element<HTMLSelectElement>("input-target");
 const retry = element<HTMLButtonElement>("retry-chat");
 const resetBackground = element<HTMLButtonElement>("reset-background");
 const pendingKey = "mybots.pending-thread-input";
+interface Draft {
+  text: string;
+  revision: string;
+  target: string;
+  runId?: string;
+}
+const drafts = new Map<string, Draft>();
+const draftKey = (id: string) => `mybots.composer-draft.${id}`;
+function readDraft(id: string): Draft {
+  const current = drafts.get(id);
+  if (current) return current;
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(draftKey(id)) ?? "null");
+    if (record(saved) && typeof saved.text === "string" && typeof saved.revision === "string") {
+      const draft = {
+        text: saved.text,
+        revision: saved.revision,
+        target: typeof saved.target === "string" ? saved.target : "",
+        ...(typeof saved.runId === "string" ? { runId: saved.runId } : {}),
+      };
+      drafts.set(id, draft);
+      return draft;
+    }
+  } catch {
+    /* An unreadable draft must not prevent conversation inspection. */
+  }
+  return { text: "", revision: "", target: "" };
+}
+function writeDraft(id: string, draft: Draft): void {
+  drafts.set(id, draft);
+  try {
+    localStorage.setItem(draftKey(id), JSON.stringify(draft));
+  } catch {
+    notice.textContent = "Could not save this draft in browser storage. Keep this page open.";
+  }
+}
+function saveDraft(): void {
+  if (!botId) return;
+  writeDraft(botId, {
+    text: text.value,
+    revision: crypto.randomUUID(),
+    target: target.value,
+    runId: target.selectedOptions[0]?.dataset.runId,
+  });
+}
+function growDraft(): void {
+  text.style.height = "auto";
+  text.style.height = `${Math.min(180, text.scrollHeight)}px`;
+}
+let composerWidth = 0;
+new ResizeObserver(([entry]) => {
+  if (entry && entry.contentRect.width !== composerWidth) {
+    composerWidth = entry.contentRect.width;
+    growDraft();
+  }
+}).observe(form);
+text.addEventListener("input", () => {
+  saveDraft();
+  growDraft();
+  controls();
+});
+const targetLabel = element("composer-target-label");
+const menu = element("composer-menu");
+const actions = element<HTMLButtonElement>("message-actions");
+function closeComposerMenu(): void {
+  menu.hidden = true;
+  actions.setAttribute("aria-expanded", "false");
+}
+function resetTargets(): void {
+  target.replaceChildren(
+    Object.assign(document.createElement("option"), {
+      value: "",
+      textContent: "Thread — continue chat",
+    }),
+    Object.assign(document.createElement("option"), {
+      value: "new-task",
+      textContent: "New independent task",
+    }),
+  );
+}
+function showTarget(): void {
+  element("composer-target").hidden = !target.value;
+  const option = target.selectedOptions[0];
+  targetLabel.textContent =
+    target.value === "new-task"
+      ? "New independent task"
+      : target.value
+        ? `Add to ${option?.textContent ?? target.value}`
+        : "";
+  controls();
+}
+document.addEventListener("background-selection", (event) => {
+  if ((event as CustomEvent<number>).detail > 0) {
+    target.value = "new-task";
+    saveDraft();
+  }
+  showTarget();
+});
+target.addEventListener("change", () => {
+  saveDraft();
+  showTarget();
+});
+actions.addEventListener("click", () => {
+  menu.hidden = !menu.hidden;
+  actions.setAttribute("aria-expanded", String(!menu.hidden));
+  if (!menu.hidden) element("new-task").focus();
+});
+element("attach-to-task").addEventListener("click", () => {
+  closeComposerMenu();
+  openTaskAttachments(target.value && target.value !== "new-task" ? target.value : undefined);
+});
+element("new-task").addEventListener("click", () => {
+  target.value = "new-task";
+  saveDraft();
+  showTarget();
+  closeComposerMenu();
+  text.focus();
+});
+element("return-thread").addEventListener("click", () => {
+  target.value = "";
+  saveDraft();
+  showTarget();
+  text.focus();
+});
+document.addEventListener("click", (event) => {
+  if (event.target instanceof Node && !event.target.parentElement?.closest(".composer-actions"))
+    closeComposerMenu();
+});
+form.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !menu.hidden) {
+    closeComposerMenu();
+    actions.focus();
+    event.stopPropagation();
+  }
+});
+let composing = false;
+text.addEventListener("compositionstart", () => {
+  composing = true;
+});
+text.addEventListener("compositionend", () => {
+  composing = false;
+});
+text.addEventListener("keydown", (event) => {
+  if (
+    event.key !== "Enter" ||
+    event.shiftKey ||
+    event.isComposing ||
+    composing ||
+    event.keyCode === 229
+  )
+    return;
+  event.preventDefault();
+  form.requestSubmit();
+});
 let botId: string | undefined;
 let availability: "active" | "disabled" | "deleted" = "active";
 let version = 0;
 let refreshTimer = 0;
 let locatedQuestion = false;
+document.addEventListener("inspect-task", (event) => {
+  const taskId = (event as CustomEvent<string>).detail;
+  expandedTasks.add(taskId);
+  locatedQuestion = false;
+  location.hash = `task-${taskId}`;
+  if (botId) void showChat(botId);
+});
 let sending = false;
+let hostAvailable = false;
+export function setHostAvailable(value: boolean): void {
+  hostAvailable = value;
+  controls();
+}
 let pending: Pending | undefined;
 const answerDrafts = new Map<string, string>();
 try {
@@ -440,13 +623,27 @@ try {
   /* Unreadable browser state has no request to recover. */
 }
 function controls(): void {
-  const admitting = availability === "active";
+  const admitting = !!botId && availability === "active" && hostAvailable;
   for (const node of form.querySelectorAll<
     HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement
   >("input, textarea, select, button"))
     node.disabled = !admitting || sending || !!pending;
+  text.disabled = !botId || availability !== "active";
+  for (const button of form.querySelectorAll<HTMLButtonElement>('button[type="submit"]'))
+    button.disabled ||=
+      !text.value.trim() ||
+      !text.validity.valid ||
+      target.selectedOptions[0]?.dataset.unavailable === "true" ||
+      (selectedBackgroundIds().length > 0 && target.value !== "new-task");
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-owner-decision]"))
+    button.disabled = !hostAvailable || sending || !!pending;
+  resetBackground.disabled = !admitting || sending || !!pending;
+  element<HTMLButtonElement>("confirm-reset").disabled = resetBackground.disabled;
   retry.hidden = !pending;
-  retry.disabled = sending || !admitting;
+  retry.disabled = sending || !hostAvailable;
+  chatStop.hidden = !!target.value || !chatExecution;
+  for (const button of chatStop.querySelectorAll<HTMLButtonElement>("button"))
+    button.disabled = !hostAvailable || sending || !!pending || chatExecution?.state === "stopping";
 }
 export async function showChat(
   selectedBotId: string | undefined,
@@ -456,18 +653,46 @@ export async function showChat(
   if (!selectedBotId) availability = "active";
   else if (next) availability = next;
   if (botId !== selectedBotId) {
+    works.setAttribute("aria-busy", "true");
+    renderFileDeliveries([]);
+    void showAttachments(undefined, []);
+    expandedTasks.clear();
+    cards.replaceChildren();
+    delete cards.dataset.cards;
+    chatStop.replaceChildren();
+    delete chatStop.dataset.target;
+    chatExecution = undefined;
+    element("run-history").replaceChildren();
+    element<HTMLDialogElement>("reset-confirmation").close();
     clearBackgroundSelection();
     botId = selectedBotId;
-    text.value = "";
-    target.replaceChildren();
+    selectHistoryBot(botId);
+    text.value = selectedBotId ? readDraft(selectedBotId).text : "";
+    growDraft();
+    closeComposerMenu();
+    const draft = selectedBotId ? readDraft(selectedBotId) : undefined;
+    resetTargets();
+    if (draft?.target && draft.target !== "new-task") {
+      const option = Object.assign(document.createElement("option"), {
+        value: draft.target,
+        textContent: `Task ${draft.target} · unavailable — checking target`,
+      });
+      option.dataset.unavailable = "true";
+      if (draft.runId) option.dataset.runId = draft.runId;
+      target.append(option);
+    }
+    target.value = draft?.target ?? "";
+    showTarget();
     works.replaceChildren();
-    messages.replaceChildren();
+    messages.replaceChildren(paragraph("Loading conversation…"));
     selected.textContent = "";
   }
   panel.hidden = !botId;
+  growDraft();
   if (!botId) {
     showCollaboration(undefined, [], () => undefined);
     await showHistory(undefined, []);
+    renderFileDeliveries([]);
     await showAttachments(undefined, []);
     return;
   }
@@ -497,6 +722,35 @@ export async function showChat(
     const detail: unknown = await response.json();
     if (!isDetail(detail)) throw new Error();
     if (current !== version) return;
+    const executingChat = detail.tasks
+      .filter((task) => task.origin === "chat")
+      .flatMap((task) =>
+        task.runs
+          .filter((run) => ["active", "stopping"].includes(run.state))
+          .map((run) => ({ taskId: task.id, runId: run.id, state: run.state })),
+      );
+    chatExecution = executingChat.length === 1 ? executingChat[0] : undefined;
+    const stopSignature = JSON.stringify(chatExecution ?? null);
+    if (chatStop.dataset.target !== stopSignature) {
+      chatStop.dataset.target = stopSignature;
+      chatStop.replaceChildren();
+      if (chatExecution) {
+        const button = runButton(
+          "Stop current chat Run",
+          "stop",
+          chatExecution.taskId,
+          chatExecution.runId,
+        );
+        button.dataset.runId = chatExecution.runId;
+        button.title = `Task ${chatExecution.taskId} · Run ${chatExecution.runId}`;
+        if (chatExecution.state === "stopping") button.textContent = "Stopping current chat…";
+        chatStop.append(
+          button,
+          paragraph(`Task ${chatExecution.taskId} · Run ${chatExecution.runId}`),
+        );
+      }
+    }
+    controls();
     showCollaboration(
       botId,
       detail.collaboration,
@@ -508,27 +762,42 @@ export async function showChat(
     setBackgroundBoundary(detail.thread.backgroundBoundary);
     selected.textContent = `Thread ID: ${detail.thread.id} · Chat background boundary: ${detail.thread.backgroundBoundary}. Host execution: ${detail.admission.activeCount} of ${detail.admission.activeLimit} active.`;
     const priorTarget = target.value;
-    target.replaceChildren(
-      Object.assign(document.createElement("option"), {
-        value: "",
-        textContent: "Thread — continue chat",
-      }),
-    );
-    for (const task of detail.tasks)
-      if (task.runs.some((run) => ["queued", "active", "waiting"].includes(run.state)))
-        target.append(
-          Object.assign(document.createElement("option"), {
-            value: task.id,
-            textContent: `Task ${task.id}`,
-          }),
-        );
-    if ([...target.options].some((option) => option.value === priorTarget))
-      target.value = priorTarget;
+    const priorRun = target.selectedOptions[0]?.dataset.runId;
+    resetTargets();
+    for (const task of detail.tasks) {
+      const run = task.runs.at(-1);
+      if (run && ["queued", "active", "waiting"].includes(run.state)) {
+        const option = Object.assign(document.createElement("option"), {
+          value: task.id,
+          textContent: `Task ${task.id}`,
+        });
+        option.dataset.runId = run.id;
+        target.append(option);
+      }
+    }
+    if (priorTarget && priorTarget !== "new-task") {
+      let option = [...target.options].find((option) => option.value === priorTarget);
+      if (!option || (priorRun && priorRun !== option.dataset.runId)) {
+        option?.remove();
+        option = Object.assign(document.createElement("option"), {
+          value: priorTarget,
+          textContent: `Task ${priorTarget} · unavailable — select a target again`,
+        });
+        option.dataset.unavailable = "true";
+        if (priorRun) option.dataset.runId = priorRun;
+        target.append(option);
+      }
+    }
+    target.value = priorTarget;
+    showTarget();
     await showHistory(
       botId,
       detail.tasks.flatMap((task) =>
         task.runs.filter((run) => run.state === "active").map((run) => run.id),
       ),
+      detail.tasks
+        .filter((task) => task.origin === "chat")
+        .flatMap((task) => task.runs.map((run) => run.id)),
     );
     if (current !== version) return;
     await showAttachments(
@@ -536,6 +805,8 @@ export async function showChat(
       detail.tasks.map((task) => task.id),
     );
     if (current !== version) return;
+    renderFileDeliveries(detail.tasks);
+    renderWorkCards(detail.tasks);
     if (
       document.activeElement instanceof HTMLTextAreaElement &&
       works.contains(document.activeElement)
@@ -551,10 +822,44 @@ export async function showChat(
         const article = document.createElement("article");
         article.id = `task-${task.id}`;
         article.dataset.taskId = task.id;
-        article.append(paragraph(`Task ID: ${task.id} · Origin: ${task.origin}`));
+        article.className = "task-card";
+        const evidence = document.createElement("details");
+        evidence.className = "task-details";
+        evidence.open =
+          expandedTasks.has(task.id) ||
+          task.runs.some(
+            (run) =>
+              run.questions.some((q) => q.state === "pending") ||
+              run.delegations.some((d) => d.approval?.state === "pending"),
+          );
+        const summary = document.createElement("summary");
+        summary.append(
+          paragraph(`${sourceLabel(task)} · ${task.runs.at(-1)?.state ?? "no Runs"}`),
+          paragraph(taskTitle(task)),
+        );
+        evidence.append(summary);
+        evidence.addEventListener("toggle", () => {
+          if (!evidence.isConnected) return;
+          if (evidence.open) expandedTasks.add(task.id);
+          else expandedTasks.delete(task.id);
+        });
+        article.append(evidence);
+        const content = document.createElement("div");
+        evidence.append(content);
+        content.append(paragraph(`Task ID: ${task.id} · Origin: ${task.origin}`));
+        const upload = document.createElement("button");
+        upload.type = "button";
+        upload.textContent = "Upload to this Task";
+        upload.addEventListener("click", () => openTaskAttachments(task.id));
+        content.append(upload);
+        if (task.routine)
+          content.append(paragraph(`Routine: ${task.routine.text} · ${task.routine.id}`));
+        const addition = additionButton(task);
+        if (addition) content.append(addition);
         for (const run of task.runs) {
-          article.append(
+          content.append(
             paragraph(`Run ID: ${run.id}`),
+            ...(run.priorRunId ? [paragraph(`Explicit retry of Run: ${run.priorRunId}`)] : []),
             paragraph(
               run.state === "queued" && run.admissionClass && run.queuePosition
                 ? `Execution: queued · ${run.admissionClass} · position ${run.queuePosition}`
@@ -583,10 +888,7 @@ export async function showChat(
                 ),
               );
               for (const file of result.artifacts) {
-                const download = document.createElement("a");
-                download.href = `/api/bots/${encodeURIComponent(result.botId)}/runs/${encodeURIComponent(result.runId)}/artifacts/${encodeURIComponent(file.id)}`;
-                download.download = file.name.split("/").at(-1) as string;
-                download.textContent = `Download ${file.name} (${file.bytes} bytes)`;
+                const download = artifactDownload(result, file);
                 const row = document.createElement("p");
                 row.append(download);
                 section.append(row);
@@ -596,48 +898,51 @@ export async function showChat(
             paragraph(`Outcome: ${run.outcome?.kind ?? "unresolved"}`),
           );
           for (const question of run.questions)
-            article.append(
+            content.append(
               questionCard(
                 task.id,
                 run,
                 question,
-                detail.notices.find((notice) => notice.questionId === question.id),
+                detail.notices.find(
+                  (notice) => notice.runId === run.id && notice.questionId === question.id,
+                ),
               ),
             );
           for (const notice of detail.notices.filter(
             (notice) => notice.runId === run.id && notice.kind !== "question",
           ))
-            article.append(noticeCard(notice));
-          for (const delegation of run.delegations) article.append(delegationCard(run, delegation));
+            content.append(noticeCard(notice));
+          for (const delegation of run.delegations) content.append(delegationCard(run, delegation));
           if (run.outcome)
-            article.append(
+            content.append(
               paragraph(
                 `Final: ${run.outcome.reply}${run.outcome.truncated ? " [Excerpt; inspect Run evidence for the original.]" : ""}`,
               ),
             );
           if (run.state === "waiting")
-            article.append(
+            content.append(
+              paragraph(`Wait reason: ${run.waitReason ?? "unknown"}`),
               paragraph(
                 "Durable wait released this Bot's execution slot. Resumed work waits for the active Attempt to finish.",
               ),
             );
           const executing = run.attempts.find((attempt) => attempt.endedAt === null);
-          if (executing) article.append(paragraph(`Attempt ${executing.id} is executing.`));
+          if (executing) content.append(paragraph(`Attempt ${executing.id} is executing.`));
           if (run.state === "stopping")
-            article.append(
+            content.append(
               paragraph(
                 run.stopError ??
                   "Stopping until termination is confirmed. This Bot keeps its execution slot.",
               ),
             );
           if (run.state === "uncertain")
-            article.append(
+            content.append(
               paragraph(
                 "Final evidence is missing. This Run is held until you retry or close it. Unrelated Tasks can proceed.",
               ),
             );
           if (run.held)
-            article.append(
+            content.append(
               paragraph(
                 run.state === "waiting"
                   ? "Owned child outcome is uncertain. Inspect the child Task to retry or close its Run."
@@ -645,7 +950,7 @@ export async function showChat(
               ),
             );
           for (const late of run.lateEvidence ?? [])
-            article.append(paragraph(`Late result: ${late.text}`));
+            content.append(paragraph(`Late result: ${late.text}`));
           const details = document.createElement("details");
           details.append(
             Object.assign(document.createElement("summary"), {
@@ -671,25 +976,26 @@ export async function showChat(
             );
             if (input.outcome) details.append(paragraph(`Reply: ${input.outcome.reply}`));
           }
-          article.append(details);
+          content.append(details);
           const inspect = document.createElement("button");
           inspect.type = "button";
           inspect.textContent = "Inspect Run evidence";
           inspect.addEventListener("click", () => void showRunHistory(run.id));
-          article.append(inspect);
+          content.append(inspect);
           const runnable = ["queued", "active", "stopping", "waiting"].includes(run.state);
-          if (runnable) article.append(runButton("Stop run", "stop", task.id, run.id));
+          if (runnable) content.append(runButton("Stop run", "stop", task.id, run.id));
           if (run.state === "uncertain" || run.state === "closed") {
             const retryRun = runButton("Retry run", "retry", task.id, run.id);
             retryRun.disabled = availability !== "active";
-            article.append(retryRun);
+            content.append(retryRun);
           }
           if (run.state === "uncertain")
-            article.append(runButton("Close uncertain run", "close", task.id, run.id));
+            content.append(runButton("Close uncertain run", "close", task.id, run.id));
         }
         return article;
       }),
     );
+    works.setAttribute("aria-busy", "false");
     if (!locatedQuestion && location.hash) {
       const target = [
         ...works.querySelectorAll<HTMLElement>(
@@ -697,6 +1003,9 @@ export async function showChat(
         ),
       ].find((section) => location.hash === `#${encodeURIComponent(section.id)}`);
       if (target) {
+        openDetail("tasks");
+        const details = target.closest(".task-details") ?? target.querySelector(".task-details");
+        if (details instanceof HTMLDetailsElement) details.open = true;
         target.tabIndex = -1;
         target.focus();
         locatedQuestion = true;
@@ -719,6 +1028,110 @@ export async function showChat(
         "Thread state unavailable. Displayed results may be stale. Refresh to retry.";
   }
 }
+function sourceLabel(task: Task): string {
+  return task.origin === "routine"
+    ? "Routine"
+    : task.origin === "delegation"
+      ? "Delegation"
+      : "Chat";
+}
+function taskTitle(task: Task): string {
+  return (
+    task.routine?.text.slice(0, 100) ||
+    task.runs[0]?.inputs[0]?.text.slice(0, 100) ||
+    `Task ${task.id}`
+  );
+}
+function additionButton(task: Task): HTMLButtonElement | undefined {
+  const run = task.runs.at(-1);
+  if (!run || !["active", "queued", "waiting"].includes(run.state)) return;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Add instructions";
+  button.disabled = availability !== "active" || sending || !!pending || !hostAvailable;
+  button.addEventListener("click", () => {
+    const option = [...target.options].find((option) => option.value === task.id);
+    if (!option || option.dataset.runId !== run.id || option.dataset.unavailable) return;
+    target.value = task.id;
+    saveDraft();
+    showTarget();
+    text.focus();
+  });
+  return button;
+}
+function renderWorkCards(tasks: Task[]): void {
+  const surfaced = tasks.filter(
+    (task) =>
+      task.origin !== "chat" ||
+      task.runs.some(
+        (run) =>
+          run.questions.length ||
+          run.delegations.length ||
+          run.held ||
+          (run.outcome && ["cancelled", "failed", "uncertain"].includes(run.outcome.kind)) ||
+          ["uncertain", "stopping"].includes(run.state),
+      ),
+  );
+  const signature = JSON.stringify([
+    surfaced.map((task) => [
+      task.id,
+      taskTitle(task),
+      task.runs.map((run) => [run.state, run.questions, run.delegations, run.held, run.stopError]),
+    ]),
+    availability,
+    sending,
+    !!pending,
+    hostAvailable,
+  ]);
+  if (cards.dataset.cards === signature) return;
+  const focused = document.activeElement;
+  const answer =
+    focused instanceof HTMLTextAreaElement && cards.contains(focused) ? focused : undefined;
+  const answerCardId = answer?.closest("section")?.id;
+  const selection = answer ? ([answer.selectionStart, answer.selectionEnd] as const) : undefined;
+  cards.dataset.cards = signature;
+  cards.replaceChildren(
+    ...surfaced.map((task) => {
+      const article = document.createElement("article");
+      article.className = "task-card";
+      article.dataset.taskId = task.id;
+      const run = task.runs.at(-1);
+      article.append(
+        paragraph(`${sourceLabel(task)} · ${run?.state ?? "no Runs"}`),
+        paragraph(taskTitle(task)),
+      );
+      for (const decisionRun of task.runs) {
+        for (const question of decisionRun.questions)
+          article.append(questionCard(task.id, decisionRun, question, undefined, true));
+        for (const delegation of decisionRun.delegations)
+          if (delegation.approval)
+            article.append(approvalCard(delegation, delegation.approval, decisionRun, true));
+      }
+      if (run?.stopError) article.append(paragraph(run.stopError));
+      const inspect = document.createElement("button");
+      inspect.type = "button";
+      inspect.textContent = "View details";
+      inspect.addEventListener("click", () => {
+        openDetail("tasks");
+        const details = document.getElementById(`task-${task.id}`)?.querySelector("details");
+        if (details) {
+          details.open = true;
+          details.querySelector("summary")?.focus();
+        }
+      });
+      article.append(inspect);
+      const addition = additionButton(task);
+      if (addition) article.append(addition);
+      return article;
+    }),
+  );
+  if (answerCardId && selection) {
+    const restored = document.getElementById(answerCardId)?.querySelector("textarea");
+    restored?.focus({ preventScroll: true });
+    restored?.setSelectionRange(...selection);
+  }
+  restoreReadingPosition();
+}
 function delegationCard(run: Run, delegation: Delegation): HTMLElement {
   const section = document.createElement("section");
   section.dataset.delegationId = delegation.id;
@@ -730,6 +1143,10 @@ function delegationCard(run: Run, delegation: Delegation): HTMLElement {
     paragraph(`Originating Run ${delegation.originatingRunId}`),
     paragraph(`Selected text: ${delegation.text}`),
   );
+  const parent = document.createElement("a");
+  parent.href = `/?bot=${encodeURIComponent(delegation.sourceBotId)}#task-${encodeURIComponent(delegation.parentTaskId)}`;
+  parent.textContent = "Open owning Task";
+  section.append(parent);
   if (delegation.files.length > 0)
     section.append(
       paragraph(
@@ -738,10 +1155,15 @@ function delegationCard(run: Run, delegation: Delegation): HTMLElement {
           .join(", ")}`,
       ),
     );
-  if (delegation.childTaskId && delegation.childRunId)
+  if (delegation.childTaskId && delegation.childRunId) {
     section.append(
       paragraph(`Child Task ${delegation.childTaskId} · Child Run ${delegation.childRunId}`),
     );
+    const child = document.createElement("a");
+    child.href = `/?bot=${encodeURIComponent(delegation.targetBotId)}#task-${encodeURIComponent(delegation.childTaskId)}`;
+    child.textContent = "Open delegated Task";
+    section.append(child);
+  }
   if (delegation.revokedAt)
     section.append(
       paragraph(
@@ -752,10 +1174,18 @@ function delegationCard(run: Run, delegation: Delegation): HTMLElement {
   if (delegation.approval) section.append(approvalCard(delegation, delegation.approval, run));
   return section;
 }
-function approvalCard(source: Delegation, approval: Approval, run: Run): HTMLElement {
+function approvalCard(
+  source: Delegation,
+  approval: Approval,
+  run: Run,
+  inConversation = false,
+): HTMLElement {
   const section = document.createElement("section");
   section.dataset.approvalId = approval.id;
-  section.id = `approval-${approval.id}`;
+  section.id = inConversation
+    ? `card-approval-${run.id}-${approval.id}`
+    : `approval-${approval.id}`;
+  section.className = "decision-card";
   section.append(
     paragraph(`Action approval ${approval.id} · ${approval.state}`),
     paragraph(`Operation: ${approval.operation} · Target Bot: ${approval.targetBotId}`),
@@ -767,6 +1197,10 @@ function approvalCard(source: Delegation, approval: Approval, run: Run): HTMLEle
         : "Waits for your decision without a deadline.",
     ),
   );
+  for (const file of source.files)
+    section.append(
+      paragraph(`Selected file: ${file.kind} ${file.id} · ${file.filename} (${file.bytes} bytes)`),
+    );
   if (approval.decision) section.append(paragraph(`Owner decision: ${approval.decision}`));
   if (approval.state === "expired")
     section.append(
@@ -782,14 +1216,16 @@ function approvalCard(source: Delegation, approval: Approval, run: Run): HTMLEle
     );
   if (
     approval.state === "pending" &&
+    !source.revokedAt &&
     source.parentRunId === run.id &&
     ["active", "waiting"].includes(run.state)
   ) {
     for (const decision of ["approve", "deny"] as const) {
       const button = document.createElement("button");
       button.type = "button";
+      button.dataset.ownerDecision = "true";
       button.textContent = decision === "approve" ? "Approve action" : "Deny action";
-      button.disabled = sending || !!pending;
+      button.disabled = sending || !!pending || !hostAvailable;
       button.addEventListener("click", () => {
         if (!botId || sending || pending) return;
         pending = {
@@ -895,13 +1331,19 @@ function questionCard(
   run: Run,
   question: Question,
   notice: Notice | undefined,
+  inConversation = false,
 ): HTMLElement {
   const section = document.createElement("section");
   section.dataset.questionId = question.id;
-  section.id = `question-${question.id}`;
+  section.id = inConversation
+    ? `card-question-${run.id}-${question.id}`
+    : `question-${question.id}`;
+  section.className = "decision-card";
+  const draftKey = JSON.stringify([botId, run.id, question.id]);
   section.append(
     paragraph(`Question: ${question.text}`),
     paragraph(`Request: ${question.id} · ${question.state}`),
+    paragraph(`Source Task ${taskId} · Run ${run.id}`),
   );
   if (notice) {
     section.dataset.noticeState = notice.state;
@@ -919,12 +1361,19 @@ function questionCard(
     input.setAttribute("aria-label", `Answer to ${question.text}`);
     input.required = true;
     input.maxLength = 32000;
-    input.value = answerDrafts.get(question.id) ?? "";
-    input.addEventListener("input", () => answerDrafts.set(question.id, input.value));
+    input.value = answerDrafts.get(draftKey) ?? "";
+    input.dataset.answerDraft = draftKey;
+    input.addEventListener("input", () => {
+      answerDrafts.set(draftKey, input.value);
+      for (const other of document.querySelectorAll<HTMLTextAreaElement>("[data-answer-draft]"))
+        if (other !== input && other.dataset.answerDraft === draftKey) other.value = input.value;
+    });
     const button = document.createElement("button");
     button.type = "submit";
+    button.dataset.ownerDecision = "true";
     button.textContent = "Answer question";
-    input.disabled = button.disabled = sending || !!pending;
+    input.disabled = sending || !!pending;
+    button.disabled = sending || !!pending || !hostAvailable;
     form.append(input, button);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -963,17 +1412,28 @@ function runButton(
   });
   return button;
 }
-async function submit(newTask = false): Promise<void> {
-  if (sending || !botId) return;
+async function submit(): Promise<void> {
+  if (sending || !hostAvailable || (!pending && (!botId || availability !== "active"))) return;
+  if (
+    !pending &&
+    (!text.value.trim() ||
+      !form.reportValidity() ||
+      target.selectedOptions[0]?.dataset.unavailable === "true")
+  )
+    return;
   sending = true;
   try {
     if (!pending) {
+      if (!botId) return;
       const draft: Pending = {
         botId,
         requestId: crypto.randomUUID(),
         text: text.value,
-        operation: newTask ? "new-task" : target.value ? "task" : "message",
-        ...(target.value && !newTask ? { taskId: target.value } : {}),
+        draftRevision: readDraft(botId).revision,
+        operation: target.value === "new-task" ? "new-task" : target.value ? "task" : "message",
+        ...(target.value && target.value !== "new-task"
+          ? { taskId: target.value, runId: target.selectedOptions[0]?.dataset.runId }
+          : {}),
         ...(selectedBackgroundIds().length ? { selectedMessageIds: selectedBackgroundIds() } : {}),
       };
       localStorage.setItem(pendingKey, JSON.stringify(draft));
@@ -1027,6 +1487,9 @@ async function submit(newTask = false): Promise<void> {
             : {
                 requestId: admitted.requestId,
                 text: admitted.text,
+                ...(admitted.operation === "task" && admitted.runId
+                  ? { expectedRunId: admitted.runId }
+                  : {}),
                 ...(admitted.selectedMessageIds
                   ? { selectedMessageIds: admitted.selectedMessageIds }
                   : {}),
@@ -1046,6 +1509,11 @@ async function submit(newTask = false): Promise<void> {
       return;
     }
     if (!record(result) || result.requestId !== admitted.requestId) throw new Error();
+    if (
+      admitted.operation === "task" &&
+      (result.taskId !== admitted.taskId || (admitted.runId && result.runId !== admitted.runId))
+    )
+      throw new Error();
     if (admitted.operation === "repair") {
       if (result.state !== "mapped" && result.state !== "repairable") throw new Error();
     } else if (admitted.operation === "resend") {
@@ -1063,18 +1531,34 @@ async function submit(newTask = false): Promise<void> {
       throw new Error();
     localStorage.removeItem(pendingKey);
     pending = undefined;
-    if (admitted.questionId) answerDrafts.delete(admitted.questionId);
+    if (admitted.questionId)
+      answerDrafts.delete(JSON.stringify([admitted.botId, admitted.runId, admitted.questionId]));
     if (admitted.selectedMessageIds?.length) clearBackgroundSelection();
     if (
-      admitted.botId === botId &&
       !runOperation &&
       admitted.operation !== "reset" &&
       admitted.operation !== "answer" &&
       admitted.operation !== "decision" &&
       admitted.operation !== "resend" &&
       admitted.operation !== "repair"
-    )
-      text.value = "";
+    ) {
+      const draft = readDraft(admitted.botId);
+      if (draft.revision === admitted.draftRevision) {
+        const nextTarget = draft.target === "new-task" ? "" : draft.target;
+        writeDraft(admitted.botId, {
+          ...draft,
+          text: "",
+          target: nextTarget,
+          revision: crypto.randomUUID(),
+        });
+        if (admitted.botId === botId) {
+          text.value = "";
+          target.value = nextTarget;
+          growDraft();
+          showTarget();
+        }
+      }
+    }
     notice.textContent =
       admitted.operation === "repair"
         ? result.state === "mapped"
@@ -1090,7 +1574,7 @@ async function submit(newTask = false): Promise<void> {
                 ? `Chat background boundary is ${result.backgroundBoundary}. Existing Runs keep their captured background.`
                 : runOperation
                   ? `Recorded ${admitted.operation} for Run ${result.runId}. Refresh after the Run state changes.`
-                  : `Admitted to Task ${result.taskId}, Run ${result.runId}. Await its durable outcome.`;
+                  : "Message sent.";
     await showChat(botId);
   } catch {
     notice.textContent = pending
@@ -1103,12 +1587,87 @@ async function submit(newTask = false): Promise<void> {
 }
 form.addEventListener("submit", (event) => {
   event.preventDefault();
-  void submit((event.submitter as HTMLElement | null)?.id === "new-task");
+  if (!pending) void submit();
 });
 retry.addEventListener("click", () => void submit());
+const resetConfirmation = element<HTMLDialogElement>("reset-confirmation");
 resetBackground.addEventListener("click", () => {
-  if (!botId || sending || pending) return;
+  if (resetBackground.disabled) return;
+  resetConfirmation.showModal();
+  element("cancel-reset").focus();
+});
+element("cancel-reset").addEventListener("click", () => resetConfirmation.close());
+resetConfirmation.addEventListener("close", () => element("bot-menu").focus());
+element("confirm-reset").addEventListener("click", () => {
+  if (!botId || !hostAvailable || availability !== "active" || sending || pending) return;
+  resetConfirmation.close();
   pending = { botId, requestId: crypto.randomUUID(), operation: "reset", text: "" };
   localStorage.setItem(pendingKey, JSON.stringify(pending));
   void submit();
 });
+
+function renderFileDeliveries(tasks: Task[]): void {
+  const list = element("file-deliveries");
+  const results = tasks.flatMap((task) => task.runs.flatMap((run) => run.selectedResults));
+  const signature = JSON.stringify(results);
+  if (list.dataset.results === signature) return;
+  list.dataset.results = signature;
+  list.replaceChildren();
+  for (const result of results) {
+    for (const file of result.artifacts) {
+      const row = document.createElement("article");
+      row.append(
+        paragraph(
+          `Bot: ${result.botId} · Task: ${result.taskId} · Run: ${result.runId}${result.delegationId ? ` · Delegation: ${result.delegationId}` : ""}${result.originatingRunId ? ` · Originating Run: ${result.originatingRunId}` : ""}`,
+        ),
+      );
+      const taskLink = document.createElement("button");
+      taskLink.type = "button";
+      taskLink.textContent = "View producing Task";
+      taskLink.addEventListener("click", () => showProducingTask(result));
+      const runLink = document.createElement("button");
+      runLink.type = "button";
+      runLink.textContent = "Inspect producing Run";
+      runLink.addEventListener("click", () => void showRunHistory(result.runId));
+      row.append(artifactDownload(result, file), taskLink, runLink);
+      if (result.delegationId) {
+        const delegation = document.createElement("button");
+        delegation.type = "button";
+        delegation.textContent = `View delegation ${result.delegationId}`;
+        delegation.addEventListener("click", () => showProducingTask(result, result.delegationId));
+        row.append(delegation);
+      }
+      list.append(row);
+    }
+  }
+  if (!list.childElementCount)
+    list.append(paragraph("No delivered files in the loaded Tasks and Runs."));
+}
+
+function artifactDownload(
+  result: SelectedResult,
+  file: SelectedResult["artifacts"][number],
+): HTMLAnchorElement {
+  const link = document.createElement("a");
+  link.href = `/api/bots/${encodeURIComponent(result.botId)}/runs/${encodeURIComponent(result.runId)}/artifacts/${encodeURIComponent(file.id)}`;
+  link.download = file.name.split("/").at(-1) ?? file.name;
+  link.textContent = `Download ${file.name} (${file.bytes} bytes)`;
+  return link;
+}
+
+function showProducingTask(result: SelectedResult, delegationId: string | null = null): void {
+  openDetail("tasks");
+  const task = document.getElementById(`task-${result.taskId}`);
+  const details = task?.querySelector("details");
+  if (!details) return;
+  details.open = true;
+  const destination = delegationId
+    ? [...details.querySelectorAll<HTMLElement>("[data-delegation-id]")].find(
+        (node) => node.dataset.delegationId === delegationId,
+      )
+    : details.querySelector("summary");
+  if (destination) {
+    destination.tabIndex = -1;
+    destination.focus();
+  }
+}
