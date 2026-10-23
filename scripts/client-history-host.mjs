@@ -38,7 +38,7 @@ const service = await startPiService(async (request) => {
     return { text: markdownOriginal };
   }
   if (latest.includes("Panel reflow reply"))
-    return { text: "A line of conversation remains in place while the panel changes. ".repeat(9) };
+    return { text: "A line of conversation remains in place while the panel changes. ".repeat(30) };
   if (latest.includes("Read wide original")) return { text: wideOriginal };
   if (latest.includes("Read long original")) return { text: longOriginal };
   return { text: `Remembered: ${latest}` };

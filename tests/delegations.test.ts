@@ -522,8 +522,10 @@ it("holds uncertain approved child effects instead of automatically delegating a
   );
   expect((await post(path, decision)).status).toBe(202);
   await host.reconcile();
-  await vi.waitFor(async () =>
-    expect((await get(`/api/bots/${targetId}/thread`)).tasks[0].runs[0].state).toBe("active"),
+  await vi.waitFor(
+    async () =>
+      expect((await get(`/api/bots/${targetId}/thread`)).tasks[0].runs[0].state).toBe("active"),
+    { timeout: 5_000 },
   );
   await childReady.promise;
   const child = (await get(`/api/bots/${targetId}/thread`)).tasks[0].runs[0];

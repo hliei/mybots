@@ -1,3 +1,11 @@
+const tones = ["#b8a1ee", "#8bd6c3", "#e7ba85", "#91b6df"];
+
+export function showAvatar(element: HTMLElement, name: string, id: string): void {
+  element.textContent = Array.from(name.trim())[0]?.toLocaleUpperCase() ?? "?";
+  const tone = Array.from(id).reduce((sum, character) => sum + (character.codePointAt(0) ?? 0), 0);
+  element.style.backgroundColor = tones[tone % tones.length] as string;
+}
+
 type Detail = "overview" | "files" | "tasks" | "search";
 type Settings = "configuration" | "memory" | "skills" | "collaboration" | "routines" | "connection";
 const node = (id: string) => document.getElementById(id) as HTMLElement;
@@ -76,8 +84,12 @@ export function setShellBot(bot: { id: string; name: string } | undefined): void
     "aria-label",
     bot ? `Bot details: ${bot.name}` : "Select a Bot",
   );
-  (node("bot-identity").querySelector(".avatar") as HTMLElement).textContent =
-    bot?.name.slice(0, 1).toLocaleUpperCase() ?? "";
+  const avatar = node("bot-identity").querySelector(".avatar") as HTMLElement;
+  if (bot) showAvatar(avatar, bot.name, bot.id);
+  else avatar.textContent = "";
+  (node("message-text") as HTMLTextAreaElement).placeholder = bot
+    ? `Message ${bot.name}…`
+    : "Message your Bot…";
   node("detail-bot").textContent = node("settings-bot").textContent =
     bot?.name ?? "No Bot selected";
   node("settings-empty").hidden = !!bot;

@@ -227,6 +227,7 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
       .textContent();
     const target = await page.locator("#chat-works article").nth(1).getAttribute("data-task-id");
     await showFeature(page, "chat");
+    await page.getByRole("button", { name: "Message actions", exact: true }).click();
     await page.getByLabel("Input target").selectOption(target as string);
     await showFeature(page, "chat");
     await page.getByLabel("Message", { exact: true }).fill("Follow-up");
@@ -540,11 +541,7 @@ test("pair, inspect execution, reload and return after a fresh built Host starts
     );
     await page.getByLabel("Memory index", { exact: true }).fill("Stale browser draft.");
     await showFeature(page, "overview");
-    const memoryBot = (
-      await page.locator("#selected-bot p").filter({ hasText: "Bot ID:" }).innerText()
-    )
-      .replace("Bot ID: ", "")
-      .trim();
+    const memoryBot = await page.locator("#selected-bot").getAttribute("data-bot-id");
     expect(
       await page.evaluate(async (botId) => {
         const current = await fetch(`/api/bots/${botId}/memory`);

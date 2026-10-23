@@ -62,6 +62,19 @@ for (const action of ["allow", "approve", "deny", "expire"] as const) {
       });
       expect(created.status()).toBe(201);
       const writerId = ((await created.json()) as { bot: { id: string } }).bot.id;
+      if (action === "approve") {
+        const duplicate = await page.request.post(`${ready.url}/api/bots`, {
+          headers: { Authorization: `Bearer ${ready.credential}` },
+          data: {
+            requestId: "browser-other-writer",
+            name: "Writer",
+            instructions: "An independent Bot with the same name.",
+            model: { provider: "deepseek", id: "deepseek-chat" },
+            tools: ["read"],
+          },
+        });
+        expect(duplicate.status()).toBe(201);
+      }
       await page.goto(ready.url);
       await page.getByLabel("Connection credential").fill(ready.credential);
       await page.getByRole("button", { name: "Pair with Host" }).click();
@@ -111,7 +124,13 @@ for (const action of ["allow", "approve", "deny", "expire"] as const) {
       } else {
         const card = page.locator('#work-cards [data-approval-id="browser-child"]');
         await expect(card).toContainText("Operation: delegate");
-        await expect(card).toContainText(writerId);
+        await expect(card).toContainText("Target Bot: Writer");
+        expect(await card.innerText()).not.toContain(writerId);
+        if (action === "approve")
+          await expect(card).toContainText(`Target Bot: Writer · ${writerId.slice(0, 8)}`);
+        await card.getByText("Target details", { exact: true }).click();
+        await expect(card.getByText(`Target Bot ID: ${writerId}`, { exact: true })).toBeVisible();
+        await card.getByText("Target details", { exact: true }).click();
         await expect(card).toContainText("Inputs: Selected browser text");
         await showFeature(page, "tasks");
         await expect(card.getByRole("button", { name: "Approve action" })).toBeVisible();
@@ -157,7 +176,7 @@ for (const action of ["allow", "approve", "deny", "expire"] as const) {
         }
       }
       await showFeature(page, "chat");
-      await page.getByRole("button", { name: "Select Writer" }).click();
+      await page.locator(`[data-bot-id="${writerId}"] .choose-bot`).click();
       if (action === "allow" || action === "approve") {
         await expect(page.locator("#chat-works")).toContainText("Origin: delegation");
         await expect(page.locator("#chat-works")).toContainText("Child Task");

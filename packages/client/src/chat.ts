@@ -514,7 +514,7 @@ function resetTargets(): void {
   target.replaceChildren(
     Object.assign(document.createElement("option"), {
       value: "",
-      textContent: "Thread — continue chat",
+      textContent: "Continue conversation",
     }),
     Object.assign(document.createElement("option"), {
       value: "new-task",
@@ -543,6 +543,8 @@ document.addEventListener("background-selection", (event) => {
 target.addEventListener("change", () => {
   saveDraft();
   showTarget();
+  closeComposerMenu();
+  text.focus();
 });
 actions.addEventListener("click", () => {
   menu.hidden = !menu.hidden;
@@ -596,6 +598,8 @@ text.addEventListener("keydown", (event) => {
   event.preventDefault();
   form.requestSubmit();
 });
+let collaborationBots: Detail["collaboration"] = [];
+let taskLabels = new Map<string, string>();
 let botId: string | undefined;
 let availability: "active" | "disabled" | "deleted" = "active";
 let version = 0;
@@ -653,6 +657,7 @@ export async function showChat(
   if (!selectedBotId) availability = "active";
   else if (next) availability = next;
   if (botId !== selectedBotId) {
+    taskLabels.clear();
     works.setAttribute("aria-busy", "true");
     renderFileDeliveries([]);
     void showAttachments(undefined, []);
@@ -675,7 +680,7 @@ export async function showChat(
     if (draft?.target && draft.target !== "new-task") {
       const option = Object.assign(document.createElement("option"), {
         value: draft.target,
-        textContent: `Task ${draft.target} · unavailable — checking target`,
+        textContent: "Previous task unavailable — checking target",
       });
       option.dataset.unavailable = "true";
       if (draft.runId) option.dataset.runId = draft.runId;
@@ -699,7 +704,8 @@ export async function showChat(
   const current = ++version;
   controls();
   if (pending && !sending)
-    notice.textContent = `Response unconfirmed for Bot ${pending.botId}. Retry the saved input to recover its Task/Run association.`;
+    notice.textContent =
+      "Response unconfirmed. Retry the saved input to check whether it was received.";
   else if (availability !== "active")
     notice.textContent =
       availability === "disabled"
@@ -722,6 +728,18 @@ export async function showChat(
     const detail: unknown = await response.json();
     if (!isDetail(detail)) throw new Error();
     if (current !== version) return;
+    const summaries = detail.tasks.map(taskSummary);
+    const counts = new Map<string, number>();
+    for (const summary of summaries) counts.set(summary, (counts.get(summary) ?? 0) + 1);
+    taskLabels = new Map(
+      detail.tasks.map((task, index) => {
+        const summary = summaries[index] as string;
+        return [
+          task.id,
+          (counts.get(summary) ?? 0) > 1 ? `${summary} · ${task.id.slice(0, 8)}` : summary,
+        ];
+      }),
+    );
     const executingChat = detail.tasks
       .filter((task) => task.origin === "chat")
       .flatMap((task) =>
@@ -729,6 +747,7 @@ export async function showChat(
           .filter((run) => ["active", "stopping"].includes(run.state))
           .map((run) => ({ taskId: task.id, runId: run.id, state: run.state })),
       );
+    collaborationBots = detail.collaboration;
     chatExecution = executingChat.length === 1 ? executingChat[0] : undefined;
     const stopSignature = JSON.stringify(chatExecution ?? null);
     if (chatStop.dataset.target !== stopSignature) {
@@ -742,12 +761,14 @@ export async function showChat(
           chatExecution.runId,
         );
         button.dataset.runId = chatExecution.runId;
-        button.title = `Task ${chatExecution.taskId} · Run ${chatExecution.runId}`;
-        if (chatExecution.state === "stopping") button.textContent = "Stopping current chat…";
-        chatStop.append(
-          button,
-          paragraph(`Task ${chatExecution.taskId} · Run ${chatExecution.runId}`),
-        );
+        button.title = "Stop the current conversation response";
+        button.textContent = "Stop response";
+        button.setAttribute("aria-label", "Stop current chat Run");
+        if (chatExecution.state === "stopping") {
+          button.textContent = "Stopping current chat…";
+          button.setAttribute("aria-label", "Stopping current chat…");
+        }
+        chatStop.append(button);
       }
     }
     controls();
@@ -769,7 +790,7 @@ export async function showChat(
       if (run && ["queued", "active", "waiting"].includes(run.state)) {
         const option = Object.assign(document.createElement("option"), {
           value: task.id,
-          textContent: `Task ${task.id}`,
+          textContent: taskTitle(task),
         });
         option.dataset.runId = run.id;
         target.append(option);
@@ -781,7 +802,7 @@ export async function showChat(
         option?.remove();
         option = Object.assign(document.createElement("option"), {
           value: priorTarget,
-          textContent: `Task ${priorTarget} · unavailable — select a target again`,
+          textContent: "Previous task unavailable — select a target again",
         });
         option.dataset.unavailable = "true";
         if (priorRun) option.dataset.runId = priorRun;
@@ -802,7 +823,7 @@ export async function showChat(
     if (current !== version) return;
     await showAttachments(
       botId,
-      detail.tasks.map((task) => task.id),
+      detail.tasks.map((task) => ({ id: task.id, name: taskTitle(task) })),
     );
     if (current !== version) return;
     renderFileDeliveries(detail.tasks);
@@ -1036,10 +1057,13 @@ function sourceLabel(task: Task): string {
       : "Chat";
 }
 function taskTitle(task: Task): string {
+  return taskLabels.get(task.id) ?? taskSummary(task);
+}
+function taskSummary(task: Task): string {
   return (
     task.routine?.text.slice(0, 100) ||
     task.runs[0]?.inputs[0]?.text.slice(0, 100) ||
-    `Task ${task.id}`
+    "Untitled task"
   );
 }
 function additionButton(task: Task): HTMLButtonElement | undefined {
@@ -1174,6 +1198,14 @@ function delegationCard(run: Run, delegation: Delegation): HTMLElement {
   if (delegation.approval) section.append(approvalCard(delegation, delegation.approval, run));
   return section;
 }
+function collaborationName(id: string): string {
+  const name = collaborationBots.find((bot) => bot.targetBotId === id)?.name;
+  return !name
+    ? `Unavailable Bot · ${id.slice(0, 8)}`
+    : collaborationBots.filter((bot) => bot.name === name).length > 1
+      ? `${name} · ${id.slice(0, 8)}`
+      : name;
+}
 function approvalCard(
   source: Delegation,
   approval: Approval,
@@ -1187,10 +1219,18 @@ function approvalCard(
     : `approval-${approval.id}`;
   section.className = "decision-card";
   section.append(
-    paragraph(`Action approval ${approval.id} · ${approval.state}`),
-    paragraph(`Operation: ${approval.operation} · Target Bot: ${approval.targetBotId}`),
+    paragraph(
+      inConversation
+        ? `Action approval · ${approval.state}`
+        : `Action approval ${approval.id} · ${approval.state}`,
+    ),
+    paragraph(
+      `Operation: ${approval.operation} · Target Bot: ${inConversation ? collaborationName(approval.targetBotId) : approval.targetBotId}`,
+    ),
     paragraph(`Inputs: ${approval.text}`),
-    paragraph(`Source Task ${source.parentTaskId} · Run ${source.parentRunId}`),
+    ...(!inConversation
+      ? [paragraph(`Source Task ${source.parentTaskId} · Run ${source.parentRunId}`)]
+      : []),
     paragraph(
       approval.deadline
         ? `Deadline: ${approval.deadline}`
@@ -1199,8 +1239,20 @@ function approvalCard(
   );
   for (const file of source.files)
     section.append(
-      paragraph(`Selected file: ${file.kind} ${file.id} · ${file.filename} (${file.bytes} bytes)`),
+      paragraph(
+        `Selected file: ${inConversation ? "" : `${file.kind} ${file.id} · `}${file.filename} (${file.bytes} bytes)`,
+      ),
     );
+  if (inConversation) {
+    const details = document.createElement("details");
+    details.className = "technical-details";
+    const summary = document.createElement("summary");
+    summary.textContent = "Target details";
+    details.append(summary, paragraph(`Target Bot ID: ${approval.targetBotId}`));
+    for (const file of source.files)
+      details.append(paragraph(`Selected file ID: ${file.kind} ${file.id} · ${file.filename}`));
+    section.append(details);
+  }
   if (approval.decision) section.append(paragraph(`Owner decision: ${approval.decision}`));
   if (approval.state === "expired")
     section.append(
@@ -1342,8 +1394,8 @@ function questionCard(
   const draftKey = JSON.stringify([botId, run.id, question.id]);
   section.append(
     paragraph(`Question: ${question.text}`),
-    paragraph(`Request: ${question.id} · ${question.state}`),
-    paragraph(`Source Task ${taskId} · Run ${run.id}`),
+    paragraph(inConversation ? question.state : `Request: ${question.id} · ${question.state}`),
+    ...(!inConversation ? [paragraph(`Source Task ${taskId} · Run ${run.id}`)] : []),
   );
   if (notice) {
     section.dataset.noticeState = notice.state;
@@ -1567,13 +1619,13 @@ async function submit(): Promise<void> {
         : admitted.operation === "resend"
           ? `Notice ${admitted.noticeId} will be sent again. Work outcome stays unchanged.`
           : admitted.operation === "decision"
-            ? `Decision recorded for action ${admitted.approval?.id}. The same Run continues from correlated evidence.`
+            ? "Decision recorded. Work will continue when ready."
             : admitted.operation === "answer"
-              ? `Answer recorded for question ${admitted.questionId}. The same Run continues when capacity is available.`
+              ? "Answer recorded. Work will continue when ready."
               : admitted.operation === "reset"
-                ? `Chat background boundary is ${result.backgroundBoundary}. Existing Runs keep their captured background.`
+                ? "Chat background reset. Earlier messages remain in history."
                 : runOperation
-                  ? `Recorded ${admitted.operation} for Run ${result.runId}. Refresh after the Run state changes.`
+                  ? "Request recorded. Waiting for the work status to update."
                   : "Message sent.";
     await showChat(botId);
   } catch {
@@ -1616,7 +1668,12 @@ function renderFileDeliveries(tasks: Task[]): void {
   for (const result of results) {
     for (const file of result.artifacts) {
       const row = document.createElement("article");
-      row.append(
+      const details = document.createElement("details");
+      details.className = "technical-details";
+      const summary = document.createElement("summary");
+      summary.textContent = "File source";
+      details.append(summary);
+      details.append(
         paragraph(
           `Bot: ${result.botId} · Task: ${result.taskId} · Run: ${result.runId}${result.delegationId ? ` · Delegation: ${result.delegationId}` : ""}${result.originatingRunId ? ` · Originating Run: ${result.originatingRunId}` : ""}`,
         ),
@@ -1629,13 +1686,13 @@ function renderFileDeliveries(tasks: Task[]): void {
       runLink.type = "button";
       runLink.textContent = "Inspect producing Run";
       runLink.addEventListener("click", () => void showRunHistory(result.runId));
-      row.append(artifactDownload(result, file), taskLink, runLink);
+      row.append(artifactDownload(result, file), taskLink, runLink, details);
       if (result.delegationId) {
         const delegation = document.createElement("button");
         delegation.type = "button";
         delegation.textContent = `View delegation ${result.delegationId}`;
         delegation.addEventListener("click", () => showProducingTask(result, result.delegationId));
-        row.append(delegation);
+        details.append(delegation);
       }
       list.append(row);
     }

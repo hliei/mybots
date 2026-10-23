@@ -37,6 +37,9 @@ test("desktop shell pairs, sends to a real Thread and returns focus from shared 
     await expect(
       page.getByRole("button", { name: "Bot details: Personal", exact: true }),
     ).toBeVisible();
+    await expect(page.locator("#thread-messages")).not.toContainText("Original Thread evidence");
+    await expect(page.getByLabel("Input target", { exact: true })).toBeHidden();
+    await expect(page.locator("#chat-stop")).not.toContainText("Task ");
     await page.getByLabel("Message", { exact: true }).fill("Desktop shell round trip");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     host.send("complete");
@@ -44,17 +47,24 @@ test("desktop shell pairs, sends to a real Thread and returns focus from shared 
       "Final: Desktop shell round trip",
     );
     await expect(page.locator("#chat-message")).toHaveText("Message sent.");
+    const reply = page.locator("#thread-messages .assistant").last();
+    await expect(reply.locator("time")).toBeHidden();
+    await expect(page.locator("#thread-messages")).not.toContainText("Original Thread evidence");
+    const userBubble = await page.locator("#thread-messages .user").last().boundingBox();
+    expect(userBubble?.width).toBeLessThan(400);
+    await reply.getByRole("button", { name: "Copy message", exact: true }).focus();
+    await expect(reply.locator(".message-tools")).toHaveCSS("opacity", "1");
     await captureDesktopState(page, info, "conversation");
-    await expect(page.locator(".sidebar")).toHaveCSS("background-color", "rgb(13, 13, 13)");
+    await expect(page.locator(".sidebar")).toHaveCSS("background-color", "rgb(30, 30, 30)");
     await expect(page.locator(".message.assistant").last()).toHaveCSS(
       "background-color",
-      "rgb(27, 27, 27)",
+      "rgb(32, 32, 32)",
     );
     await expect(page.locator(".message.user").last()).toHaveCSS(
       "background-color",
-      "rgb(54, 54, 54)",
+      "rgb(92, 92, 92)",
     );
-    await expect(page.locator(".message-content").last()).toHaveCSS("font-size", "17px");
+    await expect(page.locator(".message-content").last()).toHaveCSS("font-size", "15.5px");
     await page.getByRole("button", { name: "Search conversation", exact: true }).press("Enter");
     await page.getByLabel("Search original history").fill("no-matching-desktop-original");
     await page.getByRole("button", { name: "Search history", exact: true }).click();
@@ -67,6 +77,26 @@ test("desktop shell pairs, sends to a real Thread and returns focus from shared 
     await page.getByRole("button", { name: "Close details", exact: true }).click();
     await page.getByRole("button", { name: "Bot details: Personal", exact: true }).click();
     await expect(page.getByRole("complementary", { name: "Bot details" })).toBeVisible();
+    const configurationSummary = page.locator("#selected-bot details > summary");
+    await configurationSummary.focus();
+    await configurationSummary.press("Space");
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          const observer = new MutationObserver(() => {
+            observer.disconnect();
+            requestAnimationFrame(() => resolve());
+          });
+          observer.observe(document.getElementById("selected-bot") as HTMLElement, {
+            childList: true,
+          });
+          document.getElementById("refresh")?.click();
+        }),
+    );
+    await expect(configurationSummary).toBeFocused();
+    await expect(page.locator("#selected-bot details")).toHaveAttribute("open", "");
+    await configurationSummary.press("Space");
+    await expect(page.locator("#selected-bot details")).not.toHaveAttribute("open");
     await page.getByRole("button", { name: "Files", exact: true }).click();
     await expect(page.locator("#attachments")).toBeVisible();
     await captureDesktopState(page, info, "files");

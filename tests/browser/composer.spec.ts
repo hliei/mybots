@@ -87,7 +87,8 @@ test("Tasks expose compact source cards, explicit additions and the active chat 
   await task.locator("summary").first().click();
   await expect(task.getByRole("button", { name: "Inspect Run evidence" })).toBeVisible();
   await task.getByRole("button", { name: "Add instructions", exact: true }).click();
-  await expect(page.locator("#composer-target")).toContainText(taskId as string);
+  await expect(page.locator("#composer-target")).toContainText("Add to Inspect this session");
+  await expect(page.locator("#composer-target")).not.toContainText(taskId as string);
   await expect(stop).toBeHidden();
   await page.getByLabel("Message", { exact: true }).fill("Targeted active instructions");
   const added = page.waitForResponse((response) =>
@@ -193,6 +194,7 @@ for (const operation of ["message", "new-task", "task"] as const) {
       await draft.press("Enter");
       const { taskId } = await (await first).json();
       await expect(draft).toHaveValue("");
+      await page.getByRole("button", { name: "Message actions", exact: true }).click();
       await page.getByLabel("Input target").selectOption(taskId);
     }
     await draft.fill("Admit just once");
@@ -285,8 +287,10 @@ test("composer shows independent work and preserves a stale explicit target", as
   await draft.press("Enter");
   const { taskId, runId } = await (await admission).json();
   await expect(draft).toHaveValue("");
+  await page.getByRole("button", { name: "Message actions", exact: true }).click();
   await page.getByLabel("Input target").selectOption(taskId);
-  await expect(page.locator("#composer-target")).toContainText(taskId);
+  await expect(page.locator("#composer-target")).toContainText("Add to Independent objective");
+  await expect(page.locator("#composer-target")).not.toContainText(taskId);
   await draft.fill("Specific queued addition");
   const added = page.waitForResponse((response) =>
     response.url().endsWith(`/tasks/${taskId}/inputs`),
@@ -452,4 +456,47 @@ test("confirmed admission preserves newer text even when browser draft storage f
   release.resolve();
   await expect(page.locator("#chat-message")).toHaveText("Message sent.");
   await expect(draft).toHaveValue("Newer unsaved draft");
+});
+
+test("repeated Task instructions remain distinguishable in chat and attachment destinations", async ({
+  page,
+  runtime: { ready },
+}) => {
+  const tasks: string[] = [];
+  for (const requestId of ["repeated-first", "repeated-second"]) {
+    const response = await page.request.post(`${ready.url}/api/bots/personal/thread/tasks`, {
+      headers: { Authorization: `Bearer ${ready.credential}` },
+      data: { requestId, text: "Repeated objective" },
+    });
+    expect(response.status()).toBe(202);
+    tasks.push(((await response.json()) as { taskId: string }).taskId);
+  }
+  await page.goto(ready.url);
+  await page.getByLabel("Connection credential").fill(ready.credential);
+  await page.getByRole("button", { name: "Pair with Host" }).click();
+  await page.getByRole("button", { name: "Select Personal", exact: true }).click();
+  await page.getByRole("button", { name: "Message actions", exact: true }).click();
+  const labels = await Promise.all(
+    tasks.map((id) => page.locator(`#input-target option[value="${id}"]`).textContent()),
+  );
+  expect(labels[0]).toContain("Repeated objective");
+  expect(labels[1]).toContain("Repeated objective");
+  expect(labels[0]).not.toBe(labels[1]);
+  await page.getByLabel("Input target", { exact: true }).selectOption(tasks[0] as string);
+  await expect(page.locator("#composer-target")).toContainText(labels[0] as string);
+  await page.getByLabel("Message", { exact: true }).fill("Only the first occurrence");
+  const admitted = page.waitForResponse((response) =>
+    response.url().endsWith(`/tasks/${tasks[0]}/inputs`),
+  );
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  expect(await (await admitted).json()).toMatchObject({ taskId: tasks[0] });
+  await page.getByRole("button", { name: "Bot details: Personal", exact: true }).click();
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  for (const [index, id] of tasks.entries()) {
+    await expect(page.locator(`#attachment-task option[value="${id}"]`)).toHaveText(
+      labels[index] as string,
+    );
+  }
+  await page.getByLabel("Attachment Task", { exact: true }).selectOption(tasks[1] as string);
+  await expect(page.locator("#attachment-scope")).toContainText(labels[1] as string);
 });
