@@ -1,5 +1,6 @@
 import type { Bot, ChatMessage, ChatView, ModelChoice } from "@mybots/contracts";
 import { request } from "./api.ts";
+import { historyBrowser } from "./history.ts";
 import { markdown } from "./markdown.ts";
 import { restoreReadingPosition, selectReadingBot } from "./reading-position.ts";
 import { resourceEditors } from "./resources.ts";
@@ -116,6 +117,7 @@ function choose(bot: Bot): void {
     ? ""
     : "Choose an available model in Bot settings before sending.";
   node<HTMLButtonElement>("edit-bot").disabled = false;
+  node<HTMLButtonElement>("open-history").disabled = false;
   for (const row of node("bot-list").children)
     row.classList.toggle("selected", (row as HTMLElement).dataset.botId === bot.id);
   events = new EventSource(`/api/bots/${bot.id}/events`);
@@ -252,6 +254,7 @@ node("stop").addEventListener("click", () => {
   if (selected) void request(`bots/${selected.id}/stop`, {}).catch(report);
 });
 resourceEditors(() => selected);
+historyBrowser(() => selected);
 void refresh().catch(() => {
   node("pairing").hidden = false;
   node("workspace").hidden = true;

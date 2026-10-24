@@ -11,8 +11,10 @@ import {
   LiveDoc,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { historyTools } from "./history.ts";
 
 export { computerTools } from "./computer-tools.ts";
+export { readHistory, searchHistory } from "./history.ts";
 export { resourceContext, resourceTools } from "./resource-tools.ts";
 
 export interface HostModel {
@@ -60,6 +62,13 @@ export async function openAgent(
   const registry = createRegistry();
   for (const extension of extensions) registry.install(extension);
   let harness: Harness;
+  registry.install(
+    historyTools(async (id, context) => {
+      const chat = await harness.conversation(id, context);
+      if (!chat) throw new Error("Conversation unavailable");
+      return chat;
+    }),
+  );
   registry.install({
     name: "recent-context",
     hooks: [

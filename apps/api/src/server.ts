@@ -100,6 +100,33 @@ export async function startApi(root: string, port = 0): Promise<ApiServer> {
       } else json(response, { error: "Not found" }, 404);
       return;
     }
+    const history = /^\/api\/bots\/([^/]+)\/history(?:\/([^/]+))?$/.exec(path);
+    if (history && request.method === "GET") {
+      const botId = history[1] as string;
+      database.bot(botId);
+      const entryId = history[2];
+      json(
+        response,
+        await worker.request(
+          entryId === undefined
+            ? {
+                action: "history-search",
+                botId,
+                query: url.searchParams.get("query") ?? "",
+                before: url.searchParams.has("before")
+                  ? Number(url.searchParams.get("before"))
+                  : undefined,
+              }
+            : {
+                action: "history-read",
+                botId,
+                entryId: Number(entryId),
+                offset: url.searchParams.has("offset") ? Number(url.searchParams.get("offset")) : 0,
+              },
+        ),
+      );
+      return;
+    }
     const match = /^\/api\/bots\/([^/]+)(?:\/(chat|events|send|stop))?$/.exec(path);
     if (match) {
       const botId = match[1] as string;
