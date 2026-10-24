@@ -43,6 +43,15 @@ test("shell and file operations share bytes on one Computer during simultaneous 
     expect(
       (await provider.execute(computer, "cat /workspace/bots/writer/tool.txt", "shared")).stdout,
     ).toBe("from file tool\n");
+    expect(
+      (
+        await provider.execute(
+          computer,
+          "find /tmp/mybots-commands -mindepth 1 -maxdepth 1 -type d | wc -l",
+          "shared",
+        )
+      ).stdout.trim(),
+    ).toBe("1");
   } finally {
     await fixture.close();
   }
@@ -142,6 +151,15 @@ test("cancellation kills the container process group while another command remai
     expect(check.stdout).toBe("False\n");
     await provider.writeFile(computer, "bots/other/release", "go");
     expect(await other).toMatchObject({ exitCode: 0, stdout: "other Bot finished\n" });
+    expect(
+      (
+        await provider.execute(
+          computer,
+          "find /tmp/mybots-commands -mindepth 1 -maxdepth 1 -type d | wc -l",
+          "shared",
+        )
+      ).stdout.trim(),
+    ).toBe("1");
     expect(await provider.readFile(computer, "bots/busy/heartbeat")).toMatch(/^\d+\n$/);
   } finally {
     controller.abort();

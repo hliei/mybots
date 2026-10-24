@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -138,6 +139,8 @@ def main():
         execute(request)
     elif action == "cancel":
         cancel(request)
+    elif action == "release":
+        shutil.rmtree(command_state(request["id"]))
     elif action == "read":
         path = workspace_path(request["path"])
         if path.stat().st_size > FILE_LIMIT or not path.is_file():

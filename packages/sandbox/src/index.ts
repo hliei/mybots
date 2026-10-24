@@ -194,7 +194,11 @@ export class DockerSandbox implements SandboxProvider {
       return JSON.parse(output.toString()) as CommandResult;
     } finally {
       cancellation.removeEventListener("abort", cancel);
-      if (stopped) await stopped;
+      try {
+        if (stopped) await stopped;
+      } finally {
+        await this.call(computer, { action: "release", id });
+      }
     }
   }
 
