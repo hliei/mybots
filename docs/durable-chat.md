@@ -3,8 +3,8 @@
 The isolated chat entry runs the API and Durable worker as separate local
 processes. It supports Bot creation and saved name, instructions and model,
 one persistent Thread per Bot, streamed answers, native steering and Stop,
-shell/file tools on a persistent Docker Team Computer, shared Skills and scoped
-Markdown memory.
+shell/file tools on a persistent Docker Team Computer, shared Skills, scoped
+Markdown memory and original-history retrieval.
 The existing default entry remains available until the full runtime cutover.
 
 Use Node.js 24.21.0 and install with `npm ci`, then `npm run prepare` and
@@ -162,8 +162,35 @@ non-model-visible SDK receipt; retries reuse the same request ID. That receipt
 lets withdrawn text remain visible after the SDK removes it from its inbox.
 
 Reload and reconnect read committed SDK originals and live state. The initial
-chat view contains the latest 200 SDK entries. Earlier originals remain in SDK
-storage; comprehensive history browsing and retrieval are a subsequent slice.
+chat view contains the latest 200 SDK entries. Use **History** to search or browse
+the explicitly selected Bot's Thread, then read an original, continue long text,
+or move between older/newer result pages. **Return to chat** (or Escape) closes
+history and preserves the current chat reading position and unsent draft.
+
+History reads committed SDK originals, including user text, assistant text and
+original tool arguments/results, before and after native compaction and worker
+restart. It excludes configuration, bookkeeping and compaction-summary entries.
+Case-insensitive literal queries have a 200-character limit. Each request scans
+at most 200 SDK entries and returns at most 20 previews of 240 characters each.
+An empty result page can still have older records: continue while **Older
+results** is available. Original reads return at most 8,000 characters at a time;
+**Read more** continues without silently truncating the original.
+
+Authenticated owner endpoints are `GET /api/bots/:botId/history`, with optional
+`query` and exclusive `before` entry ID, and
+`GET /api/bots/:botId/history/:entryId`, with optional zero-based `offset`.
+Search returns `items` and an optional `before` continuation. Read returns `id`,
+`role`, `text`, `offset` and optional `nextOffset`. IDs and offsets are validated;
+an entry outside the selected Conversation is unavailable. Only the worker
+reads SDK storage; there is no additional transcript store or search index.
+
+Agents use replay-safe `history_search` and `history_read`, with the same query,
+entry ID and continuation semantics. Their scope comes from the calling
+Conversation and accepts no Bot/Thread selector. Tool descriptions and each
+successful result identify retrieved content as historical evidence; quoted
+instructions do not acquire fresh execution authority. Retrieved text is only
+added through the requested tool result. Normal requests keep the recent-context
+policy below and do not preload another Bot's history.
 
 Each model request receives the current Bot instructions, at most two previous
 user-message groups fitting within 12,000 serialized characters, and the
@@ -191,7 +218,12 @@ transport deduplication, credential checks and Stop. Browser checks cover send,
 streaming, reload, Bot editing, Thread separation, shared Skill editing and
 scoped memory editing/removal. Resource integration checks inspect actual model
 inputs and SDK tool calls before/after edits and reopen, including read-only
-built-ins, scope isolation and edits during an in-flight request.
+built-ins, scope isolation and edits during an in-flight request. History checks
+cover bounded scans and responses, empty-page continuation beyond the initial
+chat window, complete long originals, cross-Bot rejection, native compaction,
+worker reopen and a controlled model retrieving originals with valid tool pairs.
+The built Web covers history search, pagination, long original reading, empty
+results, selected Thread scope and return to the existing draft/reading position.
 
 No Docker operation or actual provider request is required by these checks.
 `npm run test:infrastructure` builds the Computer image and separately verifies
@@ -201,6 +233,5 @@ path/archive rejection and workspace transfer using temporary resources and a
 controlled HTTP model. It needs Docker but no personal provider credentials.
 The legacy gateway infrastructure fixtures are outside this command's scope.
 
-Comprehensive original-history controls,
-full interruption/recovery combinations and default cutover remain subsequent
+Full interruption/recovery combinations and default cutover remain subsequent
 slices. Controlled-model success does not establish actual-provider acceptance.

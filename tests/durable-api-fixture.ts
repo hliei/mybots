@@ -7,6 +7,7 @@ import { startDurableModel } from "./durable-model-fixture.ts";
 
 export async function apiFixture(
   respond: Parameters<typeof startDurableModel>[0] = () => ({ text: "Persistent answer" }),
+  options?: Parameters<typeof startDurableModel>[1],
 ) {
   const root = await mkdtemp(join(tmpdir(), "mybots-durable-api-"));
   let service: Awaited<ReturnType<typeof startDurableModel>> | undefined;
@@ -23,7 +24,7 @@ export async function apiFixture(
     }
   }
   try {
-    service = await startDurableModel(respond);
+    service = await startDurableModel(respond, options);
     await writeFile(join(root, "models.json"), JSON.stringify([service.config]), { mode: 0o600 });
     api = await startApi(root);
     const credential = (await readFile(join(root, "data", "client-credential"), "utf8")).trim();

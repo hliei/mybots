@@ -9,9 +9,11 @@ import {
   context,
   type HostModel,
   openAgent,
+  readHistory,
   resourceContext,
   resourceTools,
   type SubmissionId,
+  searchHistory,
 } from "@mybots/agent";
 import type { Bot, ChatMessage, ChatView, WorkerCommand } from "@mybots/contracts";
 import { ProductDatabase } from "@mybots/db";
@@ -217,6 +219,10 @@ export async function openWorker(
             return;
           case "view":
             return view(bot);
+          case "history-search":
+            return searchHistory(chat, command.query, command.before, context);
+          case "history-read":
+            return readHistory(chat, command.entryId, command.offset, context);
           case "subscribe": {
             const watch = await chat.watch(context);
             watches.set(command.subscription, watch);

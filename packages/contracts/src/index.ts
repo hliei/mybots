@@ -73,12 +73,33 @@ export interface ChatView {
   activity: string[];
 }
 
+export interface HistoryItem {
+  id: number;
+  role: ChatMessage["role"];
+  preview: string;
+}
+
+export interface HistoryPage {
+  items: HistoryItem[];
+  before?: number;
+}
+
+export interface HistoryRead {
+  id: number;
+  role: ChatMessage["role"];
+  text: string;
+  offset: number;
+  nextOffset?: number;
+}
+
 export type WorkerCommand =
   | { action: "create"; configuration: BotConfiguration }
   | { action: "configure"; botId: string }
   | { action: "send"; botId: string; text: string; requestId: string }
   | { action: "stop"; botId: string }
   | { action: "view"; botId: string }
+  | { action: "history-search"; botId: string; query: string; before?: number }
+  | { action: "history-read"; botId: string; entryId: number; offset: number }
   | { action: "subscribe"; botId: string; subscription: string }
   | { action: "unsubscribe"; subscription: string }
   | { action: "close" };
