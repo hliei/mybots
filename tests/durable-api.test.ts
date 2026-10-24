@@ -122,6 +122,7 @@ test("busy sends use native steering and Stop retains withdrawn inputs after reo
       status: "unanswered",
       reason: "aborted",
     });
+    await fixture.crashWorker();
     await fixture.reopen();
     expect((await settled(fixture, bot)).inputs).toEqual(stopped.inputs);
     expect(fixture.service.requests).toHaveLength(1);
@@ -331,3 +332,151 @@ test("invalid Computer tool paths produce a visible failure without reading host
     await fixture.close();
   }
 });
+
+test("model failure keeps admitted input visibly unanswered and resendable after reopen", async () => {
+  const fixture = await apiFixture(() => ({ status: 400 }));
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Failed Bot",
+      instructions: "",
+      model: "controlled",
+    });
+    const sent = await fixture.request(`bots/${bot.id}/send`, {
+      text: "Keep this failed input",
+      requestId: "model-failure",
+    });
+    const failed = await settled(fixture, bot);
+    expect(failed.inputs).toContainEqual({
+      id: sent.id,
+      requestId: "model-failure",
+      text: "Keep this failed input",
+      status: "unanswered",
+      reason: "model_error",
+      detail: expect.stringContaining("Controlled model failure"),
+    });
+    expect(fixture.service.requests).toHaveLength(1);
+    await fixture.reopen();
+    expect((await settled(fixture, bot)).inputs).toEqual(failed.inputs);
+    expect(fixture.service.requests).toHaveLength(1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("steering arriving behind a final answer becomes subsequent native work", async () => {
+  let release: () => void = () => {};
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const fixture = await apiFixture(() =>
+    fixture.service.requests.length === 1
+      ? {
+          chunks: (async function* () {
+            yield "First answer";
+            await barrier;
+          })(),
+        }
+      : { text: "Subsequent answer" },
+  );
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Steering",
+      instructions: "",
+      model: "controlled",
+    });
+    await fixture.request(`bots/${bot.id}/send`, { text: "First work", requestId: "first-work" });
+    await fixture.service.waitForRequest(1);
+    await fixture.request(`bots/${bot.id}/send`, {
+      text: "Then this work",
+      requestId: "later-work",
+    });
+    expect((await fixture.request(`bots/${bot.id}/chat`)).inputs).toEqual([
+      expect.objectContaining({ text: "Then this work", status: "queued" }),
+    ]);
+    expect(fixture.service.requests).toHaveLength(1);
+    release();
+    const final = await settled(fixture, bot);
+    expect(final.messages.map((message) => message.text)).toEqual([
+      "First work",
+      "First answer",
+      "Then this work",
+      "Subsequent answer",
+    ]);
+    expect(final.inputs).toEqual([]);
+    expect(fixture.service.requests).toHaveLength(2);
+  } finally {
+    release();
+    await fixture.close();
+  }
+});
+
+test("worker crash resumes admitted work and queued steering without replaying committed tools", async () => {
+  let release: () => void = () => {};
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let count = 0;
+  const fixture = await apiFixture(() => {
+    count++;
+    if (count === 1) return { tool: "memory_read", arguments: { scope: "bot" } };
+    if (count === 2)
+      return {
+        chunks: (async function* () {
+          yield "Committed partial";
+          await barrier;
+        })(),
+      };
+    return { text: count === 3 ? "Resumed answer" : "Queued answer" };
+  });
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Recover",
+      instructions: "",
+      model: "controlled",
+    });
+    const admitted = await fixture.request(`bots/${bot.id}/send`, {
+      text: "Do tool work",
+      requestId: "crash-work",
+    });
+    await expect
+      .poll(async () => (await fixture.request(`bots/${bot.id}/chat`)).partial)
+      .toBe("Committed partial");
+    const queued = await fixture.request(`bots/${bot.id}/send`, {
+      text: "Persisted steering",
+      requestId: "crash-queued",
+    });
+    const before = (await fixture.request(`bots/${bot.id}/chat`)) as ChatView;
+    expect(before.messages.filter((message) => message.role === "tool")).toHaveLength(1);
+    await fixture.crashWorker();
+    await fixture.reopen();
+    const after = await settled(fixture, bot);
+    expect(after.threadId).toBe(bot.threadId);
+    expect(after.messages.filter((message) => message.role === "tool")).toEqual(
+      before.messages.filter((message) => message.role === "tool"),
+    );
+    expect(
+      after.messages.filter((message) => message.role === "user").map((message) => message.text),
+    ).toEqual(["Do tool work", "Persisted steering"]);
+    expect(after.messages).toContainEqual(
+      expect.objectContaining({ text: "Committed partial", status: "aborted" }),
+    );
+    expect(after.messages.at(-1)?.text).toBe("Queued answer");
+    expect(after.inputs).toEqual([]);
+    expect(
+      await fixture.request(`bots/${bot.id}/send`, {
+        text: "Do tool work",
+        requestId: "crash-work",
+      }),
+    ).toEqual(admitted);
+    expect(
+      await fixture.request(`bots/${bot.id}/send`, {
+        text: "Persisted steering",
+        requestId: "crash-queued",
+      }),
+    ).toEqual(queued);
+    expect(count).toBe(4);
+  } finally {
+    release();
+    await fixture.close();
+  }
+}, 15000);

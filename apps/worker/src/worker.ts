@@ -101,17 +101,14 @@ export async function openWorker(
             const status = await (
               await harness.submission(data.submissionId as SubmissionId, context)
             )?.status(context);
-            if (
-              status &&
-              (status.status === "queued" ||
-                (status.status === "unanswered" && status.entry === undefined))
-            )
+            if (status && (status.status === "queued" || status.status === "unanswered"))
               inputs.push({
                 id: data.submissionId,
                 requestId: data.requestId,
                 text: data.text,
                 status: status.status,
                 reason: status.reason,
+                detail: typeof status.detail === "string" ? status.detail : undefined,
               });
             continue;
           }

@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { expect } from "vitest";
 import { type ApiServer, startApi } from "../apps/api/src/server.ts";
 import { startDurableModel } from "./durable-model-fixture.ts";
@@ -46,6 +48,32 @@ export async function apiFixture(
       get url() {
         if (!api) throw new Error("API is closed");
         return api.url;
+      },
+      async crashWorker() {
+        // Select only this fixture's direct worker, never an installation process.
+        const { stdout } = await promisify(execFile)("pgrep", [
+          "-P",
+          String(process.pid),
+          "-f",
+          root,
+        ]);
+        const pids = stdout.trim().split(/\s+/).map(Number);
+        expect(pids).toHaveLength(1);
+        const pid = pids[0] as number;
+        process.kill(pid, "SIGKILL");
+        await expect
+          .poll(
+            () => {
+              try {
+                process.kill(pid, 0);
+                return false;
+              } catch {
+                return true;
+              }
+            },
+            { timeout: 5000 },
+          )
+          .toBe(true);
       },
       async reopen() {
         const previous = api;

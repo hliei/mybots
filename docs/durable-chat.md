@@ -62,7 +62,9 @@ survives reload; Host, Origin and cross-site checks apply to local requests.
 Create a Bot, select a configured model and send a message. Enter sends;
 Shift+Enter adds a line. A message sent while busy uses native steering.
 Stop aborts current work and withdraws queued inputs; withdrawn inputs remain
-visible with a Resend control that restores their text to the composer.
+visible with a Resend control that restores their text to the composer. Failed
+admitted inputs also remain unprocessed with the SDK reason and error detail.
+Resend prepares the text; sending it again deliberately creates new work.
 
 Use a different fresh root or port with:
 
@@ -73,7 +75,13 @@ npm run start:durable -- --root /absolute/path/to/new-installation --port 4174
 The selected root must contain its own `models.json`. Do not point the new entry
 at legacy runtime data. The source entry is `npm run dev:durable` with the same
 arguments and requires built Web assets. Ctrl+C shuts down both processes;
-normal shutdown retains all data. A second worker cannot open the same root.
+normal shutdown retains all data. On restart, the worker resumes supported work
+from SDK storage, including pending input and committed exchanges. Interrupted
+unsafe tools are reported as potentially partially run rather than replayed by
+the application. An abrupt worker kill can leave a Docker command running;
+recovery does not prove termination or roll back file effects. Use Stop while
+the worker is available to cancel its active commands. A second worker cannot
+open the same root.
 If startup fails, check the model file, its required fields and data-root
 ownership before retrying.
 
