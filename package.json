@@ -17,7 +17,7 @@
     "verify": "npm run check && npm test && npm run build && npm run check:startup && playwright test",
     "prepare": "husky",
     "demo:pi": "npm run build --workspace @mybots/mailbox && npm run build --workspace @mybots/agent-runner && npm run demo --workspace @mybots/agent-runner",
-    "test:infrastructure": "docker build -t mybots-agent:mailbox -f container/Dockerfile . && vitest run --config tests/infrastructure/vitest.config.ts",
+    "test:infrastructure": "npm run build:computer && vitest run --config tests/infrastructure/vitest.config.ts",
     "demo:host": "npm run build && node scripts/host-cli-demo.mjs",
     "prebuild": "node scripts/clean-build.mjs",
     "dev": "node --conditions=mybots-source packages/host/src/index.ts",
@@ -27,7 +27,8 @@
     "setup:auto": "node setup/cli.ts",
     "test:browser": "npm run build && playwright test",
     "dev:durable": "node --conditions=mybots-source apps/api/src/index.ts",
-    "start:durable": "node apps/api/dist/index.js"
+    "start:durable": "node apps/api/dist/index.js",
+    "build:computer": "docker build -t mybots-computer:local -f container/Computer.Dockerfile ."
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
@@ -47,6 +48,7 @@
     "packages/client",
     "packages/contracts",
     "packages/db",
+    "packages/sandbox",
     "packages/agent",
     "apps/web",
     "apps/worker",

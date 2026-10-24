@@ -1,6 +1,6 @@
 # Host execution with container tools
 
-Status: accepted; implementation planned.
+Status: accepted; shell/file tools implemented in the isolated chat entry.
 
 Run Pi Durable on the host and route shell/file tools through SandboxProvider
 to one persistent Docker Team Computer per Space. This separates conversation

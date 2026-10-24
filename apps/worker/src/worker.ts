@@ -5,6 +5,7 @@ import {
   type ConversationId,
   type ConversationView,
   type ConversationWatch,
+  computerTools,
   context,
   type HostModel,
   openAgent,
@@ -12,6 +13,7 @@ import {
 } from "@mybots/agent";
 import type { Bot, ChatMessage, ChatView, WorkerCommand } from "@mybots/contracts";
 import { ProductDatabase } from "@mybots/db";
+import { DockerSandbox } from "@mybots/sandbox";
 
 function text(content: unknown): string {
   if (typeof content === "string") return content;
@@ -38,7 +40,16 @@ export async function openWorker(
   try {
     ownership.exec("BEGIN EXCLUSIVE");
     database = new ProductDatabase(join(root, "data", "product.sqlite"));
-    harness = await openAgent(join(root, "data", "durable.sqlite"), models);
+    const products = database;
+    const computer = products.computer();
+    const sandbox = new DockerSandbox(computer, join(root, "computer", "workspace"));
+    harness = await openAgent(join(root, "data", "durable.sqlite"), models, [
+      computerTools(sandbox, computer, (conversationId) => {
+        const bot = products.bots().find((bot) => bot.conversationId === conversationId);
+        if (!bot) throw new Error("Bot not found for Computer access");
+        return bot.id;
+      }),
+    ]);
     return await ownedWorker(database, harness);
   } catch (error) {
     await harness?.close(context);

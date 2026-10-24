@@ -13,13 +13,17 @@ test("built Web streams, reloads committed chat, edits Bots and keeps Threads se
   const barrier = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const service = await startDurableModel(() => ({
-    chunks: (async function* () {
-      yield "A growing **reply**";
-      await barrier;
-      yield " with saved history.";
-    })(),
-  }));
+  const service = await startDurableModel((request) => {
+    if (JSON.stringify(request.messages.at(-1)).includes("Show a tool error"))
+      return { tool: "read_file", arguments: { path: "../models.json" } };
+    return {
+      chunks: (async function* () {
+        yield "A growing **reply**";
+        await barrier;
+        yield " with saved history.";
+      })(),
+    };
+  });
   await writeFile(join(root, "models.json"), JSON.stringify([service.config]), { mode: 0o600 });
   const child = fork(
     new URL("../../apps/api/dist/index.js", import.meta.url),
@@ -87,6 +91,15 @@ test("built Web streams, reloads committed chat, edits Bots and keeps Threads se
         .evaluate((element) => Math.round(element.getBoundingClientRect().width)),
     ).toBe(316);
     await page.screenshot({ path: "test-results/durable-chat.png", fullPage: true });
+    await page.getByLabel("Message", { exact: true }).fill("Show a tool error");
+    await page.getByRole("button", { name: "Send message" }).click();
+    await expect(
+      page.locator("article.assistant").filter({ hasText: "Tools: read_file" }),
+    ).toBeVisible();
+    await expect(page.locator("article.tool")).toContainText("Path escapes");
+    await expect(page.locator("#stop")).toBeDisabled();
+    await page.reload();
+    await expect(page.locator("article.tool")).toContainText("Path escapes");
     expect(errors).toBe("");
   } finally {
     release();

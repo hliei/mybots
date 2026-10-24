@@ -12,6 +12,8 @@ import {
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
+export { computerTools } from "./computer-tools.ts";
+
 export interface HostModel {
   id: string;
   name: string;

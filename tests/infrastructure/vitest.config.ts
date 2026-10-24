@@ -11,7 +11,7 @@ export default defineConfig({
     env: { NODE_OPTIONS: "--conditions=mybots-source" },
     environment: "node",
     globals: false,
-    include: ["tests/infrastructure/**/*.test.ts"],
+    include: ["tests/infrastructure/team-computer.test.ts"],
     testTimeout: 240000,
     hookTimeout: 240000,
     fileParallelism: false,

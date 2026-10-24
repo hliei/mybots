@@ -12,6 +12,7 @@ await Promise.all(
     "../packages/contracts/dist/",
     "../packages/db/dist/",
     "../packages/agent/dist/",
+    "../packages/sandbox/dist/",
     "../apps/web/dist/",
     "../apps/worker/dist/",
     "../apps/api/dist/",
