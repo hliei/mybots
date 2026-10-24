@@ -61,10 +61,50 @@ test("built Web streams, reloads committed chat, edits Bots and keeps Threads se
     await page.getByLabel("Instructions", { exact: true }).fill("Write clearly");
     await page.getByRole("button", { name: "Save Bot", exact: true }).click();
     await expect(page.locator("#bot-identity-name")).toHaveText("Writer");
+    await page.getByRole("button", { name: "Shared Skills", exact: true }).click();
+    await page.getByLabel("Skill", { exact: true }).selectOption("resource-maintenance");
+    await expect(page.getByLabel("Skill instructions (Markdown)")).toHaveAttribute("readonly", "");
+    await expect(page.getByRole("button", { name: "Save Skill", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Remove Skill", exact: true })).toBeDisabled();
+    await page.getByLabel("Skill", { exact: true }).selectOption("");
+    await page.getByLabel("Skill name", { exact: true }).fill("writing");
+    await page.getByLabel("Description", { exact: true }).fill("Writing help");
+    await page.getByLabel("Skill instructions (Markdown)").fill("Prefer short sentences.");
+    await page.getByRole("button", { name: "Save Skill", exact: true }).click();
+    await expect(page.locator("#skill-status")).toHaveText("Skill saved");
+    await page.screenshot({ path: "test-results/durable-skills.png", fullPage: true });
+    await page.getByRole("button", { name: "Close Skills", exact: true }).click();
+    await page.getByRole("button", { name: "Memory", exact: true }).click();
+    await page.getByLabel("Memory (Markdown)").fill("OWNER_BROWSER_PREFERENCE");
+    await page.getByRole("button", { name: "Save memory", exact: true }).click();
+    await expect(page.locator("#memory-status")).toHaveText("Memory saved");
+    await page.getByLabel("Memory scope").selectOption("bot");
+    await expect(page.getByLabel("Memory (Markdown)")).toHaveValue("");
+    await page.getByLabel("Memory (Markdown)").fill("WRITER_BROWSER_MEMORY");
+    await page.getByRole("button", { name: "Save memory", exact: true }).click();
+    await expect(page.locator("#memory-status")).toHaveText("Memory saved");
+    await page.screenshot({ path: "test-results/durable-memory.png", fullPage: true });
+    await page.getByRole("button", { name: "Close memory", exact: true }).click();
+    await page.reload();
+    await page.getByRole("button", { name: "Shared Skills", exact: true }).click();
+    await page.getByLabel("Skill", { exact: true }).selectOption("writing");
+    await expect(page.getByLabel("Skill instructions (Markdown)")).toHaveValue(
+      "Prefer short sentences.",
+    );
+    await page.getByLabel("Skill instructions (Markdown)").fill("Keep paragraphs short too.");
+    await page.getByRole("button", { name: "Save Skill", exact: true }).click();
+    await expect(page.locator("#skill-status")).toHaveText("Skill saved");
+    await page.getByRole("button", { name: "Close Skills", exact: true }).click();
     await page.getByLabel("Message", { exact: true }).fill("Stream and remember");
     await page.getByRole("button", { name: "Send message" }).click();
     await expect(page.locator("article.assistant")).toContainText("A growing reply");
     await expect(page.locator("article.assistant")).toContainText("In progress");
+    expect(JSON.stringify(service.requests[0]?.messages)).toContain("OWNER_BROWSER_PREFERENCE");
+    expect(JSON.stringify(service.requests[0]?.messages)).toContain("WRITER_BROWSER_MEMORY");
+    expect(JSON.stringify(service.requests[0]?.messages)).toContain("Writing help");
+    expect(JSON.stringify(service.requests[0]?.messages)).not.toContain(
+      "Keep paragraphs short too.",
+    );
     await page.reload();
     await expect(page.locator("article.assistant")).toContainText("A growing reply");
     release();
@@ -83,6 +123,11 @@ test("built Web streams, reloads committed chat, edits Bots and keeps Threads se
     await page.getByRole("button", { name: "Save Bot", exact: true }).click();
     await expect(page.locator("#bot-identity-name")).toHaveText("Reader");
     await expect(page.locator("#thread-messages article")).toHaveCount(0);
+    await page.getByRole("button", { name: "Memory", exact: true }).click();
+    await expect(page.getByLabel("Memory (Markdown)")).toHaveValue("OWNER_BROWSER_PREFERENCE");
+    await page.getByLabel("Memory scope").selectOption("bot");
+    await expect(page.getByLabel("Memory (Markdown)")).toHaveValue("");
+    await page.getByRole("button", { name: "Close memory", exact: true }).click();
     await page.getByRole("button", { name: "Select Editor", exact: true }).click();
     await expect(page.locator("article.assistant")).toContainText("with saved history.");
     expect(
@@ -97,6 +142,28 @@ test("built Web streams, reloads committed chat, edits Bots and keeps Threads se
       page.locator("article.assistant").filter({ hasText: "Tools: read_file" }),
     ).toBeVisible();
     await expect(page.locator("article.tool")).toContainText("Path escapes");
+    await page.getByRole("button", { name: "Shared Skills", exact: true }).click();
+    await page.getByLabel("Skill", { exact: true }).selectOption("writing");
+    await page.getByRole("button", { name: "Remove Skill", exact: true }).click();
+    await expect(page.locator("#skill-status")).toHaveText("Skill removed");
+    await expect(
+      page.getByLabel("Skill", { exact: true }).locator("option[value=writing]"),
+    ).toHaveCount(0);
+    await page.getByRole("button", { name: "Close Skills", exact: true }).click();
+    await page.getByRole("button", { name: "Memory", exact: true }).click();
+    await page.getByLabel("Memory scope").selectOption("bot");
+    await expect(page.getByLabel("Memory (Markdown)")).toHaveValue("WRITER_BROWSER_MEMORY");
+    await page.getByRole("button", { name: "Remove memory", exact: true }).click();
+    await expect(page.locator("#memory-status")).toHaveText("Memory removed");
+    await expect(page.getByLabel("Memory (Markdown)")).toHaveValue("");
+    await page.getByLabel("Memory scope").selectOption("owner");
+    await page.getByRole("button", { name: "Remove memory", exact: true }).click();
+    await expect(page.locator("#memory-status")).toHaveText("Memory removed");
+    await page.getByRole("button", { name: "Close memory", exact: true }).click();
+    await page.reload();
+    await page.getByRole("button", { name: "Memory", exact: true }).click();
+    await expect(page.getByLabel("Memory (Markdown)")).toHaveValue("");
+    await page.getByRole("button", { name: "Close memory", exact: true }).click();
     await expect(page.locator("#stop")).toBeDisabled();
     await page.reload();
     await expect(page.locator("article.tool")).toContainText("Path escapes");

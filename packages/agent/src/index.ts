@@ -13,6 +13,7 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
 export { computerTools } from "./computer-tools.ts";
+export { resourceContext, resourceTools } from "./resource-tools.ts";
 
 export interface HostModel {
   id: string;
@@ -28,6 +29,7 @@ export async function openAgent(
   file: string,
   configured: HostModel[],
   extensions: Extension[] = [],
+  loadContext?: (conversationId: number) => string,
 ): Promise<Harness> {
   const models = createModels();
   for (const config of configured) {
@@ -103,7 +105,26 @@ export async function openAgent(
             recent.unshift(...group);
           }
           const system = getCurrentSystemMessage(view.messages);
-          return { messages: [...(system ? [system] : []), ...recent, ...messages.slice(split)] };
+          const resources = loadContext?.(api.conversationId);
+          return {
+            messages: [
+              ...(resources
+                ? [
+                    {
+                      ...system,
+                      role: "system" as const,
+                      content: system?.content ?? "",
+                      timestamp: system?.timestamp ?? 0,
+                      sections: { ...system?.sections, resources },
+                    },
+                  ]
+                : system
+                  ? [system]
+                  : []),
+              ...recent,
+              ...messages.slice(split),
+            ],
+          };
         },
       }),
     ],

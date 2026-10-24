@@ -1,6 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import type { Bot, BotConfiguration } from "@mybots/contracts";
+import type { Bot, BotConfiguration, MemoryDocument, MemoryScope, Skill } from "@mybots/contracts";
+import { markdownContent, skillContent } from "@mybots/contracts";
+
+const builtinSkills: Skill[] = [
+  {
+    name: "resource-maintenance",
+    description: "Deliberately maintain shared Skills and scoped Markdown memory.",
+    readOnly: true,
+    content:
+      "Use memory_read before memory_write to preserve useful records. Store only deliberately retained facts and preferences, not copied conversation history. Scope bot is private to the current Bot; owner is shared across Bots. Writes replace the document. Use memory_delete to remove current memory; earlier transcript entries remain. Use skill_write to create or replace a shared user Skill and skill_delete to remove it. Built-in Skills are read-only. Resource edits affect later context loads; use skill_read for full Skill instructions.",
+  },
+];
 
 export class ProductDatabase {
   private readonly database: DatabaseSync;
@@ -21,7 +32,18 @@ export class ProductDatabase {
       CREATE TABLE IF NOT EXISTS threads (
         id TEXT PRIMARY KEY, bot_id TEXT NOT NULL UNIQUE REFERENCES bots(id),
         conversation_id INTEGER NOT NULL UNIQUE
-      );`);
+      );
+      CREATE TABLE IF NOT EXISTS skills (
+        space_id TEXT NOT NULL REFERENCES spaces(id), name TEXT NOT NULL,
+        description TEXT NOT NULL, content TEXT NOT NULL,
+        PRIMARY KEY (space_id, name)
+      );
+      CREATE TABLE IF NOT EXISTS memory (
+        space_id TEXT NOT NULL REFERENCES spaces(id), scope TEXT NOT NULL,
+        bot_id TEXT REFERENCES bots(id), content TEXT NOT NULL,
+        CHECK ((scope = 'owner' AND bot_id IS NULL) OR (scope = 'bot' AND bot_id IS NOT NULL))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS memory_scope ON memory (space_id, scope, COALESCE(bot_id, ''));`);
   }
 
   bots(): Bot[] {
@@ -72,6 +94,73 @@ export class ProductDatabase {
       .prepare("UPDATE bots SET name = ?, instructions = ?, model = ? WHERE id = ?")
       .run(configuration.name, configuration.instructions, configuration.model, id);
     return this.bot(id);
+  }
+
+  skills(): Skill[] {
+    const rows = this.database
+      .prepare(
+        "SELECT name, description, content FROM skills WHERE space_id = 'default' ORDER BY name",
+      )
+      .all() as unknown as Omit<Skill, "readOnly">[];
+    return [
+      ...builtinSkills.map((skill) => ({ ...skill })),
+      ...rows.map((skill) => ({ ...skill, readOnly: false })),
+    ];
+  }
+
+  skill(name: string): Skill {
+    const skill = this.skills().find((skill) => skill.name === name);
+    if (!skill) throw new Error("Skill not found");
+    return skill;
+  }
+
+  writeSkill(name: string, value: unknown): Skill {
+    if (builtinSkills.some((skill) => skill.name === name))
+      throw new Error("Built-in Skills are read-only");
+    const skill = skillContent(name, value);
+    this.database
+      .prepare(`INSERT INTO skills VALUES ('default', ?, ?, ?)
+      ON CONFLICT (space_id, name) DO UPDATE SET description = excluded.description, content = excluded.content`)
+      .run(name, skill.description, skill.content);
+    return this.skill(name);
+  }
+
+  deleteSkill(name: string): void {
+    if (this.skill(name).readOnly) throw new Error("Built-in Skills are read-only");
+    this.database.prepare("DELETE FROM skills WHERE space_id = 'default' AND name = ?").run(name);
+  }
+
+  memory(scope: MemoryScope, botId?: string): MemoryDocument {
+    const id = this.memoryBot(scope, botId);
+    const row = this.database
+      .prepare(
+        "SELECT content FROM memory WHERE space_id = 'default' AND scope = ? AND bot_id IS ?",
+      )
+      .get(scope, id) as unknown as MemoryDocument | undefined;
+    return row ?? { content: "" };
+  }
+
+  writeMemory(scope: MemoryScope, content: unknown, botId?: string): MemoryDocument {
+    const id = this.memoryBot(scope, botId);
+    const markdown = markdownContent(content);
+    this.database
+      .prepare(`INSERT INTO memory VALUES ('default', ?, ?, ?)
+      ON CONFLICT DO UPDATE SET content = excluded.content`)
+      .run(scope, id, markdown);
+    return { content: markdown };
+  }
+
+  deleteMemory(scope: MemoryScope, botId?: string): void {
+    const id = this.memoryBot(scope, botId);
+    this.database
+      .prepare("DELETE FROM memory WHERE space_id = 'default' AND scope = ? AND bot_id IS ?")
+      .run(scope, id);
+  }
+
+  private memoryBot(scope: MemoryScope, botId?: string): string | null {
+    if (scope === "owner" && botId === undefined) return null;
+    if (scope === "bot" && botId) return this.bot(botId).id;
+    throw new Error("Invalid memory scope");
   }
 
   close(): void {

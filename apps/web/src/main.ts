@@ -1,6 +1,8 @@
 import type { Bot, ChatMessage, ChatView, ModelChoice } from "@mybots/contracts";
+import { request } from "./api.ts";
 import { markdown } from "./markdown.ts";
 import { restoreReadingPosition, selectReadingBot } from "./reading-position.ts";
+import { resourceEditors } from "./resources.ts";
 
 const node = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 let bots: Bot[] = [];
@@ -12,24 +14,6 @@ let pending: { botId: string; text: string; requestId: string } | undefined;
 const dialog = node<HTMLDialogElement>("bot-dialog");
 const message = node<HTMLTextAreaElement>("message-text");
 
-async function request<T>(
-  path: string,
-  body?: unknown,
-  method = body === undefined ? "GET" : "POST",
-): Promise<T> {
-  const response = await fetch(`/api/${path}`, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!response.ok)
-    throw new Error(
-      response.status === 401
-        ? "Connect using your local credential."
-        : "Request failed. Please retry.",
-    );
-  return response.json() as Promise<T>;
-}
 function report(error: unknown): void {
   node(node("pairing").hidden ? "chat-message" : "pairing-message").textContent =
     error instanceof Error ? error.message : "Request failed";
@@ -267,6 +251,7 @@ message.addEventListener("keydown", (event) => {
 node("stop").addEventListener("click", () => {
   if (selected) void request(`bots/${selected.id}/stop`, {}).catch(report);
 });
+resourceEditors(() => selected);
 void refresh().catch(() => {
   node("pairing").hidden = false;
   node("workspace").hidden = true;

@@ -1,6 +1,6 @@
 # Computer and resources
 
-Status: Team Computer tools implemented in the isolated chat entry; Skills and memory planned.
+Status: Team Computer tools, shared Skills and scoped memory implemented in the isolated chat entry.
 
 ## Team Computer
 
@@ -37,6 +37,10 @@ full instructions are read on demand. Owners and Agents can deliberately maintai
 user Skills; built-ins are read-only. There is no per-Bot enabled set, version
 engine or marketplace.
 
+The Web provides shared Skill editing and read-only built-in inspection.
+`skill_read` loads full instructions; `skill_write` and `skill_delete` maintain
+shared user Skills. See the [resource contract](durable-chat.md#shared-skills-and-memory).
+
 ## Memory
 
 Product SQLite stores readable Markdown in two scopes:
@@ -48,6 +52,10 @@ Owners can view, edit and remove memory; Agents can deliberately maintain it
 through scoped tools. Memory is retained knowledge, not a copy of the transcript.
 Skills and memory are database content, not physical `SKILL.md` or `MEMORY.md`
 files on the Computer. No vector store or background memory job is required.
+
+Each scope currently holds one Markdown document. The Web and Agent tools can
+read, replace or remove it. Model requests load both scopes through the same
+context adapter; Agent memory tools derive Bot scope from their Conversation.
 
 Edits affect later context loading. They neither erase earlier transcript entries
 nor guarantee that a model forgets previously supplied content.

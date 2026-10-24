@@ -15,6 +15,38 @@ export interface ModelChoice {
   name: string;
 }
 
+export interface Skill {
+  name: string;
+  description: string;
+  content: string;
+  readOnly: boolean;
+}
+
+export type MemoryScope = "owner" | "bot";
+
+export interface MemoryDocument {
+  content: string;
+}
+
+export function markdownContent(value: unknown): string {
+  if (typeof value !== "string" || value.length > 16000)
+    throw new Error("Markdown must be at most 16000 characters");
+  return value;
+}
+
+export function skillContent(name: string, value: unknown): Omit<Skill, "readOnly"> {
+  if (!/^[a-z][a-z0-9-]{0,79}$/.test(name) || typeof value !== "object" || value === null)
+    throw new Error("Invalid Skill");
+  const data = value as Record<string, unknown>;
+  if (
+    typeof data.description !== "string" ||
+    !data.description.trim() ||
+    data.description.length > 1000
+  )
+    throw new Error("Skill description is required and must be at most 1000 characters");
+  return { name, description: data.description.trim(), content: markdownContent(data.content) };
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "tool";

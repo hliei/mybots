@@ -3,7 +3,8 @@
 The isolated chat entry runs the API and Durable worker as separate local
 processes. It supports Bot creation and saved name, instructions and model,
 one persistent Thread per Bot, streamed answers, native steering and Stop,
-and shell/file tools on a persistent Docker Team Computer.
+shell/file tools on a persistent Docker Team Computer, shared Skills and scoped
+Markdown memory.
 The existing default entry remains available until the full runtime cutover.
 
 Use Node.js 24.21.0 and install with `npm ci`, then `npm run prepare` and
@@ -120,6 +121,37 @@ and overwrites named files without deleting other files. Pause working Bots
 before transfer; it is not a concurrent snapshot or an atomic restore. No
 workspace copying occurs during normal turns and no management UI is included.
 
+## Shared Skills and memory
+
+Use **Shared Skills** to create, inspect, edit or remove a user Skill shared by
+all Bots. Each Skill has a stable lowercase name, a description (up to 1,000
+characters) and Markdown instructions (up to 16,000 characters). Names start with
+a letter and contain letters, numbers or hyphens, up to 80 characters. Built-in
+Skills are readable but cannot be edited, removed or shadowed by user Skills.
+The built-in `resource-maintenance` Skill describes deliberate resource upkeep.
+
+Use **Memory** to inspect, edit or remove either the shared owner document or
+the selected Bot's private document. Each scope has one Markdown document, up to
+16,000 characters. Writes replace the current document; removal clears its
+current content. Bots receive only their own document and the owner document.
+Memory is deliberately retained knowledge, separate from conversation history.
+Removing it does not erase earlier transcript entries or guarantee forgetting.
+
+Skills and memory live in product SQLite and survive reload and worker restart;
+they do not require Docker or create files on the Computer. Each model request
+loads a Skill catalog and the two memory scopes through the existing context
+adapter. Catalog entries include names and descriptions, without full Skill
+instructions. Changes appear on subsequent context loads, including the next
+model boundary after a tool round; an already-issued request keeps its input.
+
+The worker registers `skill_read`, `skill_write` and `skill_delete` for on-demand
+reading and deliberate user Skill maintenance. `memory_read`, `memory_write`
+and `memory_delete` accept `owner` or `bot` scope; Bot identity comes from the
+current Conversation, never a model-selected Bot ID. Resource write/remove tools
+use unsafe replay semantics so interrupted mutations are not automatically
+repeated. There is no per-Bot Skill activation, resource version engine or
+background memory extraction.
+
 ## Persistence and context
 
 Product SQLite stores the default Space, Bots and each Bot's stable
@@ -156,7 +188,10 @@ types, offline tests, compiled startup and built-browser checks. The new fixture
 uses the real SDK and SQLite against a controlled HTTP model service, including
 native automatic compaction, current tool pairs, originals after reopen,
 transport deduplication, credential checks and Stop. Browser checks cover send,
-streaming, reload, Bot editing and Thread separation.
+streaming, reload, Bot editing, Thread separation, shared Skill editing and
+scoped memory editing/removal. Resource integration checks inspect actual model
+inputs and SDK tool calls before/after edits and reopen, including read-only
+built-ins, scope isolation and edits during an in-flight request.
 
 No Docker operation or actual provider request is required by these checks.
 `npm run test:infrastructure` builds the Computer image and separately verifies
@@ -166,6 +201,6 @@ path/archive rejection and workspace transfer using temporary resources and a
 controlled HTTP model. It needs Docker but no personal provider credentials.
 The legacy gateway infrastructure fixtures are outside this command's scope.
 
-Shared Skills/memory, comprehensive original-history controls,
+Comprehensive original-history controls,
 full interruption/recovery combinations and default cutover remain subsequent
 slices. Controlled-model success does not establish actual-provider acceptance.

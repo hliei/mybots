@@ -5,7 +5,7 @@ import type { Bot, ChatView } from "@mybots/contracts";
 import { expect, test } from "vitest";
 import { apiFixture } from "./durable-api-fixture.ts";
 
-test("chat offers only Computer shell and file tools without starting Docker", async () => {
+test("chat offers Computer and resource tools without starting Docker", async () => {
   const fixture = await apiFixture();
   try {
     const bot = (await fixture.request("bots", {
@@ -16,8 +16,14 @@ test("chat offers only Computer shell and file tools without starting Docker", a
     await fixture.request(`bots/${bot.id}/send`, { text: "Hello", requestId: "tools" });
     await settled(fixture, bot);
     expect(fixture.service.requests[0]?.tools?.map((tool) => tool.function.name).sort()).toEqual([
+      "memory_delete",
+      "memory_read",
+      "memory_write",
       "read_file",
       "shell",
+      "skill_delete",
+      "skill_read",
+      "skill_write",
       "write_file",
     ]);
   } finally {
