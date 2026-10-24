@@ -34,7 +34,7 @@ or endpoint environment variables are present.
 ## Dependencies and isolation
 
 - Replace live model responses and platform connections with controlled test
-  implementations. Keep internal agent, session, and routing logic real where
+  implementations. Keep internal Agent, Conversation, and routing logic real where
   practical, including tests that exercise those components together.
 - Use a local controlled server when testing HTTP or WebSocket behavior.
   Ordinary tests must not contact public services or consume paid tokens.
@@ -51,10 +51,10 @@ or endpoint environment variables are present.
   sleeps. Keep waits bounded so failures terminate with useful output.
 - Verify startup, cancellation, and shutdown for background workers. Await
   cleanup so tests do not leave connections, timers, or tasks running.
-- When adding message handling, test source-to-session mapping, session
-  isolation, and reply destinations.
-- Define and test what happens when messages overlap in the same session;
-  distinguish session ordering from limits on concurrent agent executions.
+- When adding message handling, test Bot/Thread mapping, conversation
+  separation, and reply destinations.
+- Define and test what happens when messages overlap in the same Conversation;
+  distinguish Conversation ordering from limits on concurrent agent executions.
 - When adding persistence, verify recovery using a new instance reading the
   saved state, not only the instance that wrote it.
 - When implementing retries or delivery recovery, test failures and the agreed
@@ -67,458 +67,46 @@ Run every new or modified test file and iterate until it passes. Use focused
 runs during development, then follow the delivery checks in
 [Development](development.md#validation-and-completion).
 
-Ordinary tests use one worker to limit contention among Host processes,
+Ordinary tests use one test worker to limit contention among application processes,
 SDK fixtures, and SQLite operations during local and CI verification.
 
 Run live-service checks only when explicitly requested. Keep credentials out of
 fixtures and output, and report live checks separately from ordinary validation.
 An offline suite passing does not establish that a real provider or platform
 connection works.
-Use the manual [macOS acceptance procedure](../macos-service-acceptance.md) for
-explicitly requested current-runtime live checks; record each bounded gate and
-cleanup separately. Missing human inputs or credentials leave acceptance open.
+Missing human inputs or credentials leave actual-service acceptance open.
 
-## Pi Agent session exchanges
+## Target architecture verification
 
-`tests/pi-provider.test.ts` exercises the production provider query contract with
-Pi coding-agent SDK 1.2.0 and its real SessionManager. The controlled HTTP/SSE
-model service in `tests/pi-fixture.ts` replaces only model responses. Tests cover
-workspace read/write/edit/bash effects, tool-result continuation, one final reply,
-explicit reopening despite a newer unrelated session, cancellation, provider
-failure and invalid continuation. State lives in fresh temporary directories;
-SDK resources and local servers are closed and awaited.
+The following are requirements for the accepted architecture, not completed
+acceptance evidence. Existing tests cover the previous runtime until replaced.
+Retire tests with their obsolete contracts; do not preserve old mechanisms just
+to maintain test counts.
 
-The real SDK tests also hold a model request while admitting multiple follow-ups,
-check one result per input after tool continuation, distinguish an ordinary
-failed exchange from later queued work, and exercise automatic request recovery
-without repeating a completed tool effect. Abort rejects further input and
-abandons queued SDK work. A local streaming failure exercises SDK recovery;
-ordinary HTTP errors exercise the separate terminal error path.
+Use the public API with real worker, Pi Durable and SQLite for integration.
+Control model responses at the HTTP/stream boundary rather than mocking the
+SDK scheduler or transcript. Use the built browser for owner-visible behavior
+that lower boundaries cannot prove.
 
-Conversation files stay SDK-owned in the session-local `pi/sessions/` directory.
-Resource discovery uses only explicitly selected Agent Skills and the shared workspace's `AGENTS.md`; ancestor and personal resource discovery stay disabled. ModelRuntime is supplied
-explicitly; the fixture uses in-memory credentials and disables network catalog
-refresh so normal checks do not read personal auth or contact public providers.
+| Scenario | Required evidence |
+| --- | --- |
+| Startup and chat | Compiled startup, stable Bot/Thread association, streaming, reload and reconnect |
+| Context and history | Actual model inputs show bounded background, valid current tool pairs, native compaction and original retrieval before/after reopen |
+| Skills and memory | Public edits and real tool calls affect later context with the correct scopes |
+| Computer | Real Docker shell/file agreement, persistent workspace through container replacement, concurrent Bots and export/import round trip |
+| Steering, Stop and recovery | Native input behavior, visible withdrawn input, worker restart and actual command termination without stopping another Bot |
 
-The root `typecheck` and `build` commands include all four npm workspaces.
-Offline tests resolve the mailbox source condition, including spawned source
-processes; compiled startup checks use its default JavaScript exports. The
-root `verify` also runs its compiled provider through the bounded offline demo
-in `scripts/check-startup.mjs`. Run `npm run demo:pi` for visible tool/reopening
-evidence. These checks establish the Node.js package boundary; Docker mounts,
-gateway proxy/TLS, paid providers and real messaging require separate acceptance.
+Prove context selection with native compaction and reopen before broad migration.
+A request hook alone is insufficient. Verify cancellation against the actual
+Docker process, not only a rejected host-side promise.
 
-## Directional mailbox execution
+Ordinary checks need neither Docker nor personal credentials. Invoke Docker
+integration separately with temporary resources and reliable cleanup; run it
+for relevant provider changes. Real-provider end-to-end acceptance is a separate
+opt-in gate. Record revision, model, commands, observed results and remaining
+failures without secrets. Keep controlled, Docker and real-provider evidence
+separate; old acceptance results do not establish the new architecture.
 
-`tests/mailbox.test.ts`, `tests/mailbox-runner.test.ts`, `tests/gateway.test.ts`
-and `tests/container-driver.test.ts` cover persisted ordering/correlation,
-completion before output, the accepted final-reply crash gap, provider failure,
-cancellation, tool state, constrained gateway contributions and immutable
-provisioning. They use temporary state, real SQLite and a controlled management
-HTTP service. The compiled startup smoke also starts and stops the built host with native TypeScript disabled, verifies
-the root mailbox export without loading either SQLite driver, and verifies that the isolated runner
-refuses loading the Bun SQLite entry under the unsupported host runtime without
-fallback. Ordinary mailbox tests use the Node entry; actual container tests use
-the Bun entry with the same persisted protocol and concurrency protection.
-
-`npm run test:infrastructure` uses `tests/infrastructure/vitest.config.ts`.
-Ordinary discovery explicitly excludes `tests/infrastructure/`. The opt-in suite
-runs actual Docker, the production Bun runner, OneCLI, mounted mailboxes and a
-controlled TLS streaming upstream. A mounted stress regression additionally
-checks both directions under concurrent reads and one thousand writer operations.
-It checks a tool round, credential injection,
-forbidden/read-only mount behavior and exact Pi continuation after container
-recreation. A separate case enables `web_search`, registers a second gateway
-connection scoped to the controlled search hostname and verifies that the runner
-receives the injected search credential only at that target.
-Runtime observation also verifies direct gateway alias identity, local-mode
-management access, blocked direct Internet/database connections, gateway
-recreation with preserved CA/encryption material, attachment repair during
-adoption without duplicate containers, and observed termination.
-The suite owns temporary Compose resources and generated fixture keys;
-no personal or paid services are used. See [container runtime](../container-runtime.md)
-for pins, prerequisites and the fixture-only upstream trust exception.
-
-Infrastructure evidence and actual-service evidence are separate. A passing
-container check does not establish a live DeepSeek or Telegram deployment.
-
-## Persistent host and CLI
-
-Recovery regressions cover concurrent fresh/stale-lock acquisition, uncertain
-runtime observation/adoption, failed container termination with preserved claims,
-and input arriving during replacement. A controlled Docker executable at the
-process boundary verifies that failed termination can be retried successfully.
-
-`tests/host.test.ts` uses the public host input, observation, session inspection
-and lifecycle interfaces with real `data/host.db` entities and session mailbox
-stores. `tests/host-fixture.ts` replaces only isolated execution at the session
-driver boundary: it reads runner-permitted input, writes processing/output and
-continuation, and owns its abortable loop. It is a mailbox fixture, not evidence
-of actual Pi, Docker or gateway behavior. Tests cover concurrent first routing,
-owner denial, separate destinations sharing one Agent workspace, restart affinity,
-explicit continuation, persisted output and independent completion/delivery state,
-configuration failure, blocked delivery cancellation and bounded shutdown failure.
-
-Runner tests additionally cover early follow-up completion before any output,
-FIFO results across distinct reply addresses, ordinary versus thrown/missing
-results, late success after cancellation, awaited cleanup and the accepted
-queued-work loss window. Host tests hold both execution and channel delivery
-at explicit checkpoints while another session writes shared materials and replies.
-All waits are bounded; no live credentials or workspace-wide lock are required.
-
-`tests/reconcile-session.test.ts` covers the recovery policy directly: the
-doubling waits before five bounded retries, exhaustion to a failed state, and
-stall decisions from heartbeat age, claim age and a tool's declared timeout
-against a real mailbox. `tests/host-recovery.test.ts` drives the public host
-lifecycle with a controlled clock and real stores: adopting an observed running
-container instead of starting another, adopting an abandoned host lock,
-recovering an abandoned claim across restart through the exact wait sequence,
-leaving completed and provider-failed input terminal, bounding repeated crashes
-that happen before any claim, replacing a container whose
-claim went silent, fencing a superseded handle's late exit, and upgrading an
-existing version-2 store. `tests/mailbox-runner.test.ts` adds the repeated
-tool-effect retry: a controlled effect performed before an interruption occurs
-again on recovery, and neither the test nor the reply claims exactly-once
-execution. These fixtures use controlled external execution, not Pi, Docker or
-gateway behavior.
-
-`tests/host-delivery.test.ts` drives persisted outbound delivery through
-controlled channels against real central/session stores. It covers a successful
-send with cleared attempt bookkeeping, a poisoned send retried exactly three
-times before terminal `failed` state, prior-life attempt rows restored by a fresh
-host instance that still delivers once, exhaustion across host restarts that is
-never sent again, the platform-acceptance/acknowledgement gap that duplicates a
-reply, later replies continuing while an earlier reply fails in the same session,
-an independent session delivering while another destination fails, and no replay
-of output already accepted with no connected client. Attempt rows are read from
-the real host-coordination store; no live platform is contacted.
-
-`tests/cli.test.ts` uses actual local Unix sockets and CLI/host child processes
-for input/reply, reconnect, first-input client replacement, malformed input,
-owner-local permissions, Ctrl+C, singleton listener and SIGTERM cleanup. Controlled
-socket peers also exercise fragmented/coalesced replies, text validation,
-unexpected disconnect, EOF and superseded-client exit status through the actual
-CLI process. An isolated npm prefix exercises the real linked `mbt` executable
-from different directories, shared session affinity, Ctrl+C and missing-host
-failure without creating a host. Source command startup is checked with `dev`
-and `mbt`; compiled smoke executes `npm start` and the built CLI. Startup
-tests import modules without initialization and reject invalid host settings and
-an unavailable host without credentials. The compiled `scripts/host-cli-demo.mjs`
-is included in `verify` and separately runnable with `npm run demo:host`. It uses
-the same controlled mailbox driver and removes its processes, sockets and state.
-`tests/start-command.test.ts` exercises `mbt start` and `mbt exit` through the executable command
-with real Host/HTTP/pairing state. Service-manager and browser commands are replaced
-at their OS process boundary, including a controlled child Host for cold startup.
-Checks cover healthy-Host reuse, loaded/unloaded service startup, authenticated
-readiness, installation root/Node selection through a symlink from another directory,
-configuration/service rejection, browser fallback and side-effect-free help.
-Lifecycle checks cover concurrent starts, exit during startup, active execution
-cleanup, retained chat/work data after restart, already stopped services and
-unconfirmed cleanup after a Host crash. They use real Host shutdown with a
-controlled execution driver; Docker and the shared gateway are not invoked.
-All replaced embedded execution, context, routing and delivery tests are retired.
-Current contracts use host/channel and real Pi SDK tests. Independent Bot API
-normalization and transport cases remain in `tests/telegram-api.test.ts`.
-
-`tests/host-telegram.test.ts` connects `TelegramChannel` and `runHost` to the real
-host/store/mailbox path with a controlled Bot API. It covers unknown-sender and
-non-private/unconfigured-chat rejection, polling-offset advance, ignored text,
-topic messages and callbacks, cancellation and bounded shutdown, CLI Thread
-identity across restart without Telegram chat admission, token containment outside
-runner material, coherent `telegram` settings and entry-point start/stop. The
-`createTelegramApi` boundary is exercised separately with a mock `fetch`; no test
-contacts Telegram or uses a real token. Live Telegram acceptance remains part of
-the separate actual-service pass.
-
-## Question notices
-
-`tests/question-notices.test.ts` uses authenticated HTTP, real SQLite and a
-controlled Telegram HTTP server. A pending question sends one topic notice that
-names the Bot, Task, Run, request and local-client locator. Delivery waits five
-then thirty seconds, honors a longer retry-after, and stops after three attempts.
-Restart leaves an exhausted notice failed until manual resend. Deleted topics and
-missing topic mode or chat authority stay visible and repairable. An answered
-question suppresses a notice that has not been accepted. A later Run can succeed
-while the notice stays failed or suppressed. `tests/browser/question-notices.spec.ts`
-repairs a topic and resends the notice in the built client without changing the
-waiting Run. These checks do not use a real Telegram account.
-
-`tests/websocket-channel.test.ts` binds the owner-local WebSocket channel to a
-real host, central store and per-session mailboxes with the controlled mailbox
-driver and actual local sockets. It verifies validated input and rejection,
-correlated inbound/outbound envelopes with destination meaning, separate
-WebSocket/CLI inputs sharing the Bot's direct Thread and workspace, passive observation of another
-channel's undelivered output, slow-peer dropping, reconnect without event replay,
-host failure envelopes, loopback-only binding and bounded shutdown.
-
-## Agent resources and conversation controls
-
-`tests/pi-resources.test.ts` uses the real SDK with a controlled streaming service
-for selected Skill discovery/read, explicit built-in tool selection, shared Agent
-instructions, missing resources, separate conversations reading shared materials,
-automatic compaction and exact summary reopening. An explicit reset persists a
-fresh SDK conversation without a model request and preserves previous logs.
-
-`tests/bot-memory.test.ts` edits index and topic memory through public HTTP. It
-checks per-Bot isolation, a stale save that returns the observed file, refusal
-to follow a symlink outside the workspace, deletion that stops loading, and the
-same files after a new Host starts. `tests/pi-memory.test.ts` uses the real SDK
-and a controlled model to check ordinary write-tool maintenance, the 16,000
-character index and definition limit, omission of topic bodies and other Bots'
-files, an in-flight request that keeps its original memory, owner corrections on
-the next opening, compaction plus same-Run reopening, and deletion that leaves
-the SDK ledger in place.
-
-`tests/host-resources.test.ts` connects the public Host API to the production
-mailbox loop and real Pi adapter through an offline driver. It checks selected
-resources, shared instructions and files, tool execution, and correlated replies.
-A separate case captures a chat background boundary without starting a Run.
-This driver
-bypasses Docker and gateway transport; it establishes neither mount isolation nor
-live-provider compatibility. `tests/host.test.ts` also verifies selected resources
-and web configuration persist into each Run's immutable runner context after Host
-restart.
-
-`tests/web-config.test.ts` covers the explicit web provider/endpoint selection,
-the web tool names in Agent resource selection, and the host-level requirement
-that a selected web tool has matching configuration. It also upgrades existing
-schema versions 2 through 4 while preserving delivery and host lifecycle state.
-`tests/pi-web-tools.test.ts`
-uses the real SDK with a controlled streaming model service, a controlled search
-service and a controlled page service. It verifies that a model tool round calls
-`web_search` and `fetch_content`, that their JSON results return to the model and
-produce one final reply, that unselected web tools stay out of the model tool
-list, that provider failure returns a usable per-item error, that cancellation
-terminates an active request, and that batches preserve order and reject
-ambiguous arguments. No credential reaches the fixture; search requests carry
-only the gateway placeholder.
-An additional host case runs the production mailbox loop with the real SDK,
-search and page services, then verifies the correlated final reply reaches its
-host channel and receives persisted delivery acknowledgement.
-
-## Integrated channel operation
-
-`tests/host-channels.test.ts` connects CLI sockets, controlled Telegram and real
-local WebSocket clients to one Host. It checks common Thread admission, shared
-working material, a blocked Telegram send observed without acknowledgement by
-WebSocket, per-input delivery routing and retained Thread identity after restart.
-`tests/startup.test.ts` also exercises listener-bind startup rollback and verifies
-that the host entry point requires host settings even if old YAML settings are
-present.
-The former live harness was retired with embedded execution; a current live
-harness is separate acceptance work. No ordinary fixture invokes that engine.
-
-`tests/pi-web-content.test.ts` preserves independent extraction coverage at the
-production Pi-tool boundary: ordered partial failures, Unicode continuation,
-hidden-content removal and relative-link resolution. No embedded Agent fixture
-is retained for these contracts.
-
-## Local client API and browser
-
-`tests/task-attachments.test.ts` uploads through the authenticated Host API. It checks
-selected-Task bytes across restart, an empty list for another Task, a deliberate
-workspace copy that another Bot does not receive, escaped and symlink paths, and
-rejection above the 25 MiB default or a smaller installation limit.
-`tests/container-driver.test.ts` checks that a Run mounts that Task directory
-read-only and refuses a path outside it. `tests/browser/local-client.spec.ts`
-uploads, downloads, saves, and shows the 25 MiB limit without rendering file
-contents. `tests/browser/task-attachments.spec.ts` checks Task targeting,
-deliberate same-Bot reuse, another Bot's empty workspace, an escaped path, and
-a smaller installation limit.
-
-`tests/local-client.test.ts` exercises HTTP and WebSocket credential/Host/Origin
-checks, idempotent browser pairing and reads after a fresh Host starts over the
-same state. These tests use real SQLite and mailboxes with the existing controlled
-SessionDriver; they do not require a client build.
-
-`tests/browser/local-client.spec.ts` uses Playwright Chromium against the built
-client and compiled Host, with the same controlled SessionDriver. It verifies
-rejected/successful pairing, processing and acknowledged input counts, retained
-browser connection on reload, and status recovery after Host restart. It asserts
-rendered content and owner actions rather than pixel snapshots. It also selects
-a Bot's direct Thread, creates independent Tasks, targets additions to active and
-queued Tasks, resets chat background while a Run continues, selects an earlier
-message into the next Run, checks cross-Bot progress, edits long-term memory with a stale-save conflict and
-deletion, and recovers a dropped message response
-and saved work after reload and Host restart. Browser checks remain offline and
-do not establish actual-container or actual-service evidence.
-
-`tests/bot-configuration.test.ts` edits role, approved model and tools through
-public HTTP. It checks saved and effective versions across restart, the finite
-pre-save steering cutoff, same-Run application after that cutoff, real SDK
-reopening with the saved instructions and tools, and a visible incompatible
-continuation that keeps the Run ledger and original history.
-
-`tests/chat-background.test.ts` resets a Thread through public HTTP while a Run
-is active and another is queued. Later Runs and real history-tool calls stay
-inside the boundary captured at admission; the owner can still read older
-originals and can select them into a new Run. Restart keeps the boundary.
-Workspace files remain.
-
-`tests/agent-progress.test.ts` publishes progress and a selected text result
-through the production history-operation mailbox while a Run is active. It checks
-authenticated Thread reads, separation from the Run outcome and searchable
-originals, forged identity, stale Attempts, cross-Bot administration, owner-only
-changes, self-grants, duplicate request identity, timeout lookup, cancellation,
-Host restart and a real Pi tool round.
-
-`tests/thread-execution.test.ts` exercises one-Thread operations through public
-HTTP with real Host/SQLite/mailboxes. It covers stable request replay/conflicts,
-completion races, targeted active/queued additions, admission-before-publication
-recovery, Host loss with durable steering, uncertain outcomes, confirmed and
-failed stops, same-Task retry, late results, original-reply
-projection, authenticated ownership, fresh runtime setup, and actual same-Bot
-serialization with cross-Bot progress. `tests/admission.test.ts` holds execution
-at the public thread API and proves the configurable global cap, non-preemption,
-interactive/background fairness, restart adoption, and durable-wait release.
-Real Pi cases use the production mailbox
-loop and a controlled streaming model service to check independent Run ledgers,
-quoted Thread originals, input consumption evidence and reopening across Attempts.
-
-`tests/run-sdk.test.ts` checks real SDK steering at a model boundary, Run-local
-recording and reopening without replaying known tools, lost continuation recovery,
-and reference reduction before long required input with visible capacity failure.
-The infrastructure suite also checks these workspace and Run boundaries in actual
-containers.
-
-Install Chromium with `npx playwright install chromium` (Linux can use
-`npx playwright install --with-deps chromium`). Run `npm run test:browser` for
-build plus browser checks; `npm run verify` includes them after its ordinary
-tests, build and startup checks. Browser reports remain ignored. CI installs
-Chromium before the same verification command.
-
-`tests/run-budgets.test.ts` drives authenticated Thread operations with a controlled
-Host clock, real SQLite and mailboxes. It verifies steering and Attempt budget
-continuity, waiting and stopped-time exclusion, exhaustion with delayed stop,
-linked retry budgets, and immediate completed-container reclamation. The budget
-browser journey checks visible exhaustion, confirmed stop and explicit retry.
-The opt-in infrastructure suite holds a real model request through the gateway,
-exhausts its Host budget and observes actual container removal; normal completion
-also removes its container and retains workspace effects.
-
-## Delivered artifacts
-
-`tests/delivered-artifacts.test.ts` publishes selected workspace files through
-the production mailbox and downloads through authenticated HTTP with real SQLite.
-It checks preserved bytes after workspace replacement and Host restart, request
-replay, Bot/Run scope, path and symlink rejection, the 25 MiB and smaller
-installation limits, and a real Pi SDK write/publish tool round without owner
-upload. `tests/browser/delivered-artifacts.spec.ts` downloads through the built
-client before and after a fresh Host starts, retaining the original bytes. These
-offline tests do not establish actual-container or live-provider evidence.
-
-## Persistent owner questions
-
-`tests/owner-questions.test.ts` uses authenticated HTTP, real SQLite and mailboxes,
-a controlled clock and explicit tool/stop checkpoints. It covers scoped question
-creation and lookup, correlated replay, waiting Task additions, deadline expiry,
-Host restart, same-Run continuation, capacity retention until complete tool
-results and confirmed stop, and excluded waiting time. Its real Pi SDK case
-records multiple questions and another tool in one batch, resumes with current
-Memory/configuration, and reads an answered request without waiting again.
-`tests/browser/owner-questions.spec.ts` proves separate answer cards survive reload
-and a fresh Host. The opt-in container/gateway fixture checks the production
-runner's complete question result, actual container removal, budget exclusion and
-same-Run continuation through an owner answer. These checks use controlled
-upstreams and do not establish actual-service acceptance.
-
-
-## Bounded nested delegation
-
-`tests/delegations.test.ts` uses authenticated HTTP, real SQLite and mailboxes,
-and a controlled clock. It covers default deny, rejected self-grants and
-ask-each-time approval, one allowed child Task/Run, selected text without the source
-workspace, reverse denial, rejected ancestor requests, parent wait and budget release,
-targeted child steering, ordinary chat isolation, child failure, uncertain child
-hold, confirmed cancellation with a late result, and restart of the same parent
-Run. A real Pi case delegates through the production tool, steers the child at a
-model boundary, and resumes the parent ledger with the child result, saved
-instructions and current Memory. `tests/browser/delegations.spec.ts` saves an
-allow grant and shows the parent and child links after reload and a fresh Host.
-`tests/nested-delegations.test.ts` extends that boundary to two levels, directed
-checks at each edge, ancestor/depth rejection, eight total admitted children
-including descendants across restart/steering/Attempts, independent child
-budgets and linked retries preserving earlier outcomes. It verifies failed and
-uncertain leaves, necessary questions, ancestor holds, stop confirmation through
-both levels, immediate descendant-admission fencing and late evidence without
-revival. Its real Pi SDK case records both delegation tool results, reopens both
-parent ledgers without repeating the tools, and executes only in the reviewer's
-workspace. Nested approval coverage rechecks the shared eight-admission count when delayed
-proposals execute. The built-client journey follows both levels across restart,
-approves reviewer work, and
-stops all owned work from the root, and closes an uncertain reviewer through
-the client before its waiting ancestors resume.
-The opt-in container suite does not add a delegation case; text handoff does not
-depend on a source mount. Actual-service acceptance remains separate.
-
-`tests/cross-bot-file-transfers.test.ts` copies selected Task attachments and
-delivered artifacts through a permitted delegation. It checks receiving-Task
-ownership, source Bot/Task/Run and delegation links, same-Thread exclusion,
-per-file and selection limits, exact approval, retained bytes after source
-changes, cancellation, and Host restart. A real Pi case selects an attachment,
-keeps those bytes out of the child prompt, and records the child result's
-producing and originating links. `tests/browser/cross-bot-file-transfers.spec.ts`
-approves the same selection in the built client and downloads the copy after
-restart. `tests/container-driver.test.ts` checks that a Run mounts only its own
-Task attachment directory.
-
-## Routines
-
-`tests/routines.test.ts` uses authenticated HTTP, real SQLite and directional
-mailboxes with a controlled Host clock/executor. It verifies due/overdue restart,
-atomic one-shot admission, source-cancellation independence, failed/cancelled
-outcomes, acknowledged uncertainty without replay, identity rejection, explicit
-selected inputs, paginated rereading of selected prior occurrence originals,
-queued/active Task additions and chat isolation. The real Pi
-case creates and looks up a Routine with actual tools, starts a fresh occurrence
-ledger and durably records steering through the production polling loop.
-`tests/browser/routines.spec.ts` exercises creation, saved schedule, reload,
-overdue fresh-Host restart, linked occurrence inspection and targeted input in
-the built client. The opt-in mailbox/gateway fixture creates a Routine through
-the actual container's Pi tool and observes independent execution, shared Bot
-materials and terminal container removal. All use controlled model responses;
-actual-service acceptance remains separate.
-
-Cron coverage in the same public suite verifies fallback/Bot timezone edits,
-unchanged admitted snapshots and one-shot instants, parser validation and DST,
-one overdue restart occurrence, busy-slot omission, recurrence after failure,
-question waits across restart, uncertainty and old-occurrence retry exclusion.
-Lifecycle coverage verifies that edits and Bot-setting cutover leave admitted
-definitions fixed, pause and resume skip missed cron slots while an overdue
-one-shot runs once, run-now works while paused without overlap, deletion cancels
-unfinished work and future starts without erasing evidence, and explicit retry
-keeps the old outcome under the same Task with a new budget. Scoped
-`manage_routine` commands and a real SDK pause/run cover the same owner rules.
-The real Pi case creates cron through the actual tool and runs two occurrences,
-proving selected steering and source chat do not enter the next SDK ledger.
-The built-client journey saves a Bot timezone, selects a common cron choice,
-restarts across missed slots twice and inspects distinct occurrence links.
-The opt-in container case creates cron through production Pi and observes an
-independent successful occurrence, future re-arming and actual container removal.
-
-Immediate revocation coverage in `tests/nested-delegations.test.ts` combines a
-pending exact approval with two active delegation levels. It verifies descendant
-and decision cancellation, allow-to-ask behavior, preserved delivered bytes and
-independent direction/work, failed stop capacity, persisted cancellation through
-Host restart, uncertainty, late evidence, replay and forbidden revoked-child
-retries. A real Pi SDK case receives the correlated revocation in the same source
-Run without repeating its delegation tool. The nested browser journey changes
-the directed permission, observes stale approval and stopping cards, then reads
-cancelled or uncertain work and late evidence after a fresh Host starts.
-
-## Bot disablement and logical deletion
-
-`tests/bot-lifecycle.test.ts` uses authenticated HTTP, real SQLite and mailboxes,
-and a controlled clock and executor. It disables a Bot during active chat,
-cancels a Routine occurrence, a delegated child and a pending question, and lets
-unrelated target work finish. An unconfirmed stop stays visible, holds that Bot's
-slot while another Bot completes, and is confirmed after a fresh Host starts.
-Enable keeps the saved role, memory and cancelled outcome, then admits an explicit
-retry as a new Run. Logical deletion returns the retention statement without
-listing feature files, leaves workspace bytes and another Bot's copy in place,
-rejects settings and memory edits, and gives a same-name Bot a new identity and
-empty workspace. Disabled and deleted Bots reject Thread sends, Task inputs,
-retries, Routine creation and delegation. `tests/browser/bot-lifecycle.spec.ts`
-disables the built client during active work, shows an unconfirmed stop, enables
-without reviving that Run, discloses retained evidence, and creates an independent
-same-name Bot. Telegram topic retention belongs to the notification policy.
+Install Chromium with `npx playwright install chromium` (or
+`npx playwright install --with-deps chromium` on Linux). `npm run test:browser`
+builds and checks the browser; `npm run verify` includes browser checks.

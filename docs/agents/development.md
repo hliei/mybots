@@ -2,212 +2,72 @@
 
 ## Tooling status
 
-The host, Agent runner, shared mailbox and browser client npm workspaces use a root lockfile.
-`package.json` scripts and tool configuration files are authoritative for command
-details and scope. See
-[README](../../README.md) for installation and startup instructions.
+The [architecture](../architecture.md) is accepted but not yet implemented.
+Current workspaces and launch commands still describe the previous runtime.
+`package.json`, the lockfile and tool configurations are authoritative for
+commands available in this checkout. Update them with each implementation slice;
+keep one supported startup path after cutover.
 
 ## Technical baseline
 
-- Use TypeScript with Node.js 24.21.0. The root npm package owns repository
-  tooling and commands. `packages/host`, `packages/agent-runner` and
-  `packages/mailbox` are independent workspaces installed from the root lockfile.
-  `packages/client` contains the browser-only status UI and compiles with DOM types.
-  Host dependencies belong to the host package; Pi SDK and web-tool dependencies
-  belong to the runner. The production runner uses Bun 1.4.0; Node remains the
-  offline SDK-development and host runtime.
-- The mailbox root export has no SQLite runtime import. Its `/node` and `/bun`
-  entries statically import their respective native SQLite drivers. Host source
-  uses only the root and Node entries through `@mybots/mailbox` package imports.
-  Mailbox and runner type checking enable pinned Bun types in their own projects;
-  the host project uses Node types. See
-  [mailbox resolution](../container-runtime.md#mailbox-package-resolution).
-- Use npm and commit `package-lock.json` with dependency changes.
-- Pin the supported Node.js baseline and direct dependency versions during
-  tooling setup. Keep local development and CI on the same baseline.
-- Use ESM, strict TypeScript checking, and explicit type-only imports.
-- Use `.ts` extensions for relative TypeScript imports. Configure `tsc` to
-  rewrite those extensions to `.js` in build output, and verify Node.js can
-  execute the result.
-- Use Node.js native type stripping for development and keep TypeScript syntax
-  erasable. Use `tsc` for type checking and compilation, Vitest for tests, and
-  Biome for formatting and linting.
-- Keep host source in `packages/host/src/` and runner source in `packages/agent-runner/src/`.
-  Type-check source, tests, and TypeScript configuration files; compile host
-  source into `packages/host/dist/`, runner source into
-  `packages/agent-runner/dist/`, mailbox source into `packages/mailbox/dist/`, and client assets into
-  `packages/client/dist/`.
-- Ignore dependencies, build output, coverage output, local credentials, and
-  runtime data. Keep source, tests, configuration, and the lockfile in Git.
+- Use TypeScript with Node.js 24.21.0 and npm. Pin direct dependencies and keep
+  local development and CI on the same baseline; commit lockfile changes.
+- Use ESM, strict types and explicit type-only imports. Relative TypeScript
+  imports use `.ts`; configure compilation to rewrite them to `.js` and verify
+  that Node.js can execute the output.
+- Keep syntax erasable for native Node.js type stripping. Use `tsc` for types
+  and builds, Vitest for tests, Biome for formatting/lint and Playwright for Web.
+- Type-check source, tests and TypeScript configuration. Keep dependencies,
+  generated output, credentials and runtime data outside Git.
+- Organize new code under the accepted application/package boundaries. Create
+  packages when used; legacy paths and runner-specific tooling do not constrain
+  the target. Retire obsolete dependencies and callers with their implementation.
 
 ## Code conventions
 
-- Keep agent execution, terminal interaction, and message-platform handling in
-  separate modules. The CLI is a client of the persistent host and the owner-local
-  WebSocket interface is a host channel. `packages/host/src/index.ts` is the sole host startup
-  entry point and composes all three channel services. The independent CLI entry
-  is `packages/host/src/cli/client.ts`: it parses arguments and starts `chat.ts` for terminal
-  interaction. `socket-client.ts` owns the CLI socket protocol; `socket-server.ts`
-  owns the host-side CLI listener. All four modules live under `packages/host/src/cli/`.
-  The Telegram Bot API boundary in `packages/host/src/channels/telegram-api.ts` sends
-  question notices to one owner-private chat, one topic per Bot. Topic messages, free
-  text and callbacks do not admit chat or decisions. Pairing still registers the owner.
-  The token stays host-side.
-- Keep platform SDK details at the platform boundary and model SDK details at
-  the model boundary. Core behavior must be testable without live credentials.
-- Prefer explicit types at module boundaries. Use `unknown` for unvalidated
-  external input; narrow or validate it before use. Use `any` only when required
-  by an external API, with a local explanation.
+- Keep model SDK details in Agent integration and Docker details in the sandbox
+  boundary. Core behavior must be testable without live credentials.
+- Use explicit types at module boundaries. Validate `unknown` external inputs;
+  use `any` only when an external API requires it, with a local explanation.
 - Check installed dependency types and documentation before using an API.
-- Keep changes within the requested behavior. Add abstractions when an actual
-  use requires them; keep unrelated cleanup separate.
-- Keep process startup at entry points so importing a module for testing does
-  not open connections or start background workers.
-- Give long-running resources an explicit cleanup path. Define cancellation,
-  message ordering, and failure behavior when introducing asynchronous work.
-
-Active Run queries accept durable steering at permitted SDK boundaries. Queue
-insertion alone is not consumption; SDK recording precedes mailbox evidence.
-Query shutdown closes admission and awaits polling/SDK cleanup. One actual
-Attempt per Bot holds capacity until confirmed stop or a complete-tool-result
-durable wait; four Attempts run at once by default, and other Bots may progress
-inside that limit.
-Execution and per-Run delivery progress independently. See
-[container execution](../container-runtime.md) for event and failure mapping.
+- Change only the requested behavior. Add abstractions for actual uses, not
+  hypothetical extensions.
+- Start processes only at entry points; imports must not open connections or
+  start workers. Give long-running resources explicit cleanup and cancellation.
+- Preserve the ownership rules in [conversation execution](../conversation-execution.md)
+  and [Computer and resources](../computer-and-resources.md). Do not recreate
+  legacy queues, recovery engines or resource versioning behind new interfaces.
 
 ## Command contract
 
 | Script | Required behavior |
 | --- | --- |
-| `dev` | Run the persistent host from TypeScript source. |
-| `mbt` | Run the source CLI through `bin/mbt`: interactive socket chat by default, or installed-service Web startup with `start`. |
-| `typecheck` | Check all four workspaces, root tests and configuration without emitting files. |
-| `check` | Check formatting, lint, and types without modifying files; do not run tests or build. |
-| `format` | Apply formatting fixes. |
-| `test` | Run all ordinary offline tests once and exit. |
-| `test:watch` | Watch files and rerun ordinary offline tests. |
-| `build` | Clean generated output, then compile all four workspaces into their separate `dist/` directories. |
-| `start` | Run the built persistent host with Node.js. |
-| `verify` | Run `check`, ordinary tests, build, an offline startup smoke check for each entry point, and the built-client browser journey. |
+| `check` | Formatting, lint and type checks without modifying files |
+| `format` | Apply formatting fixes |
+| `test` / `test:watch` | Run/watch ordinary offline tests |
+| `build` | Clean and compile active workspaces |
+| `verify` | Check, ordinary tests, build, compiled startup smoke and browser checks |
+| `test:browser` | Build and run browser checks |
+| `test:infrastructure` | Separately invoked Docker checks with controlled providers |
 
-`dev` selects the mailbox `mybots-source` export condition and runs host source
-without building or watching; restart manually after
-changes. `start` uses the existing host build without rebuilding. `mbt` runs the
-CLI source with Node.js native TypeScript support. The root package's executable
-`bin/mbt` exposes that same source client after `npm link --workspaces=false`,
-resolving npm symlinks while preserving the caller's current directory and preferring
-`.tools/node/bin/node`. `mbt start` uses the linked installation as its default root,
-starts its existing service without restarting a healthy Host, waits for an
-authenticated local API response, then opens the configured Web UI. Only startup
-loads Host configuration and its mailbox validation dependency; terminal chat,
-help and exit remain usable without workspace build output. Terminal chat
-keeps its caller-directory default. `mbt exit` uses the same installation default,
-stops its service and waits for session-container cleanup, retaining saved data and
-the shared gateway. Start and exit share a kernel-released lock in
-`data/service-control.lock`; they never lock the Host's domain database. Startup
-smoke checks must exit without live credentials and cover executable entry points,
-not only imports.
-The offline startup checks also execute the compiled Pi provider against a local
-streaming model service through `scripts/pi-session-demo.mjs`. `npm run demo:pi`
-builds mailbox and runner, then runs this demonstration separately. It exercises SDK-owned tools and
-explicit conversation reopening without credentials or container infrastructure.
-
-The startup checks also run the compiled host/CLI mailbox fixture demonstration
-for persistent affinity, reconnect and host restart, plus missing-host/settings
-failures. Run `npm run demo:host` for visible evidence. It does not require Docker
-or model credentials.
-
-The retired embedded-runtime live harness and `test:live` command are removed.
-Actual-service checks use the manual opt-in
-[macOS acceptance procedure](../macos-service-acceptance.md), outside `test`,
-`test:watch`, and `verify`. The procedure does not establish a live pass until
-its deployment evidence is recorded.
+Startup checks must exercise executable entry points and exit without live
+credentials. The existing infrastructure command covers the legacy runtime;
+replace its scope with Team Computer checks during implementation. The new
+one-command startup must be documented and verified when delivered. Existing
+startup scripts do not establish that the target system is runnable.
 
 ## Validation and completion
 
-1. Define the expected behavior and use the workflow in
-   [Testing](testing.md) for application changes.
-2. During development, run affected test files and type checking. After code
-   changes, run `check` and fix reported problems.
-3. Before delivering application or tooling changes, run `verify`. For tooling
-   setup, also exercise development startup and test watching. Use the same
-   verification script in CI; `.github/workflows/ci.yml` also runs
-   `bash tests/workflow.sh` in isolated temporary repositories.
-4. For documentation-only changes, check content, relative links, and agreement
-   with the actual tooling state. Follow
-   [Git workflow](git-workflow.md#validation-and-delivery) for other checks.
-5. Report behavior changes and validation results. If tooling or a required
-   external service is unavailable, state which checks remain unverified.
+1. Define expected behavior and follow [Testing](testing.md) for application changes.
+2. Run affected tests and type checks during development; after code changes,
+   run `check` and fix reported problems.
+3. Before application or tooling delivery, run `verify`. For tooling changes,
+   also exercise development startup and test watching. Keep CI on the same
+   verification command and retain `bash tests/workflow.sh` for workflow checks.
+4. For documentation-only changes, verify content, relative links and agreement
+   with actual tooling status. Follow [Git workflow](git-workflow.md#validation-and-delivery).
+5. Report behavior changes and validation results, including unavailable checks.
 
-Update affected documentation and tests with the behavior they describe.
-Delivery is complete when applicable checks pass and no required validation is
-left unexplained. A passing test run does not replace type checking or running
-the compiled program.
-
-## Container execution
-
-`container/Dockerfile` pins Node 24.21.0 for reproducible npm installation and
-Bun 1.4.0 for the production runner. The image includes only runner dependencies,
-runner source and shared mailbox code. Build with `docker build -t
-mybots-agent:mailbox -f container/Dockerfile .`. Run the separate opt-in
-`npm run test:infrastructure` for mounted SQLite, proxy/TLS and controlled Pi
-execution, including a scoped web-search gateway target. These checks need Docker
-and `openssl`, but no real account credentials.
-See [container runtime](../container-runtime.md) for fixed mounts, gateway
-configuration, cleanup and accepted completion behavior.
-
-## Host lifecycle recovery
-
-The host claims each session with a fenced incarnation recorded in
-`session_claims` and registers its own live instance in `host_instances`.
-Startup reconciliation reads persisted sessions and the runtime containers the
-driver observes, adopting a running container or replacing abandoned execution.
-An abandoned `processing` claim is retried with waits of 5, 10, 20, 40 and 80
-seconds and then reaches an explicit failed state; completed input is never
-redelivered. The same schedule bounds input a container never claimed, so a
-crash before processing cannot restart forever. A running container with a stale
-heartbeat, or one that claimed input and then went silent, is stopped and its
-unfinished work recovered under the same policy. `Host.reconcile()` runs this pass on demand and the host also
-runs it periodically. Retrying unfinished input can repeat tool effects;
-exactly-once execution and delivery are not provided. See
-[host runtime](../host-runtime.md#interrupted-execution-recovery).
-
-## Agent resources and context
-
-The host persists `agent.resources` (selected Skill IDs/content revisions and SDK
-built-in or configured web tool names) and optional `agent.web` provider/endpoint
-selection
-separately from model configuration. Provisioning copies only that
-non-secret selection into immutable runner context. The runner loads the shared
-workspace's `AGENTS.md` and selected protected `/session/skills/<id>/SKILL.md`
-with Pi's resource loader when opening a query. Owner imports create Bot-owned
-snapshots; explicit selection/save activates revisions. Docker mounts their
-Host-owned material read-only, outside writable session/workspace source paths.
-Default personal/ancestor resource discovery,
-extensions, prompt templates, themes and file-backed SDK settings stay disabled.
-Selecting `web_search` or `fetch_content` registers the matching Pi custom tool
-inside the container; the real search credential stays gateway-owned and is
-injected only for the configured endpoint's hostname.
-The runner loads current workspace AGENTS.md and the Attempt's captured Skill
-revisions when it opens a query. Saving Bot role, model, tool or Skill selection
-preserves those files; proposed workspace Skill edits require owner import and
-activation. That save establishes a finite cutoff: the open Attempt and steering
-admitted before the save finish under that Attempt's version. Input admitted
-after the save stays on the same Run and runs on the next Attempt, which
-replaces immutable context with the saved version and reopens that Run ledger.
-
-The runner reads `memory/index.md` and `memory/definition.md` from the Bot workspace
-when a turn starts. Each file contributes at most 16,000 characters, with an
-explicit truncation note and the workspace path for the rest. Topic files under
-`memory/topics/` are named in that prompt and read with ordinary file tools;
-their bodies are not copied into the prompt. A later turn supplies the current
-files or states that they changed or were deleted. That supply is projected onto
-the model request and does not rewrite the Run ledger or an invocation that has
-already started. Owner edits use the authenticated memory API. There is no
-workspace lock or semantic merge.
-
-Pi owns Run-local automatic compaction, summaries and reopening. The Host selects
-bounded original Thread references for each new Run. `/reset` and the Thread
-reset operation capture a new chat background boundary for later conversational
-Runs. They do not replace existing Run ledgers. Earlier messages enter that
-background only when the owner selects them.
+Update tests and documentation with their behavior. A passing test suite does
+not replace type checks or compiled execution. Docker integration and explicitly
+authorized real-provider acceptance remain distinct from ordinary validation.
