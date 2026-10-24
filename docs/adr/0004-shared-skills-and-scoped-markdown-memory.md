@@ -1,6 +1,6 @@
 # Shared Skills and scoped Markdown memory
 
-Status: accepted; implementation planned.
+Status: accepted; implemented in the isolated persistent chat entry.
 
 Store Space-shared Skills and Bot/owner-scoped Markdown memory in product SQLite,
 separate from Computer files and SDK history. This gives owner editing and Agent

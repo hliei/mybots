@@ -9,6 +9,8 @@ import {
   context,
   type HostModel,
   openAgent,
+  resourceContext,
+  resourceTools,
   type SubmissionId,
 } from "@mybots/agent";
 import type { Bot, ChatMessage, ChatView, WorkerCommand } from "@mybots/contracts";
@@ -43,13 +45,20 @@ export async function openWorker(
     const products = database;
     const computer = products.computer();
     const sandbox = new DockerSandbox(computer, join(root, "computer", "workspace"));
-    harness = await openAgent(join(root, "data", "durable.sqlite"), models, [
-      computerTools(sandbox, computer, (conversationId) => {
-        const bot = products.bots().find((bot) => bot.conversationId === conversationId);
-        if (!bot) throw new Error("Bot not found for Computer access");
-        return bot.id;
-      }),
-    ]);
+    const botForConversation = (conversationId: number) => {
+      const bot = products.bots().find((bot) => bot.conversationId === conversationId);
+      if (!bot) throw new Error("Bot not found for tool access");
+      return bot.id;
+    };
+    harness = await openAgent(
+      join(root, "data", "durable.sqlite"),
+      models,
+      [
+        computerTools(sandbox, computer, botForConversation),
+        resourceTools(products, botForConversation),
+      ],
+      (id) => resourceContext(products, botForConversation(id)),
+    );
     return await ownedWorker(database, harness);
   } catch (error) {
     await harness?.close(context);

@@ -70,6 +70,36 @@ export async function startApi(root: string, port = 0): Promise<ApiServer> {
       json(response, await worker.request({ action: "create", configuration }), 201);
       return;
     }
+    if (path === "/api/skills" && request.method === "GET") {
+      json(response, { skills: database.skills().map(({ content: _content, ...skill }) => skill) });
+      return;
+    }
+    const skill = /^\/api\/skills\/([a-z][a-z0-9-]{0,79})$/.exec(path);
+    if (skill) {
+      const name = skill[1] as string;
+      if (request.method === "GET") json(response, database.skill(name));
+      else if (request.method === "PUT")
+        json(response, database.writeSkill(name, await body(request)));
+      else if (request.method === "DELETE") {
+        database.deleteSkill(name);
+        json(response, {});
+      } else json(response, { error: "Not found" }, 404);
+      return;
+    }
+    const memory = /^\/api\/(?:memory\/(owner)|bots\/([^/]+)\/memory)$/.exec(path);
+    if (memory) {
+      const scope = memory[1] ? "owner" : "bot";
+      const botId = memory[2];
+      if (request.method === "GET") json(response, database.memory(scope, botId));
+      else if (request.method === "PUT") {
+        const value = (await body(request)) as { content?: unknown } | null;
+        json(response, database.writeMemory(scope, value?.content, botId));
+      } else if (request.method === "DELETE") {
+        database.deleteMemory(scope, botId);
+        json(response, {});
+      } else json(response, { error: "Not found" }, 404);
+      return;
+    }
     const match = /^\/api\/bots\/([^/]+)(?:\/(chat|events|send|stop))?$/.exec(path);
     if (match) {
       const botId = match[1] as string;
