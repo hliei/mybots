@@ -9,5 +9,11 @@ await Promise.all(
     "../packages/client/dist/",
     "../packages/mailbox/dist/",
     "../packages/agent-runner/dist/",
+    "../packages/contracts/dist/",
+    "../packages/db/dist/",
+    "../packages/agent/dist/",
+    "../apps/web/dist/",
+    "../apps/worker/dist/",
+    "../apps/api/dist/",
   ].map((path) => rm(new URL(path, import.meta.url), { recursive: true, force: true })),
 );

@@ -33,3 +33,10 @@ one-command startup.
 - [Development](docs/agents/development.md)
 - [Testing](docs/agents/testing.md)
 - [Git workflow](docs/agents/git-workflow.md)
+
+## Persistent chat entry
+
+The isolated Web/API/worker chat slice is available with `npm run start:durable`.
+See [persistent local chat](docs/durable-chat.md) for host model configuration,
+connection credentials, storage ownership and verification. The default entry
+has not yet switched to this runtime.

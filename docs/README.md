@@ -1,8 +1,9 @@
 # Documentation
 
-These documents describe the accepted target architecture. Implementation and
-acceptance are pending. Previous runtime designs and acceptance records have
-been retired from this documentation set; tracked history remains in Git.
+These documents describe the accepted target architecture. The isolated
+persistent-chat slice is available; full implementation and acceptance remain
+pending. Previous runtime designs and acceptance records have been retired from
+this documentation set; tracked history remains in Git.
 
 ## Architecture
 
@@ -11,6 +12,9 @@ been retired from this documentation set; tracked history remains in Git.
 | [Architecture](architecture.md) | Release scope, process layout and data ownership |
 | [Conversation execution](conversation-execution.md) | Context, history, input, Stop and recovery |
 | [Computer and resources](computer-and-resources.md) | Docker workspace, Bot configuration, Skills and memory |
+
+See [persistent local chat](durable-chat.md) for the implemented entry, host
+configuration, context defaults and current validation scope.
 
 ## Decisions
 

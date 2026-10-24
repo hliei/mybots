@@ -190,3 +190,5 @@ for (const entry of ["index", "cli/client"]) {
   );
 }
 console.log("Host, CLI, Pi provider and isolated runner startup smoke checks passed.");
+
+await import("./check-durable-startup.mjs");

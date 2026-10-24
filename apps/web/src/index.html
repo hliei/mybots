@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mybots</title><link rel="stylesheet" href="/style.css"><script type="module" src="/main.js"></script></head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Bots">
+      <header class="sidebar-head"><h1>Mybots</h1><button id="open-create" class="icon-button" aria-label="Create Bot" type="button">+</button></header>
+      <div id="bot-list" class="bot-list"></div>
+      <footer><p id="connection" role="status">Connect to begin</p></footer>
+    </aside>
+    <main class="workspace">
+      <section id="pairing" aria-labelledby="pairing-title"><h2 id="pairing-title">Connect to Mybots</h2><p>Use the credential in your installation's data/client-credential file.</p><form id="pair-form"><label for="credential">Connection credential</label><input id="credential" type="password" autocomplete="off" required><button type="submit">Connect</button></form><p id="pairing-message" role="status"></p></section>
+      <div id="workspace" class="chat-column" hidden>
+        <header class="chat-head"><div id="bot-identity"><span class="avatar" aria-hidden="true">M</span><span id="bot-identity-name">Select a Bot</span></div><div class="header-actions"><button id="edit-bot" type="button" disabled>Bot settings</button></div></header>
+        <section id="chat" aria-label="Direct Thread">
+          <div class="timeline"><div class="thread"><div id="thread-messages" aria-label="Conversation"></div><div id="live-execution" role="status"></div><div id="unprocessed" aria-label="Unprocessed inputs"></div></div></div>
+          <div class="composer-area"><button id="back-to-latest" type="button" hidden>↓ Back to latest</button><form id="message-form"><label class="sr-only" for="message-text">Message</label><textarea id="message-text" placeholder="Message your Bot…" required disabled></textarea><div class="composer-actions"><button id="stop" type="button" disabled>Stop</button></div><button id="send" type="submit" aria-label="Send message" disabled>↑</button></form><p id="chat-message" role="status"></p></div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <dialog id="bot-dialog" aria-labelledby="bot-dialog-title"><h2 id="bot-dialog-title">Create Bot</h2><form id="bot-form"><label for="bot-name">Bot name</label><input id="bot-name" maxlength="100" required><label for="bot-instructions">Instructions</label><textarea id="bot-instructions" maxlength="32000"></textarea><label for="bot-model">Model</label><select id="bot-model" required></select><p id="bot-error" role="status"></p><button type="submit">Save Bot</button><button id="close-bot" type="button">Cancel</button></form></dialog>
+</body>
+</html>

@@ -16,7 +16,10 @@
       "vitest.config.ts",
       "!package-lock.json",
       "playwright.config.ts",
-      "packages/client/*.mjs"
+      "packages/client/*.mjs",
+      "apps/**/*.ts",
+      "apps/*/*.json",
+      "apps/*/*.mjs"
     ]
   },
   "formatter": {

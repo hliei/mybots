@@ -31,3 +31,6 @@ node_modules/
 # Browser validation reports.
 /test-results/
 /playwright-report/
+
+# Application build output.
+/apps/*/dist/
