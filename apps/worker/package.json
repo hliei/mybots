@@ -17,6 +17,7 @@
   "dependencies": {
     "@mybots/agent": "0.0.0",
     "@mybots/contracts": "0.0.0",
-    "@mybots/db": "0.0.0"
+    "@mybots/db": "0.0.0",
+    "@mybots/sandbox": "0.0.0"
   }
 }

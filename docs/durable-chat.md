@@ -2,7 +2,8 @@
 
 The isolated chat entry runs the API and Durable worker as separate local
 processes. It supports Bot creation and saved name, instructions and model,
-one persistent Thread per Bot, streamed answers, native steering and Stop.
+one persistent Thread per Bot, streamed answers, native steering and Stop,
+and shell/file tools on a persistent Docker Team Computer.
 The existing default entry remains available until the full runtime cutover.
 
 Use Node.js 24.21.0 and install with `npm ci`, then `npm run prepare` and
@@ -37,6 +38,17 @@ Restart the application after changing host model configuration. A Bot whose
 saved choice was removed remains editable with its original Thread; choose an
 available model in Bot settings before sending new input.
 
+For Computer tools, start Docker Desktop and build the tool image once (and
+again after updating its Dockerfile or helper):
+
+```sh
+npm run build:computer
+```
+
+Plain chat and application startup do not require Docker. The first shell or
+file operation prepares the Computer; missing Docker or image failures appear
+as tool errors. Model endpoints and credentials are never passed to the container.
+
 Start both processes and serve the built Web with one command:
 
 ```sh
@@ -63,6 +75,50 @@ arguments and requires built Web assets. Ctrl+C shuts down both processes;
 normal shutdown retains all data. A second worker cannot open the same root.
 If startup fails, check the model file, its required fields and data-root
 ownership before retrying.
+
+## Team Computer
+
+The worker registers only `shell`, `read_file` and `write_file` as working-file
+tools. All use the same ComputerRef and Docker SandboxProvider. Product SQLite
+retains one Computer identity for the default Space. Its sole host mount is
+`<root>/computer/workspace`, exposed as `/workspace` in the container. Host model
+configuration and databases are outside that mount.
+
+Relative tool paths and default command directories use `bots/<botId>/`.
+`shared/...`, `bots/...` and `/...` explicitly select paths from the workspace
+root; `/` selects the root itself. For example, `write_file` at
+`shared/input.txt` and `shell` with `cwd: "/shared"` use the same file.
+Paths passed as shell command arguments follow ordinary shell semantics; use
+`/workspace/shared/input.txt` to reference that file from a Bot's default cwd.
+Tool paths reject traversal and links outside the workspace. Bot directories
+organize files and do not isolate Bots. Concurrent edits to shared files require
+owner coordination.
+
+Concurrent first use shares preparation, while independent commands run without
+a global Computer lock. Stop kills the active command's process group inside
+the container and joins its wrapper; it preserves the Computer and completed
+file effects. Commands have a 120-second limit and retain up to 64 KiB each of
+stdout/stderr, with an explicit truncation flag. File tools handle UTF-8 files
+up to 1 MiB. Interrupted shell/write operations are not replayed automatically;
+the SDK records the interrupted outcome. Read operations are replay-safe.
+
+Normal shutdown closes the worker without removing the container or workspace.
+The container may stay running. Later tool use starts a stopped container or
+recreates a removed container with the same persistent mount. Rebuilding the
+image requires removing the installation's container before the next tool use;
+identify its name through `ProductDatabase.computer().id`, and preserve the
+workspace directory. Tool binaries and `/tmp` are disposable; working files
+belong under `/workspace`.
+
+`@mybots/sandbox` exposes `DockerSandbox.exportWorkspace(computer)` and
+`importWorkspace(computer, archive)` for explicit installation transfer.
+These exchange an uncompressed tar archive, limited to 16 MiB and 2,048 entries,
+containing regular files/directories. Links and special files are rejected;
+binary bytes, empty directories and regular-file permission bits are preserved.
+Import validates the manifest before writing, merges into the target workspace,
+and overwrites named files without deleting other files. Pause working Bots
+before transfer; it is not a concurrent snapshot or an atomic restore. No
+workspace copying occurs during normal turns and no management UI is included.
 
 ## Persistence and context
 
@@ -103,6 +159,13 @@ transport deduplication, credential checks and Stop. Browser checks cover send,
 streaming, reload, Bot editing and Thread separation.
 
 No Docker operation or actual provider request is required by these checks.
-Computer tools, shared Skills/memory, comprehensive original-history controls,
+`npm run test:infrastructure` builds the Computer image and separately verifies
+real Docker file/shell agreement, concurrent first use, process-group cancellation,
+public Stop, SDK chat tools, application reopen/container replacement, unsafe
+path/archive rejection and workspace transfer using temporary resources and a
+controlled HTTP model. It needs Docker but no personal provider credentials.
+The legacy gateway infrastructure fixtures are outside this command's scope.
+
+Shared Skills/memory, comprehensive original-history controls,
 full interruption/recovery combinations and default cutover remain subsequent
 slices. Controlled-model success does not establish actual-provider acceptance.

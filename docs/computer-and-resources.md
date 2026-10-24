@@ -1,6 +1,6 @@
 # Computer and resources
 
-Status: accepted target; implementation pending.
+Status: Team Computer tools implemented in the isolated chat entry; Skills and memory planned.
 
 ## Team Computer
 
@@ -20,6 +20,11 @@ application restart and container replacement. Normal shutdown preserves them.
 The provider supports workspace export/import, verified by a file round trip;
 there are no per-turn workspace copies, management UI, snapshots or automatic
 idle suspension.
+
+The [persistent chat entry](durable-chat.md#team-computer) documents the Docker
+image, persistent mount, path syntax, command/file bounds, cancellation and
+explicit archive-transfer contract. Run `npm run test:infrastructure` for the
+controlled-model/real-Docker evidence; ordinary verification needs no Docker.
 
 ## Bot configuration and Skills
 

@@ -52,9 +52,9 @@ keep one supported startup path after cutover.
 | `test:infrastructure` | Separately invoked Docker checks with controlled providers |
 
 Startup checks must exercise executable entry points and exit without live
-credentials. The existing infrastructure command covers the legacy runtime;
-replace its scope with Team Computer checks during implementation. The new
-one-command startup must be documented and verified when delivered. Existing
+credentials. The infrastructure command builds the Computer image and covers
+Team Computer tools, persistence, cancellation and transfer with a controlled
+model. The new one-command startup must be documented and verified when delivered. Existing
 startup scripts do not establish that the target system is runnable.
 
 ## Validation and completion

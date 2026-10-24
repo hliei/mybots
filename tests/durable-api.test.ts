@@ -5,6 +5,26 @@ import type { Bot, ChatView } from "@mybots/contracts";
 import { expect, test } from "vitest";
 import { apiFixture } from "./durable-api-fixture.ts";
 
+test("chat offers only Computer shell and file tools without starting Docker", async () => {
+  const fixture = await apiFixture();
+  try {
+    const bot = (await fixture.request("bots", {
+      name: "Computer user",
+      instructions: "",
+      model: "controlled",
+    })) as Bot;
+    await fixture.request(`bots/${bot.id}/send`, { text: "Hello", requestId: "tools" });
+    await settled(fixture, bot);
+    expect(fixture.service.requests[0]?.tools?.map((tool) => tool.function.name).sort()).toEqual([
+      "read_file",
+      "shell",
+      "write_file",
+    ]);
+  } finally {
+    await fixture.close();
+  }
+});
+
 async function settled(
   fixture: Awaited<ReturnType<typeof apiFixture>>,
   bot: Bot,
@@ -271,6 +291,34 @@ test("removing a configured model preserves startup and permits changing the sav
     await fixture.request(`bots/${bot.id}/send`, { text: "Continue", requestId: "replacement" });
     expect((await settled(fixture, bot)).messages.at(-1)?.text).toBe("Persistent answer");
     expect(JSON.stringify(fixture.service.requests.at(-1))).toContain("Use the replacement");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("invalid Computer tool paths produce a visible failure without reading host files", async () => {
+  let first = true;
+  const fixture = await apiFixture(() => {
+    if (first) {
+      first = false;
+      return { tool: "read_file", arguments: { path: "../models.json" } };
+    }
+    return { text: "The file operation failed" };
+  });
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Reader",
+      instructions: "",
+      model: "controlled",
+    });
+    await fixture.request(`bots/${bot.id}/send`, { text: "Read", requestId: "invalid-path" });
+    const view = await settled(fixture, bot);
+    expect(view.messages.flatMap((message) => message.tools)).toEqual(["read_file"]);
+    expect(view.messages.find((message) => message.role === "tool")?.text).toContain(
+      "Path escapes",
+    );
+    expect(JSON.stringify(view)).not.toContain("fixture-key");
+    expect(view.messages.at(-1)?.text).toBe("The file operation failed");
   } finally {
     await fixture.close();
   }

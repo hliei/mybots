@@ -11,6 +11,9 @@ export class ProductDatabase {
       PRAGMA foreign_keys = ON;
       CREATE TABLE IF NOT EXISTS spaces (id TEXT PRIMARY KEY);
       INSERT OR IGNORE INTO spaces VALUES ('default');
+      CREATE TABLE IF NOT EXISTS computers (
+        space_id TEXT PRIMARY KEY REFERENCES spaces(id), id TEXT NOT NULL UNIQUE
+      );
       CREATE TABLE IF NOT EXISTS bots (
         id TEXT PRIMARY KEY, space_id TEXT NOT NULL REFERENCES spaces(id),
         name TEXT NOT NULL, instructions TEXT NOT NULL, model TEXT NOT NULL
@@ -27,6 +30,15 @@ export class ProductDatabase {
       threads.id AS threadId, conversation_id AS conversationId
       FROM bots JOIN threads ON threads.bot_id = bots.id ORDER BY bots.rowid`)
       .all() as unknown as Bot[];
+  }
+
+  computer(): { id: string } {
+    this.database
+      .prepare("INSERT OR IGNORE INTO computers VALUES ('default', ?)")
+      .run(`mybots-${randomUUID()}`);
+    return this.database
+      .prepare("SELECT id FROM computers WHERE space_id = 'default'")
+      .get() as unknown as { id: string };
   }
 
   bot(id: string): Bot {
