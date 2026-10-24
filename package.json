@@ -25,7 +25,9 @@
     "mbt": "bin/mbt",
     "setup": "node setup/cli.ts",
     "setup:auto": "node setup/cli.ts",
-    "test:browser": "npm run build && playwright test"
+    "test:browser": "npm run build && playwright test",
+    "dev:durable": "node --conditions=mybots-source apps/api/src/index.ts",
+    "start:durable": "node apps/api/dist/index.js"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
@@ -42,7 +44,13 @@
     "packages/mailbox",
     "packages/host",
     "packages/agent-runner",
-    "packages/client"
+    "packages/client",
+    "packages/contracts",
+    "packages/db",
+    "packages/agent",
+    "apps/web",
+    "apps/worker",
+    "apps/api"
   ],
   "bin": {
     "mbt": "bin/mbt"

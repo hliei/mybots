@@ -3,7 +3,8 @@
 ## Tooling status
 
 The [architecture](../architecture.md) is accepted but not yet implemented.
-Current workspaces and launch commands still describe the previous runtime.
+The isolated [persistent chat entry](../durable-chat.md) implements the first
+Web/API/worker slice. Default launch commands still describe the previous runtime.
 `package.json`, the lockfile and tool configurations are authoritative for
 commands available in this checkout. Update them with each implementation slice;
 keep one supported startup path after cutover.
