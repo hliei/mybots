@@ -126,7 +126,11 @@ function choose(bot: Bot): void {
   ).toUpperCase();
   message.disabled = false;
   message.placeholder = `Message ${bot.name}…`;
-  node<HTMLButtonElement>("send").disabled = false;
+  const available = models.some((model) => model.id === bot.model);
+  node<HTMLButtonElement>("send").disabled = !available;
+  node("chat-message").textContent = available
+    ? ""
+    : "Choose an available model in Bot settings before sending.";
   node<HTMLButtonElement>("edit-bot").disabled = false;
   for (const row of node("bot-list").children)
     row.classList.toggle("selected", (row as HTMLElement).dataset.botId === bot.id);
@@ -158,7 +162,8 @@ async function refresh(preferred?: string): Promise<void> {
     const name = document.createElement("h3");
     name.textContent = bot.name;
     const detail = document.createElement("p");
-    detail.textContent = models.find((model) => model.id === bot.model)?.name ?? bot.model;
+    detail.textContent =
+      models.find((model) => model.id === bot.model)?.name ?? "Model unavailable";
     const button = document.createElement("button");
     button.className = "choose-bot";
     button.type = "button";
@@ -233,7 +238,8 @@ node("pair-form").addEventListener("submit", (event) => {
 });
 node("message-form").addEventListener("submit", (event) => {
   event.preventDefault();
-  if (!selected || !message.value.trim()) return;
+  if (!selected || !message.value.trim() || !models.some((model) => model.id === selected?.model))
+    return;
   const text = message.value;
   if (!pending || pending.botId !== selected.id || pending.text !== text)
     pending = { botId: selected.id, text, requestId: crypto.randomUUID() };
@@ -247,7 +253,9 @@ node("message-form").addEventListener("submit", (event) => {
     })
     .catch(report)
     .finally(() => {
-      node<HTMLButtonElement>("send").disabled = !selected;
+      node<HTMLButtonElement>("send").disabled = !models.some(
+        (model) => model.id === selected?.model,
+      );
     });
 });
 message.addEventListener("keydown", (event) => {

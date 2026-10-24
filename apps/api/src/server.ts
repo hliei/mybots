@@ -23,7 +23,12 @@ function json(response: ServerResponse, value: unknown, status = 200): void {
   response.end(JSON.stringify(value));
 }
 
-export async function startApi(root: string, port = 0) {
+export interface ApiServer {
+  url: string;
+  close(): Promise<void>;
+}
+
+export async function startApi(root: string, port = 0): Promise<ApiServer> {
   await mkdir(join(root, "data"), { recursive: true, mode: 0o700 });
   const access = await LocalAccess.load(root);
   const worker = await startWorker(root);

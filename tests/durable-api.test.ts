@@ -1,4 +1,6 @@
+import { writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
+import { join } from "node:path";
 import type { Bot, ChatView } from "@mybots/contracts";
 import { expect, test } from "vitest";
 import { apiFixture } from "./durable-api-fixture.ts";
@@ -236,6 +238,40 @@ test("one worker owns a data root and another startup cannot disrupt admitted ch
     expect((await settled(fixture, bot)).messages.at(-1)?.text).toBe("Persistent answer");
   } finally {
     await duplicate?.close();
+    await fixture.close();
+  }
+});
+
+test("removing a configured model preserves startup and permits changing the saved choice", async () => {
+  const fixture = await apiFixture();
+  try {
+    const bot = (await fixture.request("bots", {
+      name: "Existing Bot",
+      instructions: "",
+      model: "controlled",
+    })) as Bot;
+    await fixture.request(`bots/${bot.id}/send`, {
+      text: "Original message",
+      requestId: "original",
+    });
+    const before = await settled(fixture, bot);
+    await writeFile(
+      join(fixture.root, "models.json"),
+      JSON.stringify([{ ...fixture.service.config, id: "replacement" }]),
+      { mode: 0o600 },
+    );
+    await fixture.reopen();
+    expect((await settled(fixture, bot)).messages).toEqual(before.messages);
+    const changed = (await fixture.request(
+      `bots/${bot.id}`,
+      { name: bot.name, instructions: "Use the replacement", model: "replacement" },
+      "PATCH",
+    )) as Bot;
+    expect(changed.conversationId).toBe(bot.conversationId);
+    await fixture.request(`bots/${bot.id}/send`, { text: "Continue", requestId: "replacement" });
+    expect((await settled(fixture, bot)).messages.at(-1)?.text).toBe("Persistent answer");
+    expect(JSON.stringify(fixture.service.requests.at(-1))).toContain("Use the replacement");
+  } finally {
     await fixture.close();
   }
 });

@@ -21,11 +21,16 @@ function text(content: unknown): string {
     .join("\n");
 }
 
+interface Worker {
+  command(command: WorkerCommand): Promise<unknown>;
+  close(): Promise<void>;
+}
+
 export async function openWorker(
   root: string,
   models: HostModel[],
   publish: (subscription: string, value: ChatView) => void,
-) {
+): Promise<Worker> {
   // A separate SQLite transaction gives this worker kernel-released exclusive ownership.
   const ownership = new DatabaseSync(join(root, "data", "worker-owner.sqlite"));
   let database: ProductDatabase | undefined;
@@ -42,7 +47,7 @@ export async function openWorker(
     throw error;
   }
 
-  async function ownedWorker(database: ProductDatabase, harness: Harness) {
+  async function ownedWorker(database: ProductDatabase, harness: Harness): Promise<Worker> {
     const watches = new Map<string, ConversationWatch>();
     const conversation = async (bot: Bot) => {
       const chat = await harness.conversation(bot.conversationId as ConversationId, context);
@@ -132,7 +137,9 @@ export async function openWorker(
         await acquired?.stop();
       }
     }
-    for (const bot of database.bots()) await configure(bot);
+    for (const bot of database.bots()) {
+      if (models.some((model) => model.id === bot.model)) await configure(bot);
+    }
     harness.resume();
     return {
       async command(command: WorkerCommand): Promise<unknown> {

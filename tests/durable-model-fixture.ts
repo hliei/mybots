@@ -3,7 +3,12 @@ import type { AddressInfo } from "node:net";
 
 export interface ModelRequest {
   tools?: { function: { name: string } }[];
-  messages: Array<{ role: string; content?: unknown; tool_calls?: unknown }>;
+  messages: Array<{
+    role: string;
+    content?: unknown;
+    tool_calls?: { id: string }[];
+    tool_call_id?: string;
+  }>;
 }
 
 export type ModelReply =

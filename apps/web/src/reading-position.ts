@@ -80,12 +80,3 @@ latest.addEventListener("click", () => {
 });
 new ResizeObserver(restoreReadingPosition).observe(timeline);
 new ResizeObserver(restoreReadingPosition).observe(thread);
-
-export function saveReadingPosition(): Position | undefined {
-  const state = position();
-  return state ? { ...state } : undefined;
-}
-export function setReadingPosition(state: Position): void {
-  if (selected) positions.set(selected, { ...state });
-  restoreReadingPosition();
-}

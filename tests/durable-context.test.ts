@@ -108,7 +108,7 @@ test("native compaction preserves current tool pairs and originals across reopen
         Array.isArray(message.tool_calls) ? message.tool_calls : [],
       );
       const results = request.messages.filter((message) => message.role === "tool");
-      expect(results.length).toBe(calls.length);
+      expect(results.map((message) => message.tool_call_id)).toEqual(calls.map((call) => call.id));
     }
     expect(
       (await chat.entries({}, 100, undefined, context)).items.filter(

@@ -2,7 +2,15 @@ import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { ChatView, ModelChoice, WorkerCommand, WorkerMessage } from "@mybots/contracts";
 
-export async function startWorker(root: string) {
+interface WorkerClient {
+  models: ModelChoice[];
+  closed: Promise<void>;
+  request(command: WorkerCommand): Promise<unknown>;
+  subscribers: Map<string, (value: ChatView) => void>;
+  close(): Promise<void>;
+}
+
+export async function startWorker(root: string): Promise<WorkerClient> {
   const source = import.meta.url.endsWith(".ts");
   const child = fork(
     fileURLToPath(

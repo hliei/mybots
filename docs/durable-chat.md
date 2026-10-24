@@ -33,7 +33,9 @@ Keep this file readable only by the owner (`chmod 600`); the default installatio
 root is ignored by Git. Use an empty array to check startup without a configured
 provider. The model endpoint and credentials stay in the worker; the browser
 receives only model choice IDs and display names. Each choice ID must be unique.
-Restart the application after changing host model configuration.
+Restart the application after changing host model configuration. A Bot whose
+saved choice was removed remains editable with its original Thread; choose an
+available model in Bot settings before sending new input.
 
 Start both processes and serve the built Web with one command:
 
