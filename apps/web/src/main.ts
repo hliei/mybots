@@ -82,7 +82,7 @@ function renderMessages(view: ChatView): void {
     status.textContent =
       input.status === "queued"
         ? "Queued for steering"
-        : `Unprocessed · ${input.reason ?? "withdrawn"}`;
+        : `Unprocessed · ${input.reason ?? "withdrawn"}${input.detail ? ` · ${input.detail}` : ""}`;
     row.append(content, status);
     if (input.status === "unanswered") {
       const resend = document.createElement("button");

@@ -61,6 +61,7 @@ export interface ChatInput {
   text: string;
   status: string;
   reason?: string;
+  detail?: string;
 }
 
 export interface ChatView {

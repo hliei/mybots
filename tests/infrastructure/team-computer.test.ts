@@ -359,3 +359,224 @@ test("public Stop cancels an active SDK shell tool and publishes the interrupted
     }
   }
 });
+
+async function chatComputerFixture(
+  respond: Parameters<typeof import("../durable-api-fixture.ts").apiFixture>[0],
+) {
+  const { apiFixture } = await import("../durable-api-fixture.ts");
+  const { ProductDatabase } = await import("@mybots/db");
+  const fixture = await apiFixture(respond);
+  const database = new ProductDatabase(join(fixture.root, "data", "product.sqlite"));
+  const computer = database.computer();
+  database.close();
+  return {
+    ...fixture,
+    get url() {
+      return fixture.url;
+    },
+    computer,
+    provider: new DockerSandbox(computer, join(fixture.root, "computer", "workspace")),
+    async close(): Promise<void> {
+      try {
+        await fixture.close();
+      } finally {
+        await docker("docker", ["rm", "-f", computer.id]).catch((error) => {
+          if (!String(error).includes("No such container")) throw error;
+        });
+      }
+    },
+  };
+}
+
+test("built Web steers at a real tool boundary and stops only the selected Bot's Docker work", async () => {
+  const { chromium } = await import("@playwright/test");
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  let alphaCalls = 0;
+  const fixture = await chatComputerFixture((request) => {
+    if (JSON.stringify(request.messages).includes("ALPHA_BOT")) {
+      alphaCalls++;
+      if (alphaCalls === 1)
+        return {
+          tool: "shell",
+          arguments: {
+            command:
+              "printf 'started\\n' >> effects; echo $$ > pid; while [ ! -f release ]; do sleep 0.05; done; printf 'finished\\n' >> effects",
+          },
+        };
+      return {
+        tool: "shell",
+        arguments: { command: "echo $$ > stop-pid; while :; do sleep 1; done" },
+      };
+    }
+    if (request.messages.some((message) => message.role === "tool"))
+      return { text: "Beta finished independently" };
+    return {
+      tool: "shell",
+      arguments: {
+        command:
+          "echo $$ > pid; while [ ! -f release ]; do sleep 0.05; done; printf 'beta complete' > result",
+      },
+    };
+  });
+  try {
+    browser = await chromium.launch();
+    const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await fixture.provider.prepare(fixture.computer);
+    const alpha = await fixture.request("bots", {
+      name: "Alpha",
+      instructions: "ALPHA_BOT",
+      model: "controlled",
+    });
+    const beta = await fixture.request("bots", {
+      name: "Beta",
+      instructions: "BETA_BOT",
+      model: "controlled",
+    });
+    await page.goto(fixture.url);
+    await page.getByLabel("Connection credential").fill(fixture.credential);
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.getByRole("button", { name: "Select Alpha", exact: true }).click();
+    const send = async (text: string) => {
+      await page.getByLabel("Message", { exact: true }).fill(text);
+      await page.getByRole("button", { name: "Send message" }).click();
+      await expect.poll(() => page.getByLabel("Message", { exact: true }).inputValue()).toBe("");
+    };
+    const file = (bot: { id: string }, name: string) =>
+      fixture.provider.readFile(fixture.computer, `bots/${bot.id}/${name}`).catch(() => "");
+    await send("Alpha work");
+    await expect.poll(() => file(alpha, "pid"), { timeout: 15000 }).not.toBe("");
+    await fixture.request(`bots/${beta.id}/send`, { text: "Beta work", requestId: "beta-work" });
+    await expect.poll(() => file(beta, "pid"), { timeout: 15000 }).not.toBe("");
+    await send("Alpha steering");
+    await expect
+      .poll(() => page.locator("#unprocessed").textContent())
+      .toContain("Queued for steering");
+    expect(alphaCalls).toBe(1);
+    expect(await file(alpha, "effects")).toBe("started\n");
+    await page.context().setOffline(true);
+    await page.context().setOffline(false);
+    await page.reload();
+    await expect.poll(() => page.locator("#unprocessed").textContent()).toContain("Alpha steering");
+    await fixture.provider.writeFile(fixture.computer, `bots/${alpha.id}/release`, "go");
+    await expect.poll(() => file(alpha, "stop-pid"), { timeout: 15000 }).not.toBe("");
+    const steered = fixture.service.requests.find((request) =>
+      JSON.stringify(request.messages).includes("Alpha steering"),
+    );
+    expect(steered?.messages).toContainEqual(expect.objectContaining({ role: "tool" }));
+    expect(await file(alpha, "effects")).toBe("started\nfinished\n");
+    await send("Withdraw this input");
+    await expect
+      .poll(() => page.locator("#unprocessed").textContent())
+      .toContain("Queued for steering");
+    await page.getByRole("button", { name: "Stop", exact: true }).click();
+    await expect
+      .poll(async () => (await fixture.request(`bots/${alpha.id}/chat`)).busy)
+      .toBe(false);
+    const processState = await fixture.provider.execute(
+      fixture.computer,
+      `python3 -c 'from pathlib import Path; a=Path("/proc",Path("bots/${alpha.id}/stop-pid").read_text().strip()); b=Path("/proc",Path("bots/${beta.id}/pid").read_text().strip()); print(a.exists(),b.exists())'`,
+      "",
+    );
+    expect(processState.stdout).toBe("False True\n");
+    expect((await fixture.request(`bots/${beta.id}/chat`)).busy).toBe(true);
+    await page.reload();
+    await expect
+      .poll(() => page.locator("article.tool").allTextContents())
+      .toContainEqual(expect.stringMatching(/abort|interrupt/i));
+    const withdrawn = page
+      .locator("#unprocessed article")
+      .filter({ hasText: "Withdraw this input" });
+    await expect.poll(() => withdrawn.textContent()).toContain("Unprocessed");
+    await withdrawn.getByRole("button", { name: "Resend", exact: true }).click();
+    expect(await page.getByLabel("Message", { exact: true }).inputValue()).toBe(
+      "Withdraw this input",
+    );
+    await page.screenshot({ path: "/tmp/mybots-control-docker-browser.png", fullPage: true });
+    await fixture.provider.writeFile(fixture.computer, `bots/${beta.id}/release`, "go");
+    await expect
+      .poll(async () => (await fixture.request(`bots/${beta.id}/chat`)).busy, { timeout: 15000 })
+      .toBe(false);
+    expect(await file(beta, "result")).toBe("beta complete");
+    await page.getByRole("button", { name: "Select Beta", exact: true }).click();
+    await expect
+      .poll(() => page.locator("#thread-messages").textContent())
+      .toContain("Beta finished independently");
+    expect(errors).toEqual([]);
+  } finally {
+    try {
+      await browser?.close();
+    } finally {
+      await fixture.close();
+    }
+  }
+});
+
+test("worker crash records an unsafe shell as interrupted without reexecuting its file effects", async () => {
+  let calls = 0;
+  const fixture = await chatComputerFixture(() =>
+    ++calls === 1
+      ? {
+          tool: "shell",
+          arguments: {
+            command:
+              "printf 'once\\n' >> effects; echo $$ > pid; while [ ! -f release ]; do sleep 0.05; done; printf done > finished",
+          },
+        }
+      : { text: "The interrupted command may have changed files" },
+  );
+  try {
+    await fixture.provider.prepare(fixture.computer);
+    const bot = await fixture.request("bots", {
+      name: "Interrupted",
+      instructions: "",
+      model: "controlled",
+    });
+    const admitted = await fixture.request(`bots/${bot.id}/send`, {
+      text: "Unsafe work",
+      requestId: "unsafe-work",
+    });
+    await expect
+      .poll(
+        async () => {
+          const view = await fixture.request(`bots/${bot.id}/chat`);
+          if (!view.busy) throw new Error(JSON.stringify(view));
+          return fixture.provider.readFile(fixture.computer, `bots/${bot.id}/pid`).catch(() => "");
+        },
+        { timeout: 15000 },
+      )
+      .not.toBe("");
+    await fixture.crashWorker();
+    // A killed host cannot promise to cancel Docker effects; let this owned fixture command finish.
+    await fixture.provider.writeFile(fixture.computer, `bots/${bot.id}/release`, "go");
+    await expect
+      .poll(
+        async () =>
+          fixture.provider.readFile(fixture.computer, `bots/${bot.id}/finished`).catch(() => ""),
+        { timeout: 10000 },
+      )
+      .toBe("done");
+    await fixture.reopen();
+    await expect
+      .poll(async () => (await fixture.request(`bots/${bot.id}/chat`)).busy, { timeout: 10000 })
+      .toBe(false);
+    const view = await fixture.request(`bots/${bot.id}/chat`);
+    expect(
+      view.messages.filter((message: { role: string }) => message.role === "tool").at(-1)?.text,
+    ).toMatch(/interrupted.*partially run/i);
+    expect(view.messages.at(-1)?.text).toBe("The interrupted command may have changed files");
+    expect(await fixture.provider.readFile(fixture.computer, `bots/${bot.id}/effects`)).toBe(
+      "once\n",
+    );
+    expect(
+      await fixture.request(`bots/${bot.id}/send`, {
+        text: "Unsafe work",
+        requestId: "unsafe-work",
+      }),
+    ).toEqual(admitted);
+    expect(calls).toBe(2);
+  } finally {
+    await fixture.close();
+  }
+});

@@ -17,7 +17,7 @@
     "verify": "npm run check && npm test && npm run build && npm run check:startup && playwright test",
     "prepare": "husky",
     "demo:pi": "npm run build --workspace @mybots/mailbox && npm run build --workspace @mybots/agent-runner && npm run demo --workspace @mybots/agent-runner",
-    "test:infrastructure": "npm run build:computer && vitest run --config tests/infrastructure/vitest.config.ts",
+    "test:infrastructure": "npm run build --workspace @mybots/web && npm run build:computer && vitest run --config tests/infrastructure/vitest.config.ts",
     "demo:host": "npm run build && node scripts/host-cli-demo.mjs",
     "prebuild": "node scripts/clean-build.mjs",
     "dev": "node --conditions=mybots-source packages/host/src/index.ts",
