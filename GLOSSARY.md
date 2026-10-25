@@ -1,7 +1,7 @@
 # Mybots
 
-A local personal assistant system. This vocabulary describes the accepted
-[target architecture](docs/architecture.md).
+A local personal assistant system. This vocabulary describes the implemented
+[architecture](docs/architecture.md).
 
 ## Language
 

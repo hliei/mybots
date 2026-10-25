@@ -76,12 +76,12 @@ An offline suite passing does not establish that a real provider or platform
 connection works.
 Missing human inputs or credentials leave actual-service acceptance open.
 
-## Target architecture verification
+## Architecture verification
 
-The following are requirements for the accepted architecture, not completed
-acceptance evidence. Existing tests cover the previous runtime until replaced.
-Retire tests with their obsolete contracts; do not preserve old mechanisms just
-to maintain test counts.
+The following scenarios are covered through the current application boundaries.
+Keep controlled-model, Docker and actual-provider evidence separate. Retire tests
+with their obsolete contracts; do not preserve old mechanisms just to maintain
+test counts.
 
 Use the public API with real worker, Pi Durable and SQLite for integration.
 Control model responses at the HTTP/stream boundary rather than mocking the

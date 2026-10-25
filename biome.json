@@ -10,13 +10,11 @@
       "packages/**/*.ts",
       "packages/*/*.json",
       "tests/**/*.ts",
-      "setup/**/*.ts",
       "scripts/**/*.mjs",
       "*.json",
       "vitest.config.ts",
       "!package-lock.json",
       "playwright.config.ts",
-      "packages/client/*.mjs",
       "apps/**/*.ts",
       "apps/*/*.json",
       "apps/*/*.mjs"

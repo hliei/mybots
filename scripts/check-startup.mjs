@@ -1,194 +1,112 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
-const projectRoot = fileURLToPath(new URL("../", import.meta.url));
-
-for (const [command, args, usage] of [
-  [process.execPath, ["packages/host/dist/cli/client.js", "--help"], "Usage: mbt"],
-  [process.execPath, ["packages/host/dist/cli/client.js", "start", "--help"], "mbt start"],
-  [process.execPath, ["packages/host/dist/cli/client.js", "exit", "--help"], "mbt exit"],
-  ["npm", ["start", "--", "--help"], "Usage: npm start"],
-]) {
-  const result = spawnSync(command, args, {
-    cwd: projectRoot,
-    env: { ...process.env, NODE_OPTIONS: "--no-strip-types" },
-    encoding: "utf8",
-    timeout: 5000,
-  });
-
-  if (result.error) throw result.error;
-  assert.equal(result.status, 0, `Startup failed: ${result.stderr}`);
-  assert.equal(result.stderr, "");
-  assert.ok(result.stdout.includes(usage));
+async function joinGroup(pid) {
+  // Join every member of this temporary process group, including the worker.
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try {
+      process.kill(-pid, 0);
+    } catch (error) {
+      if (error.code === "ESRCH") return;
+      throw error;
+    }
+    if (attempt === 99) {
+      process.kill(-pid, "SIGKILL");
+      assert.fail("Application left a child process running");
+    }
+    await delay(50);
+  }
 }
 
-// Exercise the built composition entry, including listener ownership and shutdown.
-const root = await mkdtemp(join(tmpdir(), "mybots-built-startup-"));
-let child;
-let exited;
+const root = await mkdtemp(join(tmpdir(), "mybots-startup-"));
+const command = process.argv.includes("--source") ? "dev" : "start";
+let credential;
 try {
-  const settings = JSON.parse(
-    await readFile(new URL("../examples/host/host.json", import.meta.url), "utf8"),
-  );
-  settings.websocket.port = 0;
-  await writeFile(join(root, "host.json"), JSON.stringify(settings));
-  await writeFile(join(root, "docker"), "#!/bin/sh\necho true\n", { mode: 0o755 });
-  await chmod(join(root, "docker"), 0o755);
-  child = spawn(
-    process.execPath,
-    ["--no-strip-types", "packages/host/dist/index.js", "--root", root],
-    {
-      cwd: projectRoot,
-      env: {
-        ...process.env,
-        NODE_OPTIONS: "",
-        PATH: `${root}${delimiter}${process.env.PATH ?? ""}`,
-      },
-      stdio: "pipe",
-    },
-  );
-  let stderr = "";
-  child.stderr.setEncoding("utf8").on("data", (chunk) => {
-    stderr += chunk;
-  });
-  exited = new Promise((resolve, reject) => {
-    child.once("close", resolve);
-    child.once("error", reject);
-  });
-  const timeout = setTimeout(() => child.kill("SIGKILL"), 5000);
-  try {
-    const listening = new Promise((resolve) => {
-      let stdout = "";
-      child.stdout.setEncoding("utf8").on("data", (chunk) => {
-        stdout += chunk;
-        const localClient = stdout.match(/Local client on (http:\/\/\S+)/u);
-        if (localClient) resolve(localClient[1]);
-      });
+  await writeFile(join(root, "models.json"), "[]", { mode: 0o600 });
+  await mkdir(join(root, "computer/workspace"), { recursive: true });
+  await writeFile(join(root, "computer/workspace/keep.txt"), "Persistent working file");
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    const child = spawn("npm", ["run", command, "--", "--root", root, "--port", "0"], {
+      cwd: new URL("../", import.meta.url),
+      env: { ...process.env, NODE_OPTIONS: command === "start" ? "--no-strip-types" : "" },
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
     });
-    const clientUrl = await Promise.race([
-      listening,
-      exited.then(() => {
-        throw new Error(`Built host stopped before listening: ${stderr}`);
-      }),
-    ]);
-    assert.equal((await stat(join(root, "data", "cli.sock"))).mode & 0o777, 0o600);
-    const shell = await fetch(clientUrl);
-    assert.equal(shell.status, 200);
-    assert.ok((await shell.text()).includes("Connection credential"));
-    assert.equal((await fetch(`${clientUrl}api/status`)).status, 401);
-    const credential = (await readFile(join(root, "data", "client-credential"), "utf8")).trim();
-    const paired = await fetch(`${clientUrl}api/pair`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${credential}`, Origin: new URL(clientUrl).origin },
+    let errors = "";
+    child.stderr.on("data", (chunk) => {
+      errors += chunk;
     });
-    assert.equal(paired.status, 204);
-    const snapshot = await fetch(`${clientUrl}api/status`, {
-      headers: { Cookie: paired.headers.get("set-cookie").split(";")[0] },
+    const exited = new Promise((resolve, reject) => {
+      child.once("close", (code, exitSignal) => resolve({ code, signal: exitSignal }));
+      child.once("error", reject);
     });
-    assert.equal(snapshot.status, 200);
-    assert.deepEqual(await snapshot.json(), {
-      bots: [{ id: settings.agent.id, name: settings.agent.name }],
-      sessions: [],
-    });
-    child.kill("SIGTERM");
-    assert.equal(await exited, 0, `Built host shutdown failed: ${stderr}`);
-    assert.equal(stderr, "");
-    for (const file of ["cli.sock", "host.lock"])
-      await assert.rejects(stat(join(root, "data", file)), { code: "ENOENT" });
-  } finally {
-    clearTimeout(timeout);
+    const timeout = setTimeout(() => process.kill(-child.pid, "SIGKILL"), 15000);
+    try {
+      const url = await Promise.race([
+        new Promise((resolve) => {
+          let output = "";
+          child.stdout.on("data", (chunk) => {
+            output += chunk;
+            const match = output.match(/Local chat on (http:\/\/\S+)/u);
+            if (match) resolve(match[1]);
+          });
+        }),
+        exited.then(() => {
+          throw new Error(`Startup exited before listening: ${errors}`);
+        }),
+      ]);
+      const page = await fetch(url);
+      assert.equal(page.status, 200);
+      assert.ok((await page.text()).includes("Connect to Mybots"));
+      for (const asset of ["main.js", "style.css", "vendor/marked.js"])
+        assert.equal((await fetch(new URL(asset, url))).status, 200);
+      assert.equal((await fetch(new URL("api/bots", url))).status, 401);
+      const saved = (await readFile(join(root, "data/client-credential"), "utf8")).trim();
+      if (credential) assert.equal(saved, credential);
+      credential = saved;
+      const headers = { Authorization: `Bearer ${credential}` };
+      const bots = await fetch(new URL("api/bots", url), { headers });
+      assert.deepEqual(await bots.json(), { bots: [], models: [] });
+      for (const route of ["status", "sessions", "runs", "routines", "attachments"])
+        assert.equal((await fetch(new URL(`api/${route}`, url), { headers })).status, 404);
+      const memoryUrl = new URL("api/memory/owner", url);
+      if (signal === "SIGINT") {
+        assert.equal(
+          (
+            await fetch(memoryUrl, {
+              method: "PUT",
+              headers: { ...headers, "Content-Type": "application/json" },
+              body: JSON.stringify({ content: "Remember across startup" }),
+            })
+          ).status,
+          200,
+        );
+      } else {
+        assert.equal(
+          (await (await fetch(memoryUrl, { headers })).json()).content,
+          "Remember across startup",
+        );
+      }
+      process.kill(-child.pid, signal);
+      const result = await exited;
+      assert.ok(result.code === 0 || result.signal === signal, JSON.stringify(result));
+      assert.equal(errors, "");
+      assert.equal(
+        await readFile(join(root, "computer/workspace/keep.txt"), "utf8"),
+        "Persistent working file",
+      );
+      await assert.rejects(fetch(url));
+    } finally {
+      clearTimeout(timeout);
+      await joinGroup(child.pid);
+      await exited;
+    }
   }
 } finally {
-  if (child && child.exitCode === null) child.kill("SIGKILL");
-  await exited;
   await rm(root, { recursive: true, force: true });
 }
-
-// The root entry must remain usable without loading either native SQLite driver.
-for (const source of [false, true]) {
-  const result = spawnSync(
-    process.execPath,
-    [
-      ...(source ? ["--conditions=mybots-source"] : ["--no-strip-types"]),
-      "--input-type=module",
-      "-e",
-      `import assert from "node:assert/strict";
-       import { registerHooks } from "node:module";
-       registerHooks({ resolve(specifier, context, nextResolve) {
-         assert.ok(!["node:sqlite", "bun:sqlite"].includes(specifier), "SQLite imported by root entry");
-         return nextResolve(specifier, context);
-       }});
-       const expected = ${source ? '"/src/index.ts"' : '"/dist/index.js"'};
-       assert.ok(import.meta.resolve("@mybots/mailbox").endsWith(expected));
-       const mailbox = await import("@mybots/mailbox");
-       assert.equal(typeof mailbox.clearMailboxLocks, "function");`,
-    ],
-    {
-      cwd: projectRoot,
-      env: { ...process.env, NODE_OPTIONS: "" },
-      encoding: "utf8",
-      timeout: 5000,
-    },
-  );
-  if (result.error) throw result.error;
-  assert.equal(result.status, 0, `Mailbox package boundary failed: ${result.stderr}`);
-  assert.equal(result.stderr, "");
-}
-
-const runner = spawnSync(process.execPath, ["scripts/pi-session-demo.mjs"], {
-  cwd: projectRoot,
-  encoding: "utf8",
-  timeout: 15000,
-});
-if (runner.error) throw runner.error;
-assert.equal(runner.status, 0, `Pi runner demo failed: ${runner.stderr}`);
-assert.equal(runner.stderr, "");
-assert.ok(runner.stdout.includes("Workspace tool effect and selected-session reopening passed."));
-
-const isolatedRunner = spawnSync(process.execPath, ["packages/agent-runner/dist/index.js"], {
-  cwd: projectRoot,
-  encoding: "utf8",
-  timeout: 5000,
-});
-if (isolatedRunner.error) throw isolatedRunner.error;
-assert.equal(isolatedRunner.status, 1);
-assert.ok(isolatedRunner.stderr.includes("ERR_UNSUPPORTED_ESM_URL_SCHEME"));
-assert.ok(isolatedRunner.stderr.includes("Received protocol 'bun:'"));
-assert.equal(isolatedRunner.stdout, "");
-
-const host = spawnSync(process.execPath, ["scripts/host-cli-demo.mjs"], {
-  cwd: projectRoot,
-  encoding: "utf8",
-  timeout: 15000,
-});
-if (host.error) throw host.error;
-assert.equal(host.status, 0, `Host CLI demo failed: ${host.stderr}`);
-assert.equal(host.stderr, "");
-assert.ok(host.stdout.includes("Persistent Thread routing, CLI/WebSocket reconnect"));
-
-for (const entry of ["index", "cli/client"]) {
-  const failure = spawnSync(
-    process.execPath,
-    [`packages/host/dist/${entry}.js`, "--root", "/__mybots_missing_host_root__"],
-    {
-      cwd: projectRoot,
-      encoding: "utf8",
-      timeout: 5000,
-    },
-  );
-  if (failure.error) throw failure.error;
-  assert.equal(failure.status, 1);
-  assert.equal(failure.stdout, "");
-  assert.ok(
-    failure.stderr.includes(
-      entry !== "cli/client" ? "Run setup before starting the host." : "start the host first",
-    ),
-  );
-}
-console.log("Host, CLI, Pi provider and isolated runner startup smoke checks passed.");
-
-await import("./check-durable-startup.mjs");
+console.log(`Default ${command} API, worker, Web, shutdown and persistence passed.`);

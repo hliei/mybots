@@ -362,10 +362,11 @@ test("public Stop cancels an active SDK shell tool and publishes the interrupted
 
 async function chatComputerFixture(
   respond: Parameters<typeof import("../durable-api-fixture.ts").apiFixture>[0],
+  options?: Parameters<typeof import("../durable-api-fixture.ts").apiFixture>[1],
 ) {
   const { apiFixture } = await import("../durable-api-fixture.ts");
   const { ProductDatabase } = await import("@mybots/db");
-  const fixture = await apiFixture(respond);
+  const fixture = await apiFixture(respond, options);
   const database = new ProductDatabase(join(fixture.root, "data", "product.sqlite"));
   const computer = database.computer();
   database.close();
@@ -576,6 +577,128 @@ test("worker crash records an unsafe shell as interrupted without reexecuting it
       }),
     ).toEqual(admitted);
     expect(calls).toBe(2);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("resources, compacted originals and shared Computer compose across restart and Bots", async () => {
+  const original = `COMBINED_ORIGINAL ${"archived fact ".repeat(1800)}ORIGINAL_END`;
+  const replies: import("../durable-model-fixture.ts").ModelReply[] = [];
+  let summaries = 0;
+  const fixture = await chatComputerFixture(
+    (request) => {
+      if (JSON.stringify(request.messages[0]).includes("summarization")) {
+        summaries++;
+        return { text: "Native summary of completed work." };
+      }
+      return replies.shift() ?? { text: "Unexpected generation" };
+    },
+    { contextWindow: 5000 },
+  );
+  try {
+    const alpha = await fixture.request("bots", {
+      name: "Writer",
+      instructions: "WRITER_ROLE",
+      model: "controlled",
+    });
+    const beta = await fixture.request("bots", {
+      name: "Reader",
+      instructions: "READER_ROLE",
+      model: "controlled",
+    });
+    async function send(
+      botId: string,
+      text: string,
+    ): Promise<import("@mybots/contracts").ChatView> {
+      await fixture.request(`bots/${botId}/send`, { text, requestId: randomUUID() });
+      await expect
+        .poll(async () => (await fixture.request(`bots/${botId}/chat`)).busy, { timeout: 20000 })
+        .toBe(false);
+      return fixture.request(`bots/${botId}/chat`);
+    }
+    replies.push({ text: original });
+    const archived = await send(alpha.id, "Keep this original source");
+    const originalId = Number(archived.messages.at(-1)?.id);
+    for (let index = 0; index < 5; index++) {
+      replies.push({ text: "Recent answer" });
+      await send(alpha.id, `recent-${index}`);
+    }
+    expect(summaries).toBeGreaterThan(0);
+    await fixture.request(
+      "skills/combine",
+      {
+        description: "Use earlier evidence with shared files",
+        content: "FULL_COMBINED_SKILL",
+      },
+      "PUT",
+    );
+    await fixture.request("memory/owner", { content: "SHARED_OWNER_PREFERENCE" }, "PUT");
+    await fixture.request(`bots/${alpha.id}/memory`, { content: "WRITER_PRIVATE_MEMORY" }, "PUT");
+    await fixture.request(`bots/${beta.id}/memory`, { content: "READER_PRIVATE_MEMORY" }, "PUT");
+    await fixture.reopen();
+    expect((await fixture.request("bots")).bots).toEqual([alpha, beta]);
+    const start = fixture.service.requests.length;
+    replies.push(
+      { tool: "skill_read", arguments: { name: "combine" } },
+      { tool: "history_read", arguments: { entryId: originalId } },
+      {
+        tool: "write_file",
+        arguments: { path: "shared/evidence.txt", content: "COMBINED_ORIGINAL" },
+      },
+      { tool: "shell", arguments: { cwd: "/shared", command: "cat evidence.txt" } },
+      { text: "Original evidence is now shared" },
+    );
+    const completed = await send(
+      alpha.id,
+      "Use the Skill and retrieve original evidence into a shared file",
+    );
+    expect(completed.messages.at(-1)?.text).toBe("Original evidence is now shared");
+    const generations = fixture.service.requests
+      .slice(start)
+      .filter((request) => !JSON.stringify(request.messages[0]).includes("summarization"));
+    const initial = JSON.stringify(generations[0]);
+    expect(initial).toContain("SHARED_OWNER_PREFERENCE");
+    expect(initial).toContain("WRITER_PRIVATE_MEMORY");
+    expect(initial).toContain("Use earlier evidence with shared files");
+    expect(initial).not.toContain("FULL_COMBINED_SKILL");
+    expect(initial).not.toContain("COMBINED_ORIGINAL");
+    expect(initial).not.toContain("recent-0");
+    expect(JSON.stringify(generations)).not.toContain("READER_PRIVATE_MEMORY");
+    expect(JSON.stringify(generations)).toContain("FULL_COMBINED_SKILL");
+    expect(JSON.stringify(generations)).toContain("Historical evidence");
+    expect(completed.messages.filter((message) => message.role === "tool").at(-1)?.text).toContain(
+      '"stdout":"COMBINED_ORIGINAL"',
+    );
+    for (const request of generations) {
+      expect(
+        request.messages
+          .filter((message) => message.role === "tool")
+          .map((message) => message.tool_call_id),
+      ).toEqual(
+        request.messages.flatMap((message) => message.tool_calls?.map((call) => call.id) ?? []),
+      );
+    }
+    await fixture.reopen();
+    await docker("docker", ["rm", "-f", fixture.computer.id]);
+    const otherStart = fixture.service.requests.length;
+    replies.push(
+      { tool: "read_file", arguments: { path: "shared/evidence.txt" } },
+      { text: "Reader used the retained file" },
+    );
+    const read = await send(beta.id, "Read the shared evidence");
+    expect(read.messages.at(-1)?.text).toBe("Reader used the retained file");
+    expect(read.messages.find((message) => message.role === "tool")?.text).toBe(
+      "COMBINED_ORIGINAL",
+    );
+    const otherContext = JSON.stringify(fixture.service.requests.slice(otherStart));
+    expect(otherContext).toContain("SHARED_OWNER_PREFERENCE");
+    expect(otherContext).toContain("READER_PRIVATE_MEMORY");
+    expect(otherContext).not.toContain("WRITER_PRIVATE_MEMORY");
+    expect((await fixture.request(`bots/${alpha.id}/history/${originalId}`)).text).toContain(
+      "COMBINED_ORIGINAL",
+    );
+    expect(replies).toHaveLength(0);
   } finally {
     await fixture.close();
   }

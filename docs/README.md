@@ -1,9 +1,8 @@
 # Documentation
 
-These documents describe the accepted target architecture. The isolated
-persistent-chat slice is available; full implementation and acceptance remain
-pending. Previous runtime designs and acceptance records have been retired from
-this documentation set; tracked history remains in Git.
+These documents describe the implemented local application. Controlled-model,
+Docker and browser checks cover its behavior; actual-provider acceptance remains
+a separate opt-in gate. Retired runtime designs remain available in Git history.
 
 ## Architecture
 
@@ -18,7 +17,7 @@ configuration, context defaults and current validation scope.
 
 ## Decisions
 
-The ADR sequence restarts at `0001`. All four decisions are accepted and planned.
+The ADR sequence restarts at `0001`. All four decisions are accepted and implemented.
 
 | ADR | Decision |
 | --- | --- |

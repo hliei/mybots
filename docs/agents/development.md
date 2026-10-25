@@ -2,12 +2,11 @@
 
 ## Tooling status
 
-The [architecture](../architecture.md) is accepted but not yet implemented.
-The isolated [persistent chat entry](../durable-chat.md) implements the first
-Web/API/worker slice. Default launch commands still describe the previous runtime.
-`package.json`, the lockfile and tool configurations are authoritative for
-commands available in this checkout. Update them with each implementation slice;
-keep one supported startup path after cutover.
+The [architecture](../architecture.md) is implemented by Web/API/worker and the
+contracts, database, Agent and sandbox packages. `npm start` runs API and worker
+and serves built Web; `npm run dev` uses source API/worker with the same Web assets.
+See [local operation](../durable-chat.md) for host configuration. `package.json`,
+the lockfile and tool configurations are authoritative for available commands.
 
 ## Technical baseline
 
@@ -54,9 +53,9 @@ keep one supported startup path after cutover.
 Startup checks must exercise executable entry points and exit without live
 credentials. The infrastructure command builds the Computer image and covers
 Team Computer tools, persistence, cancellation and transfer with a controlled
-model, including built-Web steering and Stop in Chromium. The new one-command
-startup must be documented and verified when delivered. Existing startup scripts
-do not establish that the target system is runnable.
+model, including built-Web steering and Stop in Chromium. The compiled startup
+check exercises the documented `npm start` command,
+process-group shutdown and persistence through reopen.
 
 ## Validation and completion
 

@@ -1,15 +1,14 @@
 # Persistent local chat
 
-The isolated chat entry runs the API and Durable worker as separate local
+The default application runs the API and Durable worker as separate local
 processes. It supports Bot creation and saved name, instructions and model,
 one persistent Thread per Bot, streamed answers, native steering and Stop,
 shell/file tools on a persistent Docker Team Computer, shared Skills, scoped
 Markdown memory and original-history retrieval.
-The existing default entry remains available until the full runtime cutover.
 
 Use Node.js 24.21.0 and install with `npm ci`, then `npm run prepare` and
-`npm run build`. The new Web build reuses the delivered client stylesheet;
-its Markdown renderer and reading-position behavior live in `apps/web`.
+`npm run build`. The Web stylesheet, safe Markdown renderer and reading-position
+behavior live in `apps/web`.
 
 ## Host configuration and startup
 
@@ -53,7 +52,7 @@ as tool errors. Model endpoints and credentials are never passed to the containe
 Start both processes and serve the built Web with one command:
 
 ```sh
-npm run start:durable
+npm start
 ```
 
 Open `http://127.0.0.1:4173`. Connect using the credential in
@@ -69,11 +68,11 @@ Resend prepares the text; sending it again deliberately creates new work.
 Use a different fresh root or port with:
 
 ```sh
-npm run start:durable -- --root /absolute/path/to/new-installation --port 4174
+npm start -- --root /absolute/path/to/new-installation --port 4174
 ```
 
 The selected root must contain its own `models.json`. Do not point the new entry
-at legacy runtime data. The source entry is `npm run dev:durable` with the same
+at legacy runtime data. The source entry is `npm run dev` with the same
 arguments and requires built Web assets. Ctrl+C shuts down both processes;
 normal shutdown retains all data. On restart, the worker resumes supported work
 from SDK storage, including pending input and committed exchanges. Interrupted
@@ -218,8 +217,8 @@ These are fixed implementation defaults, with no tuning interface.
 
 ## Verification
 
-`npm run verify` covers both entries: formatting, lint, source/test/configuration
-types, offline tests, compiled startup and built-browser checks. The new fixture
+`npm run verify` covers the supported application: formatting, lint, source/test/
+configuration types, offline tests, compiled startup and built-browser checks. The fixture
 uses the real SDK and SQLite against a controlled HTTP model service, including
 native automatic compaction, current tool pairs, originals after reopen,
 transport deduplication, credential checks and Stop. Browser checks cover send,
@@ -239,7 +238,39 @@ real Docker file/shell agreement, concurrent first use, process-group cancellati
 public Stop, SDK chat tools, application reopen/container replacement, unsafe
 path/archive rejection and workspace transfer using temporary resources and a
 controlled HTTP model. It needs Docker but no personal provider credentials.
-The legacy gateway infrastructure fixtures are outside this command's scope.
 
-Full interruption/recovery combinations and default cutover remain subsequent
-slices. Controlled-model success does not establish actual-provider acceptance.
+The default startup smoke exercises both shutdown signals, child-process cleanup,
+authenticated resource persistence, retained working files and retired-route rejection.
+Integrated Docker checks combine resource context, native compaction, original
+retrieval and tools across restart and multiple Bots. Controlled-model success
+does not establish actual-provider acceptance.
+
+## Retiring an older installation
+
+The former Host, mailbox, containerized agent runner, terminal chat, gateway
+setup and background-service installers have been removed. Their launch commands
+and APIs are unsupported. No migration or continuation of their work is provided.
+The current default root is separate from the former repository-root `data/`
+and `groups/`; normal startup never deletes either installation's files.
+
+Before starting this version, stop the old installation's service. On macOS,
+inspect `~/Library/LaunchAgents/com.mybots.*.plist` and identify the one whose
+`WorkingDirectory` and `ProgramArguments` point to this checkout's former Host.
+Run `launchctl bootout gui/$(id -u) /absolute/path/to/that.plist`, then move that
+exact plist outside `LaunchAgents` so login cannot relaunch it. Keep a private
+backup if needed. For an older systemd installation, inspect the specific
+`mybots-<installation-id>.service` and disable/stop that unit at its installed
+user or system scope. For a manually launched Host, verify its executable and
+installation path before stopping its PID. Do not kill unrelated Node processes.
+
+Inspect Docker container names and mounts before stopping any old runner. Keep
+shared gateways and unrelated containers. This application does not use the old
+gateway, Telegram configuration or environment-file setup. Configure model
+credentials directly in the selected root's owner-readable `models.json`.
+
+Old `data/`, `groups/`, `host.json`, logs and credentials can remain inactive;
+there is no automatic cleanup. If discarding them, identify their installation
+and back up anything needed first. Preserve `.scratch/`, `.agents/`, local
+instructions, unrelated owner files and the current `<root>/computer/workspace`.
+Builds clean only current package output. Keep the terminal running for the
+supported foreground startup; no replacement background service is installed.

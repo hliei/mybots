@@ -37,7 +37,7 @@ jobs:
       - name: Install browser
         run: npx playwright install --with-deps chromium
 
-      - name: Verify workspaces and entry points
+      - name: Verify application, default startup and Web
         run: npm run verify
 
       - name: Verify Git workflow
