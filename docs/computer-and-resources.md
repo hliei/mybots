@@ -1,6 +1,6 @@
 # Computer and resources
 
-Status: Team Computer tools, shared Skills and scoped memory implemented in the isolated chat entry.
+Status: Team Computer tools, shared Skills and scoped memory implemented in the default application.
 
 ## Team Computer
 

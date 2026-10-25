@@ -1,6 +1,6 @@
 # API, worker and local storage boundaries
 
-Status: accepted; implementation planned.
+Status: accepted and implemented.
 
 Separate Web, API and worker applications, with API and worker running as local
 processes. The worker alone drives Durable storage; API forwards admission,

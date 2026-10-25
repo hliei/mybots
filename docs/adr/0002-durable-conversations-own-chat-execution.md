@@ -1,6 +1,6 @@
 # Durable Conversations own chat execution
 
-Status: accepted; implementation planned.
+Status: accepted and implemented.
 
 Map each Bot's direct Thread to one stable Pi Durable Conversation. Let the SDK
 own submission, execution, transcript, compaction and supported recovery to

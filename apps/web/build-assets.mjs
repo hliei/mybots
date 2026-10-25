@@ -5,7 +5,7 @@ await copyFile(
   new URL("dist/index.html", import.meta.url),
 );
 await copyFile(
-  new URL("../../packages/client/src/style.css", import.meta.url),
+  new URL("src/style.css", import.meta.url),
   new URL("dist/style.css", import.meta.url),
 );
 await mkdir(new URL("dist/vendor/", import.meta.url), { recursive: true });

@@ -1,6 +1,6 @@
 # Architecture
 
-Status: accepted target; implementation pending.
+Status: implemented; actual-provider acceptance is a separate opt-in gate.
 
 ## Product boundary
 
@@ -34,8 +34,8 @@ Web → API → worker → Pi Durable
 | `packages/agent` | Durable integration, context policy and tools |
 | `packages/sandbox` | Computer lifecycle, commands, files and workspace transfer |
 
-API and worker are separate local processes. One command will start the system
-on macOS with Docker; its exact invocation belongs to implementation. Browser
+API and worker are separate local processes. `npm start` starts the system
+on macOS; Docker is required only for Computer tools. Browser
 access stays on loopback with connection credentials and Host/Origin validation.
 Model credentials and endpoints stay in host installation configuration, outside
 browser assets, logs and Computer files. Packages are created only when used.
@@ -56,9 +56,8 @@ There is no distributed queue or application Task/Run/Attempt state machine.
 ## Transition
 
 Incompatible code and identified old runtime data may be retired without
-migration. Temporary separate entry points may support incremental delivery;
-final cutover leaves one supported runtime without dual writes or a fallback
-engine. Unrelated owner files and ignored local planning remain intact. The new
+migration. The default entry uses only API/worker and Durable,
+without dual writes or a fallback engine. Unrelated owner files and ignored local planning remain intact. The new
 Computer workspace persists across normal shutdowns.
 
 See [conversation execution](conversation-execution.md),

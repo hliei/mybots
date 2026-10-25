@@ -14,6 +14,10 @@ test("built Web streams, reloads committed chat, edits Bots and keeps Threads se
     release = resolve;
   });
   const service = await startDurableModel((request) => {
+    if (JSON.stringify(request.messages.at(-1)).includes("Render safe Markdown"))
+      return {
+        text: '**Safe Markdown**\n\n<script>throw new Error("unsafe")</script>\n\n[unsafe](javascript:alert(1)) [local](/api/bots) [safe](https://example.com)\n\n![hidden image](https://example.com/tracker.png)\n\n```js\nconst value = "copied";\n```',
+      };
     if (JSON.stringify(request.messages.at(-1)).includes("Show a tool error"))
       return { tool: "read_file", arguments: { path: "../models.json" } };
     return {
@@ -34,6 +38,8 @@ test("built Web streams, reloads committed chat, edits Bots and keeps Threads se
       env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== "NO_COLOR")),
     },
   );
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
   let errors = "";
   child.stderr?.on("data", (chunk) => {
     errors += chunk;
@@ -51,8 +57,10 @@ test("built Web streams, reloads committed chat, edits Bots and keeps Threads se
         throw new Error(`Compiled startup failed: ${errors}`);
       }),
     ]);
-    const credential = (await readFile(join(root, "data/client-credential"), "utf8")).trim();
+    const credential = (await readFile(join(root, "client-credential"), "utf8")).trim();
+    await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(url);
+    await expect(page).toHaveTitle("Mybots");
     await page.getByLabel("Connection credential").fill(credential);
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await expect(page.locator("#workspace")).toBeVisible();
@@ -96,7 +104,7 @@ test("built Web streams, reloads committed chat, edits Bots and keeps Threads se
     await expect(page.locator("#skill-status")).toHaveText("Skill saved");
     await page.getByRole("button", { name: "Close Skills", exact: true }).click();
     await page.getByLabel("Message", { exact: true }).fill("Stream and remember");
-    await page.getByRole("button", { name: "Send message" }).click();
+    await page.getByLabel("Message", { exact: true }).press("Enter");
     await expect(page.locator("article.assistant")).toContainText("A growing reply");
     await expect(page.locator("article.assistant")).toContainText("In progress");
     expect(JSON.stringify(service.requests[0]?.messages)).toContain("OWNER_BROWSER_PREFERENCE");
@@ -167,6 +175,27 @@ test("built Web streams, reloads committed chat, edits Bots and keeps Threads se
     await expect(page.locator("#stop")).toBeDisabled();
     await page.reload();
     await expect(page.locator("article.tool")).toContainText("Path escapes");
+    await page.getByLabel("Message", { exact: true }).fill("Render safe Markdown");
+    await page.getByLabel("Message", { exact: true }).press("Shift+Enter");
+    await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Render safe Markdown\n");
+    await page.getByLabel("Message", { exact: true }).press("Enter");
+    const rendered = page.locator("article.assistant").filter({ hasText: "Safe Markdown" });
+    await expect(rendered.locator("strong")).toHaveText("Safe Markdown");
+    await expect(rendered.locator("script, img")).toHaveCount(0);
+    await expect(rendered.locator("a")).toHaveCount(1);
+    await expect(rendered.locator("a")).toHaveAttribute("href", "https://example.com");
+    await expect(rendered).toContainText('<script>throw new Error("unsafe")</script>');
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await rendered.getByRole("button", { name: "Copy code" }).click();
+    await expect(rendered.getByRole("status")).toHaveText("Copied");
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+      'const value = "copied";',
+    );
+    await page.getByRole("button", { name: "Bot settings", exact: true }).click();
+    await expect(page.getByLabel("Bot name", { exact: true })).toBeFocused();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Bot settings", exact: true })).toBeFocused();
+    expect(pageErrors).toEqual([]);
     expect(errors).toBe("");
   } finally {
     release();

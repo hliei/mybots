@@ -38,12 +38,12 @@ export async function openWorker(
   publish: (subscription: string, value: ChatView) => void,
 ): Promise<Worker> {
   // A separate SQLite transaction gives this worker kernel-released exclusive ownership.
-  const ownership = new DatabaseSync(join(root, "data", "worker-owner.sqlite"));
+  const ownership = new DatabaseSync(join(root, "worker-owner.sqlite"));
   let database: ProductDatabase | undefined;
   let harness: Harness | undefined;
   try {
     ownership.exec("BEGIN EXCLUSIVE");
-    database = new ProductDatabase(join(root, "data", "product.sqlite"));
+    database = new ProductDatabase(join(root, "product.sqlite"));
     const products = database;
     const computer = products.computer();
     const sandbox = new DockerSandbox(computer, join(root, "computer", "workspace"));
@@ -53,7 +53,7 @@ export async function openWorker(
       return bot.id;
     };
     harness = await openAgent(
-      join(root, "data", "durable.sqlite"),
+      join(root, "durable.sqlite"),
       models,
       [
         computerTools(sandbox, computer, botForConversation),

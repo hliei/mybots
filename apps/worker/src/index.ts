@@ -57,6 +57,9 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => {
     void close();
   });
+  process.on("SIGINT", () => {
+    void close();
+  });
   process.send({ type: "ready", models: models.map(({ id, name }) => ({ id, name })) });
 }
 

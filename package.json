@@ -16,36 +16,22 @@
     "check:startup": "node scripts/check-startup.mjs",
     "verify": "npm run check && npm test && npm run build && npm run check:startup && playwright test",
     "prepare": "husky",
-    "demo:pi": "npm run build --workspace @mybots/mailbox && npm run build --workspace @mybots/agent-runner && npm run demo --workspace @mybots/agent-runner",
     "test:infrastructure": "npm run build --workspace @mybots/web && npm run build:computer && vitest run --config tests/infrastructure/vitest.config.ts",
-    "demo:host": "npm run build && node scripts/host-cli-demo.mjs",
     "prebuild": "node scripts/clean-build.mjs",
-    "dev": "node --conditions=mybots-source packages/host/src/index.ts",
-    "start": "node packages/host/dist/index.js",
-    "mbt": "bin/mbt",
-    "setup": "node setup/cli.ts",
-    "setup:auto": "node setup/cli.ts",
+    "dev": "node --conditions=mybots-source apps/api/src/index.ts",
+    "start": "node apps/api/dist/index.js",
     "test:browser": "npm run build && playwright test",
-    "dev:durable": "node --conditions=mybots-source apps/api/src/index.ts",
-    "start:durable": "node apps/api/dist/index.js",
     "build:computer": "docker build -t mybots-computer:local -f container/Computer.Dockerfile ."
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@playwright/test": "1.64.1",
-    "@types/jsdom": "30.0.0",
     "@types/node": "24.19.2",
-    "@types/turndown": "5.0.6",
-    "@types/ws": "8.18.2",
     "husky": "9.1.7",
     "typescript": "7.0.2",
     "vitest": "5.0.3"
   },
   "workspaces": [
-    "packages/mailbox",
-    "packages/host",
-    "packages/agent-runner",
-    "packages/client",
     "packages/contracts",
     "packages/db",
     "packages/sandbox",
@@ -53,8 +39,5 @@
     "apps/web",
     "apps/worker",
     "apps/api"
-  ],
-  "bin": {
-    "mbt": "bin/mbt"
-  }
+  ]
 }

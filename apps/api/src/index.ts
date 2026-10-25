@@ -5,7 +5,7 @@ import { startApi } from "./server.ts";
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
-      root: { type: "string", default: "workspace/durable-chat" },
+      root: { type: "string", default: "data" },
       port: { type: "string", default: "4173" },
     },
   });

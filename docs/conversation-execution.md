@@ -1,6 +1,6 @@
 # Conversation execution
 
-Status: accepted target; implementation pending.
+Status: implemented; actual-provider acceptance is a separate opt-in gate.
 
 ## Input and persistence
 
@@ -26,11 +26,10 @@ with continuation. Agent tools derive scope from the current Bot/Thread; owner
 controls explicitly select a Thread. Retrieved text is background evidence,
 not newly authorized instructions. No semantic search is required.
 
-Context selection must work with compaction and reopen together. The inspected
-SDK plans compaction before the request-message hook, so a last-N filter alone
-is insufficient. Prove the integration early; report an unsupported contract
-instead of silently substituting another context engine. Concrete context limits
-are implementation defaults, not a tuning interface.
+The SDK compacts before the request-selection hook. Integration checks exercise
+selection with native compaction and reopen, preserving current tool pairs and
+original history. The [context defaults](durable-chat.md#persistence-and-context)
+are fixed implementation limits, not a tuning interface.
 
 ## Stop, concurrency and recovery
 
