@@ -65,7 +65,7 @@ try {
       for (const asset of ["main.js", "style.css", "vendor/marked.js"])
         assert.equal((await fetch(new URL(asset, url))).status, 200);
       assert.equal((await fetch(new URL("api/bots", url))).status, 401);
-      const saved = (await readFile(join(root, "data/client-credential"), "utf8")).trim();
+      const saved = (await readFile(join(root, "client-credential"), "utf8")).trim();
       if (credential) assert.equal(saved, credential);
       credential = saved;
       const headers = { Authorization: `Bearer ${credential}` };

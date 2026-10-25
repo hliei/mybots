@@ -12,7 +12,24 @@ behavior live in `apps/web`.
 
 ## Host configuration and startup
 
-Create `workspace/durable-chat/models.json` with a JSON array of host-configured
+The default data directory is `data/` in the repository root. `--root` selects
+another data directory with the same layout; it does not add a nested `data/`:
+
+```text
+data/
+├── models.json              # Host model configuration
+├── client-credential        # Local browser connection credential
+├── product.sqlite           # Bots, Threads, Skills and scoped memory
+├── durable.sqlite           # SDK conversation and execution storage
+├── worker-owner.sqlite      # Worker ownership lock
+└── computer/workspace/      # Persistent working files mounted into Docker
+```
+
+SQLite may create adjacent journal files. Keep the whole data directory when
+backing up a stopped installation. The Computer workspace is created on first
+tool use. Application logs go to the terminal; startup does not create `logs/`.
+
+Create the `data/` directory and `data/models.json` with a JSON array of host-configured
 OpenAI Chat Completions compatible models. For example, replace the endpoint,
 model and credential placeholders with your installation values:
 
@@ -56,7 +73,7 @@ npm start
 ```
 
 Open `http://127.0.0.1:4173`. Connect using the credential in
-`workspace/durable-chat/data/client-credential`. The HttpOnly connection cookie
+`data/client-credential`. The HttpOnly connection cookie
 survives reload; Host, Origin and cross-site checks apply to local requests.
 Create a Bot, select a configured model and send a message. Enter sends;
 Shift+Enter adds a line. A message sent while busy uses native steering.
@@ -250,8 +267,9 @@ does not establish actual-provider acceptance.
 The former Host, mailbox, containerized agent runner, terminal chat, gateway
 setup and background-service installers have been removed. Their launch commands
 and APIs are unsupported. No migration or continuation of their work is provided.
-The current default root is separate from the former repository-root `data/`
-and `groups/`; normal startup never deletes either installation's files.
+The default `data/` name was also used by the former Host. Before initializing
+this application, stop that service and move aside or deliberately remove its
+old data. Startup does not detect, migrate or automatically delete old records.
 
 Before starting this version, stop the old installation's service. On macOS,
 inspect `~/Library/LaunchAgents/com.mybots.*.plist` and identify the one whose
@@ -268,9 +286,10 @@ shared gateways and unrelated containers. This application does not use the old
 gateway, Telegram configuration or environment-file setup. Configure model
 credentials directly in the selected root's owner-readable `models.json`.
 
-Old `data/`, `groups/`, `host.json`, logs and credentials can remain inactive;
-there is no automatic cleanup. If discarding them, identify their installation
-and back up anything needed first. Preserve `.scratch/`, `.agents/`, local
-instructions, unrelated owner files and the current `<root>/computer/workspace`.
+Old `groups/`, `host.json`, logs and credentials can remain inactive. If
+discarding old installation files, identify them and back up anything needed
+first. Once initialized, `data/` contains the current application and must be
+preserved. Preserve `.scratch/`, `.agents/`, local instructions, unrelated owner
+files and the current `<root>/computer/workspace`.
 Builds clean only current package output. Keep the terminal running for the
 supported foreground startup; no replacement background service is installed.

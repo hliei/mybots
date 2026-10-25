@@ -16,13 +16,13 @@ node_modules/
 /coverage/
 
 # Local application state.
-/workspace/
+/data/
 
 # Workspace build output.
 /packages/*/dist/
 
-# Host state and shared Agent material.
-/data/
+# Retired installation files and locally installed tools.
+/workspace/
 /groups/
 /host.json
 /logs/

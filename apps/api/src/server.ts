@@ -29,10 +29,10 @@ export interface ApiServer {
 }
 
 export async function startApi(root: string, port = 0): Promise<ApiServer> {
-  await mkdir(join(root, "data"), { recursive: true, mode: 0o700 });
+  await mkdir(root, { recursive: true, mode: 0o700 });
   const access = await LocalAccess.load(root);
   const worker = await startWorker(root);
-  const database = new ProductDatabase(join(root, "data", "product.sqlite"));
+  const database = new ProductDatabase(join(root, "product.sqlite"));
   const streams = new Set<ServerResponse>();
   void worker.closed.then(() => {
     for (const stream of streams) stream.end();

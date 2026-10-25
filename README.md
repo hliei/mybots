@@ -14,17 +14,17 @@ npm run prepare
 npm run build
 ```
 
-Create `workspace/durable-chat/models.json` using the [host configuration
-guide](docs/durable-chat.md#host-configuration-and-startup). This existing data
-root remains the default, so installations of the persistent chat entry keep
-their Bots, history and Computer files. Start the API, worker and built Web:
+Create `data/models.json` using the [host configuration
+guide](docs/durable-chat.md#host-configuration-and-startup). Configuration, SQLite
+state and Computer files live together under `data/`, outside Git. Start the API,
+worker and built Web:
 
 ```sh
 npm start
 ```
 
 Open `http://127.0.0.1:4173` and connect with the credential in
-`workspace/durable-chat/data/client-credential`. Ctrl+C stops the application
+`data/client-credential`. Ctrl+C stops the application
 and preserves its data. Start Docker Desktop and run `npm run build:computer`
 once before using shell/file tools. Plain chat does not require Docker.
 

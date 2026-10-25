@@ -29,7 +29,7 @@ export async function apiFixture(
     service = await startDurableModel(respond, options);
     await writeFile(join(root, "models.json"), JSON.stringify([service.config]), { mode: 0o600 });
     api = await startApi(root);
-    const credential = (await readFile(join(root, "data", "client-credential"), "utf8")).trim();
+    const credential = (await readFile(join(root, "client-credential"), "utf8")).trim();
     const request = async (path: string, body?: unknown, method = body ? "POST" : "GET") => {
       if (!api) throw new Error("API is closed");
       const response = await fetch(new URL(`api/${path}`, api.url), {

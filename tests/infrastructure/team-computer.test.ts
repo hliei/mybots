@@ -183,7 +183,7 @@ test("real SDK chat uses Computer tools and retains working files after applicat
     if (!reply) throw new Error("Unexpected model request");
     return reply;
   });
-  const products = new ProductDatabase(join(fixture.root, "data", "product.sqlite"));
+  const products = new ProductDatabase(join(fixture.root, "product.sqlite"));
   const computer = products.computer();
   products.close();
   try {
@@ -303,7 +303,7 @@ test("public Stop cancels an active SDK shell tool and publishes the interrupted
     tool: "shell",
     arguments: { command: 'echo "$$" > pid; while :; do sleep 1; done' },
   }));
-  const database = new ProductDatabase(join(fixture.root, "data", "product.sqlite"));
+  const database = new ProductDatabase(join(fixture.root, "product.sqlite"));
   const computer = database.computer();
   database.close();
   const provider = new DockerSandbox(computer, join(fixture.root, "computer", "workspace"));
@@ -367,7 +367,7 @@ async function chatComputerFixture(
   const { apiFixture } = await import("../durable-api-fixture.ts");
   const { ProductDatabase } = await import("@mybots/db");
   const fixture = await apiFixture(respond, options);
-  const database = new ProductDatabase(join(fixture.root, "data", "product.sqlite"));
+  const database = new ProductDatabase(join(fixture.root, "product.sqlite"));
   const computer = database.computer();
   database.close();
   return {

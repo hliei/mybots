@@ -48,7 +48,7 @@ test("built Web searches selected history, pages originals and returns to the un
         throw new Error(`Compiled startup failed: ${errors}`);
       }),
     ]);
-    const credential = (await readFile(join(root, "data/client-credential"), "utf8")).trim();
+    const credential = (await readFile(join(root, "client-credential"), "utf8")).trim();
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(url);
     await expect(page).toHaveTitle("Mybots");

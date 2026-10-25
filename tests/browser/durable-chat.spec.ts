@@ -57,7 +57,7 @@ test("built Web streams, reloads committed chat, edits Bots and keeps Threads se
         throw new Error(`Compiled startup failed: ${errors}`);
       }),
     ]);
-    const credential = (await readFile(join(root, "data/client-credential"), "utf8")).trim();
+    const credential = (await readFile(join(root, "client-credential"), "utf8")).trim();
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(url);
     await expect(page).toHaveTitle("Mybots");

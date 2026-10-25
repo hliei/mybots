@@ -14,7 +14,7 @@ export class LocalAccess {
   }
 
   static async load(root: string): Promise<LocalAccess> {
-    const file = join(root, "data", "client-credential");
+    const file = join(root, "client-credential");
     try {
       await writeFile(file, `${randomBytes(32).toString("hex")}\n`, { flag: "wx", mode: 0o600 });
     } catch (error) {
