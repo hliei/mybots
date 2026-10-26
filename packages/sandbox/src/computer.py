@@ -1,4 +1,5 @@
 import base64
+from contextlib import contextmanager
 import fcntl
 import io
 import json
@@ -89,7 +90,32 @@ def public_state(state):
     return {key: state[key] for key in keys}
 
 
+@contextmanager
+def generation_lock(generation):
+    import uuid
+    if str(uuid.UUID(generation)) != generation:
+        raise ValueError("Invalid command generation")
+    directory = Path("/var/lib/mybots/worker-generations")
+    with (directory / generation).open("r") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock.seek(0)
+        yield lock
+
+
 def start(request):
+    with generation_lock(request["generation"]) as lock:
+        if lock.read():
+            raise RuntimeError("Worker command generation is closed")
+        launch(request)
+
+
+def seal_generation(request):
+    # The host closed the read-only marker; join launch executors that passed its check.
+    with generation_lock(request["generation"]):
+        pass
+
+
+def launch(request):
     cwd = workspace_path(request["cwd"])
     cwd.mkdir(parents=True, exist_ok=True)
     timeout = request["timeoutMs"]
@@ -290,6 +316,8 @@ def main():
     action = request["action"]
     if action == "start":
         start(request)
+    elif action == "seal_generation":
+        seal_generation(request)
     elif action == "snapshot":
         print(json.dumps(public_state(snapshot(request))))
     elif action == "commands":

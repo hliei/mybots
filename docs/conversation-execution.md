@@ -97,10 +97,13 @@ Before enabling execution after reopen, reconcile Computer ownership with native
 submission status and clean interrupted-turn work. `Harness.open` reconciles tasks
 without dispatch; cleanup uses read-only submission status before `resume`,
 submission, abort or wait operations can enable scheduling. Failed cleanup leaves
-execution paused and ownership records intact. Completed-turn retained services
+execution paused and ownership records intact. Before scanning commands, seal
+previous worker launch generations and join their provider-side launch locks;
+late Docker execs are rejected even after a container restart or replacement.
+Fresh worker generations still allow native continuation to launch new work. Completed-turn retained services
 are preserved, including a service whose native submission settled just before
 the old worker could mark retention. The host ownership journal records only
-Bot/turn identities before process launch; it is not an execution queue.
+Bot/turn identities and a launch generation before process launch; it is not an execution queue.
 
 After confirmed cleanup, resume supported work using
 SDK retry and tool replay semantics. Surface actual failures and interrupted

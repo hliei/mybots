@@ -38,6 +38,17 @@ export async function startApi(root: string, port = 0, signal?: AbortSignal): Pr
     for (const stream of streams)
       stream.write(`event: worker\ndata: ${JSON.stringify(status)}\n\n`);
   });
+  function openStream(response: ServerResponse): void {
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-store",
+      "X-Accel-Buffering": "no",
+    });
+    response.flushHeaders();
+    streams.add(response);
+    response.write(`event: worker\ndata: ${JSON.stringify(worker.status)}\n\n`);
+    response.once("close", () => streams.delete(response));
+  }
   const server = createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
       const unavailable =
@@ -70,6 +81,10 @@ export async function startApi(root: string, port = 0, signal?: AbortSignal): Pr
     if (path === "/api/pair" && request.method === "POST") {
       response.writeHead(204, { "Set-Cookie": access.cookie(), "Cache-Control": "no-store" });
       response.end();
+      return;
+    }
+    if (path === "/api/worker/events" && request.method === "GET") {
+      openStream(response);
       return;
     }
     if (path === "/api/worker" && request.method === "GET") {
@@ -221,20 +236,12 @@ export async function startApi(root: string, port = 0, signal?: AbortSignal): Pr
       }
       if (action === "events" && request.method === "GET") {
         const subscription = randomUUID();
-        response.writeHead(200, {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-store",
-          "X-Accel-Buffering": "no",
-        });
-        response.flushHeaders();
-        streams.add(response);
-        response.write(`event: worker\ndata: ${JSON.stringify(worker.status)}\n\n`);
+        openStream(response);
         worker.subscribe(subscription, botId, (view) => {
           if (response.writableLength > 1024 * 1024) response.destroy();
           else response.write(`data: ${JSON.stringify(view)}\n\n`);
         });
         response.once("close", () => {
-          streams.delete(response);
           worker.unsubscribe(subscription);
         });
         if (response.destroyed) worker.unsubscribe(subscription);

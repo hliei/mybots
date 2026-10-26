@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
+import { apiFixture } from "../durable-api-fixture.ts";
 import { startDurableModel } from "../durable-model-fixture.ts";
 import { configureFixture, fixtureEnvironment } from "../provider-fixture.ts";
 
@@ -90,6 +91,8 @@ test("built Web distinguishes worker recovery, reconstructed interruption and ex
     await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
     await page.reload();
     await expect(page.locator("#connection")).toContainText("Automatic recovery stopped");
+    await expect(page.locator("#chat-message")).toBeEmpty();
+    await expect(page.locator(".bot-row")).toContainText("Worker unavailable");
     await page.screenshot({ path: "test-results/worker-recovery-failed.png", fullPage: true });
     expect(pageErrors).toEqual([]);
   } finally {
@@ -97,5 +100,43 @@ test("built Web distinguishes worker recovery, reconstructed interruption and ex
     await exited;
     await service.close();
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("worker status recovers and fails before the first Bot exists", async ({ page }) => {
+  const fixture = await apiFixture(undefined, { workerFaults: true });
+  async function crash(): Promise<void> {
+    const { stdout } = await promisify(execFile)("pgrep", [
+      "-P",
+      String(process.pid),
+      "-f",
+      fixture.root,
+    ]);
+    const pids = stdout.trim().split(/\s+/).map(Number);
+    expect(pids).toHaveLength(1);
+    process.kill(pids[0] as number, "SIGKILL");
+  }
+  try {
+    await page.goto(fixture.url);
+    await page.getByLabel("Connection credential").fill(fixture.credential);
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await expect(page.locator("#workspace")).toBeVisible();
+    await expect(page.locator(".bot-row")).toHaveCount(0);
+    await writeFile(join(fixture.root, "worker-fault"), "hold");
+    await crash();
+    await expect(page.locator("#connection")).toContainText("Worker recovering");
+    await page.reload();
+    await expect(page.locator("#connection")).toContainText("Worker recovering");
+    await writeFile(join(fixture.root, "worker-fault"), "");
+    await expect(page.locator("#connection")).toHaveText("Worker recovered");
+    await writeFile(join(fixture.root, "worker-fault"), "crash");
+    await crash();
+    await expect(page.locator("#connection")).toContainText("Automatic recovery stopped", {
+      timeout: 15000,
+    });
+    await page.reload();
+    await expect(page.locator("#connection")).toContainText("Automatic recovery stopped");
+  } finally {
+    await fixture.close();
   }
 });

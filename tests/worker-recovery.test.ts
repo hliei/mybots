@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { startApi } from "../apps/api/src/server.ts";
+import { startWorker } from "../apps/api/src/worker-client.ts";
 import { apiFixture } from "./durable-api-fixture.ts";
 
 async function spawns(root: string): Promise<number[]> {
@@ -43,29 +44,47 @@ test("worker recovery exhausts three serialized attempts and leaves an actionabl
   }
 }, 15000);
 
-test.each(["backoff", "startup"])(
-  "shutdown during recovery %s leaves no worker or respawn",
-  async (stage) => {
-    const fixture = await apiFixture(undefined, { workerFaults: true });
-    try {
-      await writeFile(join(fixture.root, "worker-fault"), "hold");
-      await fixture.crashWorker();
-      expect(await fixture.request("worker")).toMatchObject({ state: "recovering" });
-      if (stage === "startup")
-        await expect.poll(async () => (await spawns(fixture.root)).length).toBe(2);
-      await fixture.shutdown();
-      const pids = await spawns(fixture.root);
-      expect(pids.length).toBeLessThanOrEqual(stage === "backoff" ? 1 : 2);
-      expect(pids.map(alive)).toEqual(pids.map(() => false));
-      // Reopen the root to prove shutdown also released exclusive ownership.
-      await writeFile(join(fixture.root, "worker-fault"), "");
-      await fixture.reopen();
-      expect(await fixture.request("worker")).toEqual({ state: "ready" });
-    } finally {
-      await fixture.close();
-    }
-  },
-);
+test("shutdown during replacement startup leaves no worker or respawn", async () => {
+  const fixture = await apiFixture(undefined, { workerFaults: true });
+  try {
+    await writeFile(join(fixture.root, "worker-fault"), "hold");
+    await fixture.crashWorker();
+    await expect.poll(async () => (await spawns(fixture.root)).length).toBe(2);
+    await fixture.shutdown();
+    expect((await spawns(fixture.root)).map(alive)).toEqual([false, false]);
+    await writeFile(join(fixture.root, "worker-fault"), "");
+    await fixture.reopen();
+    expect(await fixture.request("worker")).toEqual({ state: "ready" });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("shutdown at the recovery notification cancels backoff before any replacement spawn", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mybots-backoff-"));
+  const previous = process.env.NODE_OPTIONS;
+  process.env.NODE_OPTIONS = `${previous ?? ""} --import=${new URL("./worker-fault.mjs", import.meta.url).pathname}`;
+  let worker: Awaited<ReturnType<typeof startWorker>> | undefined;
+  try {
+    worker = await startWorker(root);
+    if (previous === undefined) delete process.env.NODE_OPTIONS;
+    else process.env.NODE_OPTIONS = previous;
+    let stopped: Promise<void> | undefined;
+    worker.onStatus.add((status) => {
+      // The synchronous notification is the observable boundary before the backoff timer.
+      if (status.state === "recovering") stopped = worker?.close();
+    });
+    process.kill((await spawns(root))[0] as number, "SIGKILL");
+    await expect.poll(() => stopped !== undefined).toBe(true);
+    await stopped;
+    expect((await spawns(root)).map(alive)).toEqual([false]);
+  } finally {
+    if (previous === undefined) delete process.env.NODE_OPTIONS;
+    else process.env.NODE_OPTIONS = previous;
+    await worker?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("plain chat and its worker recovery never need a Docker executable", async () => {
   const previous = process.env.PATH;

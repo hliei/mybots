@@ -18,6 +18,7 @@ let models: ModelChoice[] = [];
 let selected: Bot | undefined;
 let editing = false;
 let events: EventSource | undefined;
+let workerEvents: EventSource | undefined;
 let workerStatus: WorkerStatus = { state: "ready" };
 const workerAvailable = () => workerStatus.state === "ready" || workerStatus.state === "recovered";
 function renderWorkerStatus(): void {
@@ -136,19 +137,15 @@ function choose(bot: Bot): void {
   message.placeholder = `Message ${bot.name}…`;
   const available = models.some((model) => model.id === bot.model && model.available !== false);
   node<HTMLButtonElement>("send").disabled = !available;
-  node("chat-message").textContent = available
-    ? ""
-    : "Save the provider key in Provider settings, or choose an available model in Bot settings.";
+  node("chat-message").textContent =
+    !workerAvailable() || available
+      ? ""
+      : "Save the provider key in Provider settings, or choose an available model in Bot settings.";
   node<HTMLButtonElement>("edit-bot").disabled = false;
   node<HTMLButtonElement>("open-history").disabled = false;
   for (const row of node("bot-list").children)
     row.classList.toggle("selected", (row as HTMLElement).dataset.botId === bot.id);
   events = new EventSource(`/api/bots/${bot.id}/events`);
-  events.addEventListener("worker", (event) => {
-    workerStatus = JSON.parse((event as MessageEvent).data) as WorkerStatus;
-    renderWorkerStatus();
-    if (workerAvailable() && !models.length) void refresh(bot.id).catch(report);
-  });
   events.onmessage = (event) => {
     const view = JSON.parse(event.data) as ChatView;
     if (view.botId === selected?.id) renderMessages(view);
@@ -166,6 +163,17 @@ async function refresh(preferred?: string): Promise<void> {
   node("pairing").hidden = true;
   node("workspace").hidden = false;
   renderWorkerStatus();
+  if (!workerEvents) {
+    workerEvents = new EventSource("/api/worker/events");
+    workerEvents.addEventListener("worker", (event) => {
+      workerStatus = JSON.parse((event as MessageEvent).data) as WorkerStatus;
+      renderWorkerStatus();
+      if (workerAvailable() && !models.length) void refresh(selected?.id).catch(report);
+    });
+    workerEvents.onerror = () => {
+      node("connection").textContent = "Reconnecting…";
+    };
+  }
   node("bot-list").replaceChildren();
   for (const bot of bots) {
     const row = document.createElement("div");
@@ -178,7 +186,8 @@ async function refresh(preferred?: string): Promise<void> {
     name.textContent = bot.name;
     const detail = document.createElement("p");
     detail.textContent =
-      models.find((model) => model.id === bot.model)?.name ?? "Model unavailable";
+      models.find((model) => model.id === bot.model)?.name ??
+      (workerAvailable() ? "Model unavailable" : "Worker unavailable");
     const button = document.createElement("button");
     button.className = "choose-bot";
     button.type = "button";

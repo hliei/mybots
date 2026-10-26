@@ -17,7 +17,11 @@ publish SDK progress and can yield running output before exit while retaining
 their deadline. Intentional services use explicit launch/status/stop tools and
 can survive a successful Agent turn and application shutdown. Provider metadata
 owns processes by Bot and native input identity; Stop cleans only the current
-turn's work, preserving earlier retained services and other Bots.
+turn's work, preserving earlier retained services and other Bots. Before recovery
+resumes SDK execution, seal the interrupted worker's launch generation and clean
+its interrupted turns. Launch closure markers are host-owned and mounted
+read-only, separately from working files; Computer tools cannot reopen a closed
+generation or alter the host metadata.
 
 Start the single Computer on first shell/file use and reuse it, coordinating
 concurrent first use without locking all execution. Persistent files survive

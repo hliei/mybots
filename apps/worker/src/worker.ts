@@ -55,13 +55,15 @@ export async function openWorker(
     const ownerFile = join(root, "command-owners.sqlite");
     commandOwners = new DatabaseSync(ownerFile);
     commandOwners.exec(
-      "CREATE TABLE IF NOT EXISTS turns (turn_id TEXT PRIMARY KEY, bot_id TEXT NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS turns (turn_id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, generation TEXT)",
     );
     const owners = commandOwners;
     const discoverOwners =
       owners.prepare("PRAGMA user_version").get()?.user_version === 0 &&
       existsSync(join(root, "computer", "workspace"));
-    const remember = owners.prepare("INSERT OR IGNORE INTO turns (turn_id, bot_id) VALUES (?, ?)");
+    const remember = owners.prepare(
+      "INSERT OR IGNORE INTO turns (turn_id, bot_id, generation) VALUES (?, ?, ?)",
+    );
     const forget = owners.prepare("DELETE FROM turns WHERE turn_id = ?");
     database = new ProductDatabase(join(root, "product.sqlite"));
     const products = database;
@@ -74,7 +76,7 @@ export async function openWorker(
     const trackTurn = (owner: CommandOwner) => {
       if (turns.has(owner.turnId)) return;
       // Commit ownership before launching any Computer process, independently of the owner lock.
-      remember.run(owner.turnId, owner.botId);
+      remember.run(owner.turnId, owner.botId, sandbox.generation);
       const settled = (async () => {
         let completed = false;
         try {
@@ -117,14 +119,19 @@ export async function openWorker(
     try {
       if (discoverOwners) {
         for (const command of await sandbox.listCommands(computer)) {
-          if (command.owner) remember.run(command.owner.turnId, command.owner.botId);
+          if (command.owner) remember.run(command.owner.turnId, command.owner.botId, null);
         }
       }
       owners.exec("PRAGMA user_version = 1");
       const interrupted = owners
-        .prepare("SELECT turn_id AS turnId, bot_id AS botId FROM turns")
-        .all() as unknown as CommandOwner[];
+        .prepare("SELECT turn_id AS turnId, bot_id AS botId, generation FROM turns")
+        .all() as unknown as (CommandOwner & { generation: string | null })[];
       if (interrupted.length) {
+        for (const generation of new Set(interrupted.map((owner) => owner.generation)))
+          await sandbox.sealGeneration(
+            computer,
+            generation ?? "00000000-0000-0000-0000-000000000000",
+          );
         const commands = await sandbox.listCommands(computer);
         for (const owner of interrupted) {
           const submission = await harness.submission(
@@ -139,7 +146,11 @@ export async function openWorker(
                 command.owner?.turnId === owner.turnId && command.owner.botId === owner.botId,
             )
           )
-            await sandbox.finishTurn(computer, owner, status.status === "done");
+            await sandbox.finishTurn(
+              computer,
+              { botId: owner.botId, turnId: owner.turnId },
+              status.status === "done",
+            );
           forget.run(owner.turnId);
         }
       }

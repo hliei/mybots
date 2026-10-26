@@ -1362,6 +1362,7 @@ test("unconfirmed crash cleanup fails visibly without resuming SDK work or hidin
     if (!command) throw new Error("Owned command unavailable");
     await writeFile(join(fixture.root, "worker-fault"), "hold");
     await fixture.crashWorker();
+    const requestsBeforeRecovery = fixture.service.requests.length;
     // Losing the provider supervisor is a real unconfirmed-cleanup failure, not a mocked rejection.
     await docker("docker", [
       "exec",
@@ -1377,7 +1378,7 @@ test("unconfirmed crash cleanup fails visibly without resuming SDK work or hidin
         state: "failed",
         error: expect.stringContaining("Computer recovery cleanup failed"),
       });
-    expect(fixture.service.requests).toHaveLength(1);
+    expect(fixture.service.requests).toHaveLength(requestsBeforeRecovery);
     const check = await docker("docker", [
       "exec",
       fixture.computer.id,
@@ -1395,5 +1396,117 @@ test("unconfirmed crash cleanup fails visibly without resuming SDK work or hidin
     });
   } finally {
     await fixture.close();
+  }
+});
+
+test("late Docker launches from a killed worker are fenced while new native tool work proceeds", async () => {
+  const { access, chmod, copyFile, readFile, writeFile } = await import("node:fs/promises");
+  const tools = await mkdtemp(join(tmpdir(), "mybots-launch-gate-"));
+  const gate = join(tools, "release");
+  const realDocker = (await docker("which", ["docker"])).stdout.trim();
+  await copyFile(new URL("./docker-launch-gate.py", import.meta.url), join(tools, "docker"));
+  await chmod(join(tools, "docker"), 0o700);
+  const previous = {
+    PATH: process.env.PATH,
+    MYBOTS_REAL_DOCKER: process.env.MYBOTS_REAL_DOCKER,
+    MYBOTS_DOCKER_LAUNCH_GATE: process.env.MYBOTS_DOCKER_LAUNCH_GATE,
+  };
+  function restore(): void {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+  let fixture: Awaited<ReturnType<typeof chatComputerFixture>> | undefined;
+  let calls = 0;
+  try {
+    process.env.PATH = `${tools}:${previous.PATH}`;
+    process.env.MYBOTS_REAL_DOCKER = realDocker;
+    process.env.MYBOTS_DOCKER_LAUNCH_GATE = gate;
+    fixture = await chatComputerFixture(() => {
+      calls++;
+      if (calls === 1)
+        return {
+          tool: "shell",
+          arguments: { command: "echo $$ > late-pid; while :; do sleep 1; done" },
+        };
+      if (calls === 2)
+        return { tool: "shell", arguments: { command: "printf resumed > new-work" } };
+      return { text: "New native tool work finished" };
+    });
+    restore();
+    const running = fixture;
+    const bot = await fixture.request("bots", {
+      name: "Late launch",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.request(`bots/${bot.id}/send`, { text: "Launch once", requestId: "late-launch" });
+    await expect
+      .poll(
+        () =>
+          access(`${gate}.waiting`).then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 10000 },
+      )
+      .toBe(true);
+    await fixture.crashWorker();
+    await expect
+      .poll(() => running.request("worker"), { timeout: 15000 })
+      .toEqual({ state: "recovered" });
+    await expect
+      .poll(async () => (await running.request(`bots/${bot.id}/chat`)).messages.at(-1)?.text, {
+        timeout: 15000,
+      })
+      .toBe("New native tool work finished");
+    expect(await fixture.provider.readFile(fixture.computer, `bots/${bot.id}/new-work`)).toBe(
+      "resumed",
+    );
+    await writeFile(gate, "release");
+    await expect
+      .poll(
+        () =>
+          access(`${gate}.result`).then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 10000 },
+      )
+      .toBe(true);
+    expect(JSON.parse(await readFile(`${gate}.result`, "utf8"))).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("generation is closed"),
+    });
+    expect(
+      await fixture.provider
+        .readFile(fixture.computer, `bots/${bot.id}/late-pid`)
+        .catch(() => null),
+    ).toBeNull();
+    expect(
+      (await fixture.provider.listCommands(fixture.computer)).filter(
+        (command) => command.owner?.botId === bot.id,
+      ),
+    ).toEqual([]);
+    const protectedMetadata = await fixture.provider.execute(
+      fixture.computer,
+      "if touch /var/lib/mybots/worker-generations/forbidden; then exit 1; fi; echo read-only",
+      "shared",
+    );
+    expect(protectedMetadata).toMatchObject({
+      exitCode: 0,
+      stdout: "read-only\n",
+      stderr: expect.stringContaining("Read-only file system"),
+    });
+    expect(calls).toBe(3);
+  } finally {
+    restore();
+    await writeFile(gate, "release");
+    try {
+      await fixture?.close();
+    } finally {
+      await rm(tools, { recursive: true, force: true });
+    }
   }
 });
