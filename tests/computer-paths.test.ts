@@ -1,5 +1,12 @@
-import { DockerSandbox, resolveWorkingPath } from "@mybots/sandbox";
+import { commandTimeoutMs, DockerSandbox, resolveWorkingPath } from "@mybots/sandbox";
 import { expect, test } from "vitest";
+
+test("command deadlines default to five minutes and accept host overrides up to one hour", () => {
+  for (const value of ["", "bad", "0", "-1", "1.5", "3600001"])
+    expect(commandTimeoutMs(value)).toBe(300000);
+  expect(commandTimeoutMs("3600000")).toBe(3600000);
+  expect(commandTimeoutMs("1000")).toBe(1000);
+});
 
 test("Bot defaults and explicit shared/root paths resolve consistently", () => {
   expect(resolveWorkingPath("writer")).toBe("bots/writer");

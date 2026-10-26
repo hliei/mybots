@@ -46,6 +46,11 @@ export async function apiFixture(
       service,
       credential,
       request,
+      async shutdown() {
+        const previous = api;
+        api = undefined;
+        await previous?.close();
+      },
       get url() {
         if (!api) throw new Error("API is closed");
         return api.url;

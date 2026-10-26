@@ -9,6 +9,29 @@ import { expect, test } from "vitest";
 
 const docker = promisify(execFile);
 
+test("bounded commands publish output before exit and preserve the final error", async () => {
+  const fixture = await computerFixture();
+  const { provider, computer } = fixture;
+  let command: Promise<unknown> | undefined;
+  try {
+    const chunks: string[] = [];
+    command = provider.execute(
+      computer,
+      "printf 'sign-in code'; until [ -f release ]; do sleep 0.05; done; printf 'failed' >&2; exit 7",
+      "shared",
+      undefined,
+      { onOutput: (text: string) => chunks.push(text) },
+    );
+    void command.catch(() => {});
+    await expect.poll(() => chunks.join(""), { timeout: 10000 }).toContain("sign-in code");
+    await provider.writeFile(computer, "shared/release", "go");
+    expect(await command).toMatchObject({ exitCode: 7, stderr: "failed" });
+  } finally {
+    await fixture.close();
+    await Promise.allSettled([command]);
+  }
+});
+
 async function computerFixture() {
   const root = await mkdtemp(join(tmpdir(), "mybots-computer-"));
   const computer = { id: `mybots-${randomUUID()}` };
@@ -699,6 +722,553 @@ test("resources, compacted originals and shared Computer compose across restart 
       "COMBINED_ORIGINAL",
     );
     expect(replies).toHaveLength(0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("real SDK receives a running command then continues with its actual exit without replay", async () => {
+  let calls = 0;
+  const fixture = await chatComputerFixture(() => {
+    calls++;
+    if (calls === 1)
+      return {
+        tool: "shell",
+        arguments: {
+          command:
+            "printf 'one-time code: 1234'; until [ -f release ]; do sleep 0.05; done; echo final-error >&2; exit 7",
+        },
+      };
+    if (calls === 2) return { tool: "write_file", arguments: { path: "release", content: "go" } };
+    if (calls === 3) return { text: "I saw the code; checking completion." };
+    return { text: "Command finished with exit 7" };
+  });
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Progress",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.request(`bots/${bot.id}/send`, {
+      text: "Run the command",
+      requestId: "progress",
+    });
+    await expect
+      .poll(async () => (await fixture.request(`bots/${bot.id}/chat`)).busy, { timeout: 20000 })
+      .toBe(false);
+    const view = await fixture.request(`bots/${bot.id}/chat`);
+    expect(view.messages.at(-1)?.text).toBe("Command finished with exit 7");
+    const early = fixture.service.requests[1]?.messages.find((message) => message.role === "tool");
+    expect(JSON.parse(String(early?.content))).toMatchObject({
+      running: true,
+      exitCode: null,
+      stdout: "one-time code: 1234",
+      service: false,
+    });
+    expect(JSON.stringify(fixture.service.requests.at(-1))).toContain("final-error");
+    expect(JSON.stringify(fixture.service.requests.at(-1))).toContain('\\"exitCode\\": 7');
+    expect(
+      view.messages
+        .flatMap((message: { tools: string[] }) => message.tools)
+        .filter((name: string) => name === "shell"),
+    ).toHaveLength(1);
+    expect(view.inputs).toEqual([]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+function serviceCommand(port: number): string {
+  return `python3 -u -m http.server ${port} --bind 127.0.0.1`;
+}
+
+async function serviceAnswers(
+  fixture: Awaited<ReturnType<typeof chatComputerFixture>>,
+  port: number,
+): Promise<boolean> {
+  const result = await fixture.provider.execute(
+    fixture.computer,
+    `curl -fsS --max-time 1 http://127.0.0.1:${port}/ > /dev/null`,
+    "shared",
+  );
+  return result.exitCode === 0;
+}
+
+test("public Stop kills this turn's service and command while retaining prior services and another Bot", async () => {
+  let alphaCalls = 0;
+  let priorService = "";
+  const fixture = await chatComputerFixture((request) => {
+    if (JSON.stringify(request.messages).includes("BETA_LIFECYCLE")) {
+      if (request.messages.some((message) => message.role === "tool"))
+        return { text: "Beta finished" };
+      return {
+        tool: "shell",
+        arguments: {
+          command: "echo $$ > pid; until [ -f release ]; do sleep 0.05; done; echo beta-result",
+        },
+      };
+    }
+    alphaCalls++;
+    if (alphaCalls === 1)
+      return { tool: "start_service", arguments: { command: serviceCommand(8101) } };
+    if (alphaCalls === 2) return { text: "Earlier service ready" };
+    if (alphaCalls === 3)
+      return {
+        tools: [
+          { name: "start_service", arguments: { command: serviceCommand(8102) } },
+          {
+            name: "shell",
+            arguments: {
+              command: "echo $$ > current-pid; until [ -f release ]; do sleep 0.05; done",
+            },
+          },
+        ],
+      };
+    if (alphaCalls === 4) return { tool: "stop_service", arguments: { commandId: priorService } };
+    return { text: "Earlier service stopped" };
+  });
+  try {
+    const alpha = await fixture.request("bots", {
+      name: "Alpha",
+      instructions: "ALPHA_LIFECYCLE",
+      model: "deepseek/deepseek-flash",
+    });
+    const beta = await fixture.request("bots", {
+      name: "Beta",
+      instructions: "BETA_LIFECYCLE",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.request(`bots/${alpha.id}/send`, {
+      text: "Start a service",
+      requestId: "prior-service",
+    });
+    await expect
+      .poll(async () => (await fixture.request(`bots/${alpha.id}/chat`)).busy, { timeout: 20000 })
+      .toBe(false);
+    await expect
+      .poll(
+        async () =>
+          (await fixture.provider.listCommands(fixture.computer)).some(
+            (item) => item.service && item.retained,
+          ),
+        { timeout: 5000 },
+      )
+      .toBe(true);
+    priorService =
+      (await fixture.provider.listCommands(fixture.computer)).find((item) => item.retained)
+        ?.commandId ?? "";
+    expect(await serviceAnswers(fixture, 8101)).toBe(true);
+    await fixture.reopen();
+    expect(await serviceAnswers(fixture, 8101)).toBe(true);
+    await fixture.request(`bots/${alpha.id}/send`, {
+      text: "New service and command",
+      requestId: "current-work",
+    });
+    await fixture.request(`bots/${beta.id}/send`, {
+      text: "Work independently",
+      requestId: "beta-work",
+    });
+    const file = (id: string, name: string) =>
+      fixture.provider.readFile(fixture.computer, `bots/${id}/${name}`).catch(() => "");
+    await expect.poll(() => file(alpha.id, "current-pid"), { timeout: 15000 }).not.toBe("");
+    await expect.poll(() => file(beta.id, "pid"), { timeout: 15000 }).not.toBe("");
+    await expect.poll(() => serviceAnswers(fixture, 8102), { timeout: 10000 }).toBe(true);
+    await fixture.request(`bots/${alpha.id}/send`, {
+      text: "Withdraw this input",
+      requestId: "withdraw-current",
+    });
+    await fixture.request(`bots/${alpha.id}/stop`, {});
+    expect(await serviceAnswers(fixture, 8101)).toBe(true);
+    expect(await serviceAnswers(fixture, 8102)).toBe(false);
+    const processes = await fixture.provider.execute(
+      fixture.computer,
+      `python3 -c 'from pathlib import Path; print(Path("/proc",Path("bots/${alpha.id}/current-pid").read_text().strip()).exists(),Path("/proc",Path("bots/${beta.id}/pid").read_text().strip()).exists())'`,
+      "",
+    );
+    expect(processes.stdout).toBe("False True\n");
+    const stopped = await fixture.request(`bots/${alpha.id}/chat`);
+    expect(stopped.busy).toBe(false);
+    expect(stopped.inputs).toContainEqual(
+      expect.objectContaining({ requestId: "withdraw-current", status: "unanswered" }),
+    );
+    await fixture.provider.writeFile(fixture.computer, `bots/${beta.id}/release`, "go");
+    await expect
+      .poll(async () => (await fixture.request(`bots/${beta.id}/chat`)).busy, { timeout: 15000 })
+      .toBe(false);
+    expect((await fixture.request(`bots/${beta.id}/chat`)).messages.at(-1)?.text).toBe(
+      "Beta finished",
+    );
+    await fixture.request(`bots/${alpha.id}/send`, {
+      text: "Stop the earlier service",
+      requestId: "stop-prior",
+    });
+    await expect
+      .poll(async () => (await fixture.request(`bots/${alpha.id}/chat`)).busy, { timeout: 10000 })
+      .toBe(false);
+    expect(await serviceAnswers(fixture, 8101)).toBe(false);
+    expect((await fixture.request(`bots/${alpha.id}/chat`)).messages.at(-1)?.text).toBe(
+      "Earlier service stopped",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a completed-turn service responds after normal whole-application shutdown", async () => {
+  let calls = 0;
+  const fixture = await chatComputerFixture(() =>
+    ++calls === 1
+      ? { tool: "start_service", arguments: { command: `${serviceCommand(8103)} &` } }
+      : { text: "Service retained" },
+  );
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Service",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.request(`bots/${bot.id}/send`, { text: "Keep serving", requestId: "retain" });
+    await expect
+      .poll(async () => (await fixture.request(`bots/${bot.id}/chat`)).busy, { timeout: 20000 })
+      .toBe(false);
+    await fixture.shutdown();
+    const reopened = new DockerSandbox(
+      fixture.computer,
+      join(fixture.root, "computer", "workspace"),
+    );
+    expect(
+      (await reopened.listCommands(fixture.computer)).filter(
+        (item) => item.retained && item.running,
+      ),
+    ).toHaveLength(1);
+    expect(await serviceAnswers(fixture, 8103)).toBe(true);
+    await docker("docker", ["rm", "-f", fixture.computer.id]);
+    expect(await reopened.listCommands(fixture.computer)).toEqual([]);
+    expect(
+      (
+        await reopened.execute(
+          fixture.computer,
+          "curl -fsS --max-time 1 http://127.0.0.1:8103/",
+          "shared",
+        )
+      ).exitCode,
+    ).not.toBe(0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("provider ownership survives worker SIGKILL and distinguishes interrupted work from retained services", async () => {
+  let calls = 0;
+  const fixture = await chatComputerFixture(() => {
+    calls++;
+    if (calls === 1) return { tool: "start_service", arguments: { command: serviceCommand(8104) } };
+    if (calls === 2) return { text: "Retain this service" };
+    return {
+      tools: [
+        { name: "start_service", arguments: { command: serviceCommand(8105) } },
+        {
+          name: "shell",
+          arguments: { command: "echo $$ > interrupted-pid; while :; do sleep 1; done" },
+        },
+      ],
+    };
+  });
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Crash",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.request(`bots/${bot.id}/send`, {
+      text: "First service",
+      requestId: "retain-before-crash",
+    });
+    await expect
+      .poll(async () => (await fixture.request(`bots/${bot.id}/chat`)).busy, { timeout: 15000 })
+      .toBe(false);
+    const admission = await fixture.request(`bots/${bot.id}/send`, {
+      text: "Work before crash",
+      requestId: "interrupted",
+    });
+    await expect
+      .poll(
+        async () => {
+          const commands = await fixture.provider.listCommands(fixture.computer);
+          return commands.filter(
+            (item) => item.owner?.turnId === String(admission.id) && item.running,
+          ).length;
+        },
+        { timeout: 15000 },
+      )
+      .toBe(2);
+    await expect.poll(() => serviceAnswers(fixture, 8105), { timeout: 10000 }).toBe(true);
+    await fixture.crashWorker();
+    const reopened = new DockerSandbox(
+      fixture.computer,
+      join(fixture.root, "computer", "workspace"),
+    );
+    const commands = await reopened.listCommands(fixture.computer);
+    expect(commands.filter((item) => item.retained && item.service && item.running)).toHaveLength(
+      1,
+    );
+    expect(commands.filter((item) => item.owner?.turnId === String(admission.id))).toEqual([
+      expect.objectContaining({
+        owner: { botId: bot.id, turnId: String(admission.id) },
+        retained: false,
+        running: true,
+      }),
+      expect.objectContaining({
+        owner: { botId: bot.id, turnId: String(admission.id) },
+        retained: false,
+        running: true,
+      }),
+    ]);
+    // The recovery ticket will invoke this provider seam before SDK resume.
+    await reopened.finishTurn(
+      fixture.computer,
+      { botId: bot.id, turnId: String(admission.id) },
+      false,
+    );
+    expect(await serviceAnswers(fixture, 8104)).toBe(true);
+    expect(await serviceAnswers(fixture, 8105)).toBe(false);
+    expect(
+      (await reopened.listCommands(fixture.computer)).filter(
+        (item) => item.owner?.turnId === String(admission.id),
+      ),
+    ).toEqual([]);
+    const check = await reopened.execute(
+      fixture.computer,
+      'python3 -c \'from pathlib import Path; print(Path("/proc", Path("interrupted-pid").read_text().strip()).exists())\'',
+      `bots/${bot.id}`,
+    );
+    expect(check.stdout).toBe("False\n");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("deadlines and truncation remain observable with a shell slice for original bytes", async () => {
+  const fixture = await computerFixture();
+  const previous = process.env.SANDBOX_COMMAND_TIMEOUT_MS;
+  try {
+    process.env.SANDBOX_COMMAND_TIMEOUT_MS = "1000";
+    const result = await fixture.provider.execute(
+      fixture.computer,
+      "echo $$ > pid; echo waiting; sleep 120",
+      "shared",
+    );
+    expect(result).toMatchObject({ exitCode: 124, timedOut: true, stdout: "waiting\n" });
+    const check = await fixture.provider.execute(
+      fixture.computer,
+      'python3 -c \'from pathlib import Path; print(Path("/proc", Path("pid").read_text().strip()).exists())\'',
+      "shared",
+    );
+    expect(check.stdout).toBe("False\n");
+    if (previous === undefined) delete process.env.SANDBOX_COMMAND_TIMEOUT_MS;
+    else process.env.SANDBOX_COMMAND_TIMEOUT_MS = previous;
+    const huge = await fixture.provider.execute(
+      fixture.computer,
+      'python3 -c \'from pathlib import Path; import sys; data="x"*70000+"ORIGINAL_TAIL"; Path("large.txt").write_text(data); print(data); sys.stderr.write("e"*70000)\'',
+      "shared",
+    );
+    expect(huge).toMatchObject({ exitCode: 0, truncated: true });
+    expect(Buffer.byteLength(huge.stdout)).toBe(65536);
+    expect(Buffer.byteLength(huge.stderr)).toBe(65536);
+    expect(
+      (await fixture.provider.execute(fixture.computer, "tail -c 13 large.txt", "shared")).stdout,
+    ).toBe("ORIGINAL_TAIL");
+    expect(JSON.parse(await fixture.provider.listFiles(fixture.computer, "shared"))).toEqual({
+      entries: ["large.txt", "pid"],
+      truncated: false,
+    });
+    expect(
+      (await fixture.provider.readFile(fixture.computer, "shared/large.txt")).endsWith(
+        "ORIGINAL_TAIL",
+      ),
+    ).toBe(true);
+  } finally {
+    if (previous === undefined) delete process.env.SANDBOX_COMMAND_TIMEOUT_MS;
+    else process.env.SANDBOX_COMMAND_TIMEOUT_MS = previous;
+    await fixture.close();
+  }
+});
+
+test("declared command-line facilities work with writable persistent home and cache paths", async () => {
+  const fixture = await computerFixture();
+  try {
+    const result = await fixture.provider.execute(
+      fixture.computer,
+      `set -e
+for tool in bash curl git gh jq ssh unzip ps pdftotext pdfinfo pandoc uv uvx; do command -v "$tool"; done
+[ "$HOME" = /workspace/bots/tools ]
+[ "$XDG_CACHE_HOME" = "$HOME/.cache" ]
+[ "$UV_CACHE_DIR" = "$HOME/.cache/uv" ]
+mkdir -p "$HOME/.local/bin" "$XDG_CACHE_HOME"
+printf '#!/bin/sh\\necho local-bin\\n' > "$HOME/.local/bin/local-check"
+chmod +x "$HOME/.local/bin/local-check"
+local-check
+git init --quiet repo
+printf '{"value":42}' | jq -e '.value == 42'
+printf '# Title' | pandoc -f markdown -t html | head -c 200
+uv venv --offline --python /usr/local/bin/python3 .venv
+.venv/bin/python -c 'print("venv works")'
+python3 -c 'import openpyxl; book=openpyxl.Workbook(); book.active["A1"]="shared bytes"; book.save("sheet.xlsx"); assert openpyxl.load_workbook("sheet.xlsx").active["A1"].value == "shared bytes"'
+gh --version
+curl --version
+pdfinfo -v
+pdftotext -v
+`,
+      "bots/tools",
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("local-bin");
+    expect(result.stdout).toContain("venv works");
+    expect(result.stdout).toContain('<h1 id="title">Title</h1>');
+    expect(
+      JSON.parse(await fixture.provider.listFiles(fixture.computer, "bots/tools")).entries,
+    ).toContain("sheet.xlsx");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("SDK persists live tool output while the real command is still running", async () => {
+  const { computerTools, context, openAgent } = await import("@mybots/agent");
+  const { startDurableModel } = await import("../durable-model-fixture.ts");
+  const fixture = await computerFixture();
+  let calls = 0;
+  const model = await startDurableModel(() =>
+    ++calls === 1
+      ? {
+          tool: "shell",
+          arguments: {
+            command: "printf 'LIVE_OUTPUT'; until [ -f release ]; do printf .; sleep 0.2; done",
+          },
+        }
+      : { text: "Output observed" },
+  );
+  const harness = await openAgent(
+    join(fixture.root, "durable.sqlite"),
+    [model.config],
+    [computerTools(fixture.provider, fixture.computer, () => "progress")],
+  );
+  let watch: import("@mybots/agent").ConversationWatch | undefined;
+  try {
+    const chat = await harness.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: { model: { provider: "controlled", modelId: "controlled-model" } },
+      },
+      context,
+    );
+    let progress = "";
+    watch = await chat.watch(context);
+    watch.start(async (state) => {
+      const live = state.docs["pi.live"] as { tools?: { output?: string }[] } | undefined;
+      progress = live?.tools?.map((tool) => tool.output ?? "").join("") ?? "";
+    });
+    const submission = await chat.submit(
+      { type: "input", content: "Show running output" },
+      context,
+    );
+    await expect.poll(() => progress, { timeout: 5000 }).toContain("LIVE_OUTPUT");
+    expect(model.requests).toHaveLength(1);
+    expect(
+      (await fixture.provider.listCommands(fixture.computer)).some((item) => item.running),
+    ).toBe(true);
+    await fixture.provider.writeFile(fixture.computer, "bots/progress/release", "go");
+    expect((await submission.wait(context)).status).toBe("done");
+    expect(model.requests).toHaveLength(2);
+  } finally {
+    await watch?.stop();
+    await harness.close(context);
+    await model.close();
+    await fixture.close();
+  }
+});
+
+test("SDK truncation keeps command identity and exit metadata with a usable follow-up route", async () => {
+  let calls = 0;
+  const fixture = await chatComputerFixture(() =>
+    ++calls === 1
+      ? {
+          tool: "shell",
+          arguments: {
+            command:
+              'python3 -c \'from pathlib import Path; data="x"*70000+"END"; Path("output.txt").write_text(data); print(data)\'',
+          },
+        }
+      : { text: "Bounded output received" },
+  );
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Large output",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.request(`bots/${bot.id}/send`, {
+      text: "Produce output",
+      requestId: "large-output",
+    });
+    await expect
+      .poll(async () => (await fixture.request(`bots/${bot.id}/chat`)).busy, { timeout: 15000 })
+      .toBe(false);
+    const tool = String(
+      fixture.service.requests[1]?.messages.find((message) => message.role === "tool")?.content,
+    );
+    expect(tool).toContain('"commandId":');
+    expect(tool).toContain('"exitCode": 0');
+    expect(tool).toContain('"truncated": true');
+    expect(tool).not.toContain("END");
+    expect(Buffer.byteLength(tool)).toBeLessThan(52000);
+    expect(
+      (await fixture.provider.execute(fixture.computer, "tail -c 3 output.txt", `bots/${bot.id}`))
+        .stdout,
+    ).toBe("END");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("native queued input takes precedence while a final-answer hook observes unfinished work", async () => {
+  let calls = 0;
+  const fixture = await chatComputerFixture(() => {
+    calls++;
+    if (calls === 1)
+      return { tool: "shell", arguments: { command: "echo waiting; while :; do sleep 1; done" } };
+    if (calls === 2) return { text: "The command is still waiting." };
+    if (calls === 3) return { text: "Checking the command." };
+    return { text: "New instruction received" };
+  });
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Final steering",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.request(`bots/${bot.id}/send`, { text: "Run", requestId: "initial" });
+    await fixture.service.waitForRequest(2);
+    await expect
+      .poll(
+        async () =>
+          (await fixture.request(`bots/${bot.id}/chat`)).messages
+            .map((message: { text: string }) => message.text)
+            .join("\n"),
+        { timeout: 5000 },
+      )
+      .toContain("still waiting");
+    await fixture.request(`bots/${bot.id}/send`, {
+      text: "Finish waiting and take this instruction",
+      requestId: "final-steer",
+    });
+    await expect.poll(() => calls, { timeout: 5000 }).toBe(4);
+    await expect
+      .poll(async () => (await fixture.request(`bots/${bot.id}/chat`)).busy, { timeout: 5000 })
+      .toBe(false);
+    expect((await fixture.request(`bots/${bot.id}/chat`)).messages.at(-1)?.text).toBe(
+      "New instruction received",
+    );
   } finally {
     await fixture.close();
   }

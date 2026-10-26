@@ -14,8 +14,11 @@ test("chat offers Computer and resource tools without starting Docker", async ()
     await fixture.request(`bots/${bot.id}/send`, { text: "Hello", requestId: "tools" });
     await settled(fixture, bot);
     expect(fixture.service.requests[0]?.tools?.map((tool) => tool.function.name).sort()).toEqual([
+      "command_status",
       "history_read",
       "history_search",
+      "list_files",
+      "list_services",
       "memory_delete",
       "memory_read",
       "memory_write",
@@ -24,6 +27,8 @@ test("chat offers Computer and resource tools without starting Docker", async ()
       "skill_delete",
       "skill_read",
       "skill_write",
+      "start_service",
+      "stop_service",
       "write_file",
     ]);
   } finally {

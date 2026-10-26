@@ -101,8 +101,9 @@ before retrying. Missing keys do not prevent startup.
 
 ## Team Computer
 
-The worker registers only `shell`, `read_file` and `write_file` as working-file
-tools. All use the same ComputerRef and Docker SandboxProvider. Product SQLite
+The worker registers `shell`, `list_files`, `read_file` and `write_file`, plus
+`start_service`, `command_status`, `list_services` and `stop_service` for managed
+processes. All use the same ComputerRef and Docker SandboxProvider. Product SQLite
 retains one Computer identity for the default Space. Its sole host mount is
 `<root>/computer/workspace`, exposed as `/workspace` in the container. Host model
 configuration and databases are outside that mount.
@@ -117,13 +118,66 @@ Tool paths reject traversal and links outside the workspace. Bot directories
 organize files and do not isolate Bots. Concurrent edits to shared files require
 owner coordination.
 
-Concurrent first use shares preparation, while independent commands run without
-a global Computer lock. Stop kills the active command's process group inside
-the container and joins its wrapper; it preserves the Computer and completed
-file effects. Commands have a 120-second limit and retain up to 64 KiB each of
-stdout/stderr, with an explicit truncation flag. File tools handle UTF-8 files
-up to 1 MiB. Interrupted shell/write operations are not replayed automatically;
-the SDK records the interrupted outcome. Read operations are replay-safe.
+Concurrent first use shares preparation; independent commands have no global
+Computer lock. `shell` runs bash with a five-minute deadline. The host environment
+variable `SANDBOX_COMMAND_TIMEOUT_MS` accepts a positive integer in milliseconds
+up to 3,600,000 (sixty minutes); missing or invalid values use 300,000. There is
+no per-tool deadline option or tuning UI. A container supervisor enforces the
+deadline independently of worker lifetime; expiry kills the process group and
+returns `timedOut: true` with exit code 124.
+
+Output is polled every 200 ms and published through native SDK tool progress.
+After output goes quiet for one second, or after ten seconds of observation,
+the tool can return `running: true`, a null exit code and a `commandId` while the
+bounded command continues. This does not detach it or remove its deadline.
+`command_status` observes that ID again. At the final-answer boundary, native
+SDK continuation first commits progress if work still runs, then supplies bounded
+final command output before the final reply. Completion observation checks the
+native inbox between bounded waits, so queued owner input retains precedence. Completed commands are not
+reexecuted to obtain their results. Commands retain the first 64 KiB of each
+stream; SDK results/continuations additionally use 50 KiB / 2,000-line bounds.
+Truncation is explicit. Use shell slices to retrieve required original bytes,
+or explicitly redirect output to a workspace log; there is no automatic full-log
+store. Command identity and exit metadata precede output in tool results.
+
+`list_files` includes hidden names and directories, limited to 1,000 entries
+with a truncation flag; use shell for larger or filtered listings. Read/write
+tools handle UTF-8 files up to 1 MiB, and writes replace contents. Interrupted
+shell/write operations are unsafe to replay; the SDK records interruption.
+Read/list operations are replay-safe.
+
+The image includes Python 3, bash, curl, git, gh, jq, an SSH client, unzip,
+procps, PDF text/info utilities, pandoc, openpyxl and uv/uvx. It includes no desktop
+or Node/npm toolchain. Each shell sets HOME to its resolved cwd, adds
+`$HOME/.local/bin` to PATH and uses `$HOME/.cache` (including `uv`) for caches.
+These directories persist when cwd is in the workspace; the root filesystem is
+read-only and `/tmp` is temporary. Verify additional tools before using them.
+
+`start_service` explicitly launches intentional work without the ordinary shell
+deadline. Run the service in the foreground. The tool returns its `commandId`;
+`command_status` and `list_services` report current state, and an explicit later
+chat request can invoke `stop_service` for this Bot's earlier service. Services
+are retained only after the SDK settles the originating input successfully.
+They can use CPU, memory and ports after the application exits. This does not
+manage arbitrary daemons that escape the command's process group and provides
+no host preview URL, management screen or automatic restart.
+
+Stop uses native abort and queued-input withdrawal, then joins cleanup of all
+commands and services owned by the current Agent turn. It preserves other Bots,
+services retained by earlier completed turns, the Computer and completed file
+effects. Inspecting an earlier service does not transfer its ownership to the
+current turn. A failed turn does not retain its newly started services.
+
+Provider metadata under `/tmp/mybots-commands` associates command IDs and process
+groups with Bot IDs and the turn's first SDK submission ID, which remains stable
+across generation handovers. Supervisor and process start tokens guard signals
+against PID reuse. Metadata survives worker death while the Computer runs;
+`DockerSandbox.listCommands()` exposes ownership and retained state, and
+`finishTurn(computer, owner, completed)` retains successful services or joins
+scoped cancellation. The worker marks retention only after committed SDK
+settlement. Recovery can reconcile a crash between settlement and that mark
+against the native submission; a transcript interruption alone proves nothing
+about process death. Automatic recovery cleanup remains a separate integration.
 
 Normal shutdown closes the worker without removing the container or workspace.
 The container may stay running. Later tool use starts a stopped container or
@@ -250,7 +304,9 @@ results, selected Thread scope and return to the existing draft/reading position
 No Docker operation or actual provider request is required by these checks.
 `npm run test:infrastructure` builds the Computer image and separately verifies
 real Docker file/shell agreement, concurrent first use, process-group cancellation,
-public Stop, SDK chat tools, application reopen/container replacement, unsafe
+scoped public Stop, SDK progress/continuation, retained services through whole-app
+shutdown, provider cleanup after worker death, deadlines, truncation, declared
+CLI facilities, application reopen/container replacement, unsafe
 path/archive rejection and workspace transfer using temporary resources and a
 controlled HTTP model. It needs Docker but no personal provider credentials.
 

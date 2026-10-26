@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 export interface ComputerRef {
   id: string;
@@ -12,6 +13,26 @@ export interface CommandResult {
   stdout: string;
   stderr: string;
   truncated: boolean;
+  timedOut: boolean;
+}
+
+export interface CommandOwner {
+  botId: string;
+  turnId: string;
+}
+
+export interface CommandSnapshot extends Omit<CommandResult, "exitCode"> {
+  commandId: string;
+  exitCode: number | null;
+  running: boolean;
+  service: boolean;
+  retained: boolean;
+  owner: CommandOwner | null;
+}
+
+export function commandTimeoutMs(value = process.env.SANDBOX_COMMAND_TIMEOUT_MS): number {
+  const timeout = Number(value);
+  return Number.isSafeInteger(timeout) && timeout > 0 && timeout <= 3600000 ? timeout : 300000;
 }
 
 export interface SandboxProvider {
@@ -21,7 +42,28 @@ export interface SandboxProvider {
     command: string,
     cwd: string,
     signal?: AbortSignal,
+    options?: { onOutput?: (text: string) => void },
   ): Promise<CommandResult>;
+  startCommand(
+    computer: ComputerRef,
+    command: string,
+    cwd: string,
+    owner: CommandOwner,
+    service: boolean,
+    signal?: AbortSignal,
+  ): Promise<CommandSnapshot>;
+  observeCommand(
+    computer: ComputerRef,
+    id: string,
+    botId?: string,
+    signal?: AbortSignal,
+    onOutput?: (text: string) => void,
+    untilExit?: boolean,
+  ): Promise<CommandSnapshot>;
+  listCommands(computer: ComputerRef): Promise<CommandSnapshot[]>;
+  cancelCommand(computer: ComputerRef, id: string, botId?: string): Promise<void>;
+  finishTurn(computer: ComputerRef, owner: CommandOwner, completed: boolean): Promise<void>;
+  listFiles(computer: ComputerRef, path: string, signal?: AbortSignal): Promise<string>;
   readFile(computer: ComputerRef, path: string, signal?: AbortSignal): Promise<string>;
   writeFile(
     computer: ComputerRef,
@@ -163,12 +205,14 @@ export class DockerSandbox implements SandboxProvider {
     );
   }
 
-  async execute(
+  private async launch(
     computer: ComputerRef,
     command: string,
     cwd: string,
+    owner?: CommandOwner,
+    service = false,
     signal?: AbortSignal,
-  ): Promise<CommandResult> {
+  ): Promise<CommandSnapshot> {
     if (
       typeof command !== "string" ||
       !command.trim() ||
@@ -176,30 +220,134 @@ export class DockerSandbox implements SandboxProvider {
       command.includes("\0")
     )
       throw new Error("Invalid shell command");
+    signal?.throwIfAborted();
     await this.prepare(computer);
     signal?.throwIfAborted();
     const id = randomUUID();
-    const deadline = AbortSignal.timeout(120000);
-    const cancellation = signal ? AbortSignal.any([signal, deadline]) : deadline;
-    let stopped: Promise<Buffer> | undefined;
-    const cancel = () => {
-      stopped = this.call(computer, { action: "cancel", id });
-      void stopped.catch(() => {});
-    };
-    cancellation.addEventListener("abort", cancel, { once: true });
-    try {
-      const output = await this.call(computer, { action: "execute", command, cwd, id });
-      if (stopped) await stopped;
-      cancellation.throwIfAborted();
-      return JSON.parse(output.toString()) as CommandResult;
-    } finally {
-      cancellation.removeEventListener("abort", cancel);
-      try {
-        if (stopped) await stopped;
-      } finally {
-        await this.call(computer, { action: "release", id });
-      }
+    const result = await this.call(computer, {
+      action: "start",
+      command,
+      cwd,
+      id,
+      owner,
+      service,
+      timeoutMs: commandTimeoutMs(),
+    });
+    if (signal?.aborted) {
+      await this.cancelCommand(computer, id);
+      signal.throwIfAborted();
     }
+    return JSON.parse(result.toString()) as CommandSnapshot;
+  }
+
+  async startCommand(
+    computer: ComputerRef,
+    command: string,
+    cwd: string,
+    owner: CommandOwner,
+    service: boolean,
+    signal?: AbortSignal,
+  ): Promise<CommandSnapshot> {
+    return this.launch(computer, command, cwd, owner, service, signal);
+  }
+
+  async observeCommand(
+    computer: ComputerRef,
+    id: string,
+    botId?: string,
+    signal?: AbortSignal,
+    onOutput?: (text: string) => void,
+    untilExit = false,
+  ): Promise<CommandSnapshot> {
+    let stdout = "";
+    let stderr = "";
+    let changedAt = Date.now();
+    const startedAt = Date.now();
+    while (true) {
+      signal?.throwIfAborted();
+      const result = JSON.parse(
+        (await this.call(computer, { action: "snapshot", id, botId })).toString(),
+      ) as CommandSnapshot;
+      if (result.stdout !== stdout || result.stderr !== stderr) {
+        onOutput?.(result.stdout.slice(stdout.length) + result.stderr.slice(stderr.length));
+        stdout = result.stdout;
+        stderr = result.stderr;
+        changedAt = Date.now();
+      }
+      if (
+        !result.running ||
+        (!untilExit &&
+          ((stdout.length + stderr.length > 0 && Date.now() - changedAt >= 1000) ||
+            Date.now() - startedAt >= 10000))
+      )
+        return result;
+      await delay(200, undefined, { signal });
+    }
+  }
+
+  async execute(
+    computer: ComputerRef,
+    command: string,
+    cwd: string,
+    signal?: AbortSignal,
+    options?: { onOutput?: (text: string) => void },
+  ): Promise<CommandResult> {
+    const { commandId } = await this.launch(computer, command, cwd, undefined, false, signal);
+    let finished = false;
+    try {
+      const result = await this.observeCommand(
+        computer,
+        commandId,
+        undefined,
+        signal,
+        options?.onOutput,
+        true,
+      );
+      if (result.exitCode === null) throw new Error("Command has not exited");
+      finished = true;
+      return { ...result, exitCode: result.exitCode };
+    } catch (error) {
+      await this.cancelCommand(computer, commandId);
+      finished = true;
+      throw error;
+    } finally {
+      if (finished) await this.call(computer, { action: "release", id: commandId });
+    }
+  }
+
+  async listCommands(computer: ComputerRef): Promise<CommandSnapshot[]> {
+    this.check(computer);
+    const running = (
+      await docker([
+        "container",
+        "ls",
+        "--filter",
+        `name=^/${computer.id}$`,
+        "--format",
+        "{{.Names}}",
+      ])
+    )
+      .toString()
+      .trim();
+    if (!running) return [];
+    return JSON.parse(
+      (await this.call(computer, { action: "commands" })).toString(),
+    ) as CommandSnapshot[];
+  }
+
+  async cancelCommand(computer: ComputerRef, id: string, botId?: string): Promise<void> {
+    await this.call(computer, { action: "cancel", id, botId });
+  }
+
+  async finishTurn(computer: ComputerRef, owner: CommandOwner, completed: boolean): Promise<void> {
+    await this.call(computer, { action: "finish_turn", owner, completed });
+  }
+
+  async listFiles(computer: ComputerRef, path: string, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
+    await this.prepare(computer);
+    signal?.throwIfAborted();
+    return (await this.call(computer, { action: "list", path })).toString();
   }
 
   async readFile(computer: ComputerRef, path: string, signal?: AbortSignal): Promise<string> {

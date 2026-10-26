@@ -12,7 +12,12 @@ Validate tool inputs and paths at the provider boundary.
 Relative paths and default command directories resolve to `bots/<botId>/`.
 Explicit workspace-root paths support shared materials under `shared/`.
 These directories organize files; they do not isolate Bots from one another.
-Shell and file tools operate on the same bytes.
+Shell and list/read/write tools operate on the same bytes. Bounded commands
+publish SDK progress and can yield running output before exit while retaining
+their deadline. Intentional services use explicit launch/status/stop tools and
+can survive a successful Agent turn and application shutdown. Provider metadata
+owns processes by Bot and native input identity; Stop cleans only the current
+turn's work, preserving earlier retained services and other Bots.
 
 Start the single Computer on first shell/file use and reuse it, coordinating
 concurrent first use without locking all execution. Persistent files survive
