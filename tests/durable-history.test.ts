@@ -129,6 +129,13 @@ test("Agent retrieves compacted originals after worker reopen within its own Thr
       instructions: "Keep the current role",
       model: "deepseek/deepseek-flash",
     });
+    await fixture.request("memory/owner", { content: "COMPACTION_OWNER_MEMORY" }, "PUT");
+    await fixture.request(`bots/${bot.id}/memory`, { content: "COMPACTION_BOT_MEMORY" }, "PUT");
+    await fixture.request(
+      "skills/archival",
+      { description: "COMPACTION_SKILL_CATALOG", content: "UNLOADED_SKILL_BODY" },
+      "PUT",
+    );
     originalId = Number((await send(fixture, bot, "Save the source")).messages.at(-1)?.id);
     seed = false;
     const other: Bot = await fixture.request("bots", {
@@ -147,6 +154,7 @@ test("Agent retrieves compacted originals after worker reopen within its own Thr
       "ARCHIVED_SOURCE",
     );
     await fixture.reopen();
+    await fixture.request(`bots/${bot.id}/memory`, { content: "REOPENED_BOT_MEMORY" }, "PUT");
     expect((await fixture.request(`bots/${bot.id}/history/${originalId}`)).text).toContain(
       "ARCHIVED_SOURCE",
     );
@@ -171,6 +179,13 @@ test("Agent retrieves compacted originals after worker reopen within its own Thr
       "Original unavailable",
     );
     for (const request of generations) {
+      const system = JSON.stringify(request.messages[0]);
+      expect(system).toContain("Keep the current role");
+      expect(system).toContain("COMPACTION_OWNER_MEMORY");
+      expect(system).toContain("REOPENED_BOT_MEMORY");
+      expect(system).toContain("COMPACTION_SKILL_CATALOG");
+      expect(system).toContain(`/workspace/bots/${bot.id}`);
+      expect(system).not.toMatch(/COMPACTION_BOT_MEMORY|UNLOADED_SKILL_BODY/);
       expect(
         request.messages
           .filter((message) => message.role === "tool")

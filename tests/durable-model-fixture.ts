@@ -21,6 +21,7 @@ export type ModelReply =
       reasoning?: string;
     }
   | { status: number; error?: string }
+  | { wire: string; stall?: boolean }
   | { hold: true }
   | { chunks: AsyncIterable<string> };
 
@@ -48,11 +49,19 @@ export async function startDurableModel(
     if ("status" in reply) {
       response.writeHead(reply.status, { "Content-Type": "application/json" });
       response.end(
-        JSON.stringify({ error: { message: reply.error ?? "Controlled model failure" } }),
+        JSON.stringify({
+          error: { code: reply.status, message: reply.error ?? "Controlled model failure" },
+        }),
       );
       return;
     }
     response.writeHead(200, { "Content-Type": "text/event-stream" });
+    if ("wire" in reply) {
+      response.flushHeaders();
+      response.write(reply.wire);
+      if (!reply.stall) response.end();
+      return;
+    }
     const tools =
       "tool" in reply
         ? [{ name: reply.tool, arguments: reply.arguments }]
