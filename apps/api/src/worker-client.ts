@@ -1,9 +1,8 @@
 import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import type { ChatView, ModelChoice, WorkerCommand, WorkerMessage } from "@mybots/contracts";
+import type { ChatView, WorkerCommand, WorkerMessage } from "@mybots/contracts";
 
 interface WorkerClient {
-  models: ModelChoice[];
   closed: Promise<void>;
   request(command: WorkerCommand): Promise<unknown>;
   subscribers: Map<string, (value: ChatView) => void>;
@@ -25,7 +24,6 @@ export async function startWorker(root: string): Promise<WorkerClient> {
   let serial = 0;
   const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
   const subscribers = new Map<string, (value: ChatView) => void>();
-  let models: ModelChoice[] = [];
   let readyResolve: () => void;
   let readyReject: (error: Error) => void;
   const ready = new Promise<void>((resolve, reject) => {
@@ -46,7 +44,6 @@ export async function startWorker(root: string): Promise<WorkerClient> {
   child.once("error", (error) => readyReject(error));
   child.on("message", (message: WorkerMessage) => {
     if (message.type === "ready") {
-      models = message.models;
       readyResolve();
     } else if (message.type === "view") subscribers.get(message.subscription)?.(message.value);
     else {
@@ -66,7 +63,6 @@ export async function startWorker(root: string): Promise<WorkerClient> {
     clearTimeout(startupTimeout);
   }
   return {
-    models,
     closed: exited,
     async request(command: WorkerCommand): Promise<unknown> {
       if (!alive) throw new Error("Worker unavailable");

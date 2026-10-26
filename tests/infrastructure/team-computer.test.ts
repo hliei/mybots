@@ -190,7 +190,7 @@ test("real SDK chat uses Computer tools and retains working files after applicat
     const bot = await fixture.request("bots", {
       name: "Tool user",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     await fixture.request(`bots/${bot.id}/send`, { text: "Use the Computer", requestId: "tools" });
     let view: import("@mybots/contracts").ChatView | undefined;
@@ -311,7 +311,7 @@ test("public Stop cancels an active SDK shell tool and publishes the interrupted
     const bot = await fixture.request("bots", {
       name: "Busy",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     await fixture.request(`bots/${bot.id}/send`, { text: "Long work", requestId: "stop-command" });
     await expect
@@ -428,12 +428,12 @@ test("built Web steers at a real tool boundary and stops only the selected Bot's
     const alpha = await fixture.request("bots", {
       name: "Alpha",
       instructions: "ALPHA_BOT",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     const beta = await fixture.request("bots", {
       name: "Beta",
       instructions: "BETA_BOT",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     await page.goto(fixture.url);
     await page.getByLabel("Connection credential").fill(fixture.credential);
@@ -532,7 +532,7 @@ test("worker crash records an unsafe shell as interrupted without reexecuting it
     const bot = await fixture.request("bots", {
       name: "Interrupted",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     const admitted = await fixture.request(`bots/${bot.id}/send`, {
       text: "Unsafe work",
@@ -600,12 +600,12 @@ test("resources, compacted originals and shared Computer compose across restart 
     const alpha = await fixture.request("bots", {
       name: "Writer",
       instructions: "WRITER_ROLE",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     const beta = await fixture.request("bots", {
       name: "Reader",
       instructions: "READER_ROLE",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     async function send(
       botId: string,

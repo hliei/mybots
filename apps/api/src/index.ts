@@ -26,6 +26,8 @@ async function main(): Promise<void> {
   process.on("SIGINT", close);
 }
 main().catch(() => {
-  console.error("Local chat startup failed. Check models.json in the selected data root.");
+  console.error(
+    "Local chat startup failed. Check the selected data root and provider credential storage.",
+  );
   process.exitCode = 1;
 });

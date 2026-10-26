@@ -10,9 +10,18 @@ export interface Bot extends BotConfiguration {
   conversationId: number;
 }
 
+export type ProviderId = "deepseek" | "opencode-go";
+
+export interface ProviderStatus {
+  id: ProviderId;
+  name: string;
+  configured: boolean;
+}
+
 export interface ModelChoice {
   id: string;
   name: string;
+  available?: boolean;
 }
 
 export interface Skill {
@@ -94,6 +103,9 @@ export interface HistoryRead {
 }
 
 export type WorkerCommand =
+  | { action: "models" }
+  | { action: "providers" }
+  | { action: "provider-update"; provider: ProviderId; apiKey?: unknown; remove: boolean }
   | { action: "create"; configuration: BotConfiguration }
   | { action: "configure"; botId: string }
   | { action: "send"; botId: string; text: string; requestId: string }
@@ -111,7 +123,7 @@ export interface WorkerRequest {
 }
 
 export type WorkerMessage =
-  | { type: "ready"; models: ModelChoice[] }
+  | { type: "ready" }
   | { type: "response"; id: number; value?: unknown; error?: string }
   | { type: "view"; subscription: string; value: ChatView };
 

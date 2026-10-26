@@ -1,4 +1,4 @@
-import type { Bot, ChatMessage, ChatView, ModelChoice } from "@mybots/contracts";
+import type { Bot, ChatMessage, ChatView, ModelChoice, ProviderStatus } from "@mybots/contracts";
 import { request } from "./api.ts";
 import { historyBrowser } from "./history.ts";
 import { markdown } from "./markdown.ts";
@@ -111,11 +111,11 @@ function choose(bot: Bot): void {
   ).toUpperCase();
   message.disabled = false;
   message.placeholder = `Message ${bot.name}…`;
-  const available = models.some((model) => model.id === bot.model);
+  const available = models.some((model) => model.id === bot.model && model.available !== false);
   node<HTMLButtonElement>("send").disabled = !available;
   node("chat-message").textContent = available
     ? ""
-    : "Choose an available model in Bot settings before sending.";
+    : "Save the provider key in Provider settings, or choose an available model in Bot settings.";
   node<HTMLButtonElement>("edit-bot").disabled = false;
   node<HTMLButtonElement>("open-history").disabled = false;
   for (const row of node("bot-list").children)
@@ -176,13 +176,19 @@ function openBot(edit: boolean): void {
   for (const choice of models) {
     const option = document.createElement("option");
     option.value = choice.id;
-    option.textContent = choice.name;
+    option.textContent = `${choice.name}${choice.available === false ? " · key required" : ""}`;
+    model.append(option);
+  }
+  if (bot && !models.some((choice) => choice.id === bot.model)) {
+    const option = document.createElement("option");
+    option.value = bot.model;
+    option.textContent = `${bot.model} · unavailable saved model`;
     model.append(option);
   }
   if (bot) model.value = bot.model;
   node("bot-error").textContent = models.length
     ? ""
-    : "Configure a model in the host models.json file first.";
+    : "Save a provider key in Provider settings first.";
   dialog.showModal();
   node("bot-name").focus();
 }
@@ -224,7 +230,11 @@ node("pair-form").addEventListener("submit", (event) => {
 });
 node("message-form").addEventListener("submit", (event) => {
   event.preventDefault();
-  if (!selected || !message.value.trim() || !models.some((model) => model.id === selected?.model))
+  if (
+    !selected ||
+    !message.value.trim() ||
+    !models.some((model) => model.id === selected?.model && model.available !== false)
+  )
     return;
   const text = message.value;
   if (!pending || pending.botId !== selected.id || pending.text !== text)
@@ -240,7 +250,7 @@ node("message-form").addEventListener("submit", (event) => {
     .catch(report)
     .finally(() => {
       node<HTMLButtonElement>("send").disabled = !models.some(
-        (model) => model.id === selected?.model,
+        (model) => model.id === selected?.model && model.available !== false,
       );
     });
 });
@@ -259,3 +269,57 @@ void refresh().catch(() => {
   node("pairing").hidden = false;
   node("workspace").hidden = true;
 });
+
+const providersDialog = node<HTMLDialogElement>("providers-dialog");
+function showProviders(providers: ProviderStatus[]): void {
+  for (const provider of providers) {
+    node(`${provider.id}-status`).textContent = provider.configured
+      ? "Saved locally. Access is checked when you send a message."
+      : "Not configured";
+    node<HTMLButtonElement>(`${provider.id}-remove`).disabled = !provider.configured;
+  }
+}
+node("open-providers").addEventListener("click", () => {
+  void request<ProviderStatus[]>("providers")
+    .then((providers) => {
+      showProviders(providers);
+      providersDialog.showModal();
+    })
+    .catch(report);
+});
+node("close-providers").addEventListener("click", () => providersDialog.close());
+providersDialog.addEventListener("close", () => {
+  for (const id of ["deepseek", "opencode-go"]) node<HTMLInputElement>(`${id}-key`).value = "";
+});
+for (const id of ["deepseek", "opencode-go"]) {
+  const save = async (remove: boolean) => {
+    const field = node<HTMLInputElement>(`${id}-key`);
+    const key = field.value;
+    field.value = "";
+    node<HTMLButtonElement>(`${id}-save`).disabled = true;
+    node<HTMLButtonElement>(`${id}-remove`).disabled = true;
+    try {
+      showProviders(
+        await request<ProviderStatus[]>(
+          `providers/${id}`,
+          remove ? undefined : { apiKey: key },
+          remove ? "DELETE" : "PUT",
+        ),
+      );
+      await refresh();
+    } catch {
+      node(`${id}-status`).textContent =
+        "Could not update provider settings. Enter a valid key and retry.";
+      node<HTMLButtonElement>(`${id}-remove`).disabled = false;
+    } finally {
+      node<HTMLButtonElement>(`${id}-save`).disabled = false;
+    }
+  };
+  node(`${id}-form`).addEventListener("submit", (event) => {
+    event.preventDefault();
+    void save(false);
+  });
+  node(`${id}-remove`).addEventListener("click", () => {
+    void save(true);
+  });
+}

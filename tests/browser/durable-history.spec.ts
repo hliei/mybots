@@ -1,9 +1,10 @@
 import { fork } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { startDurableModel } from "../durable-model-fixture.ts";
+import { configureFixture, fixtureEnvironment } from "../provider-fixture.ts";
 
 test("built Web searches selected history, pages originals and returns to the unchanged chat", async ({
   page,
@@ -16,14 +17,16 @@ test("built Web searches selected history, pages originals and returns to the un
     first = false;
     return { text };
   });
-  await writeFile(join(root, "models.json"), JSON.stringify([service.config]), { mode: 0o600 });
+  configureFixture(root);
   const child = fork(
     new URL("../../apps/api/dist/index.js", import.meta.url),
     ["--root", root, "--port", "0"],
     {
       execArgv: ["--no-strip-types"],
       silent: true,
-      env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== "NO_COLOR")),
+      env: Object.fromEntries(
+        Object.entries(fixtureEnvironment(service)).filter(([key]) => key !== "NO_COLOR"),
+      ),
     },
   );
   let errors = "";
@@ -63,7 +66,7 @@ test("built Web searches selected history, pages originals and returns to the un
     const headers = { Authorization: `Bearer ${credential}` };
     const response = await page.request.post(`${url}api/bots`, {
       headers,
-      data: { name: "Writer", instructions: "", model: "controlled" },
+      data: { name: "Writer", instructions: "", model: "deepseek/deepseek-flash" },
     });
     expect(response.ok()).toBe(true);
     const bot = await response.json();

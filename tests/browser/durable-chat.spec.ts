@@ -1,9 +1,10 @@
 import { fork } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { startDurableModel } from "../durable-model-fixture.ts";
+import { configureFixture, fixtureEnvironment } from "../provider-fixture.ts";
 
 test("built Web streams, reloads committed chat, edits Bots and keeps Threads separate", async ({
   page,
@@ -28,14 +29,16 @@ test("built Web streams, reloads committed chat, edits Bots and keeps Threads se
       })(),
     };
   });
-  await writeFile(join(root, "models.json"), JSON.stringify([service.config]), { mode: 0o600 });
+  configureFixture(root);
   const child = fork(
     new URL("../../apps/api/dist/index.js", import.meta.url),
     ["--root", root, "--port", "0"],
     {
       execArgv: ["--no-strip-types"],
       silent: true,
-      env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== "NO_COLOR")),
+      env: Object.fromEntries(
+        Object.entries(fixtureEnvironment(service)).filter(([key]) => key !== "NO_COLOR"),
+      ),
     },
   );
   const pageErrors: string[] = [];

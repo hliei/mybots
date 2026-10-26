@@ -1,35 +1,10 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import type { HostModel } from "@mybots/agent";
 import type { WorkerRequest } from "@mybots/contracts";
 import { openWorker } from "./worker.ts";
 
 async function main(): Promise<void> {
   const root = process.argv[2];
   if (!root || !process.send) throw new Error("Worker requires a local parent process");
-  const raw: unknown = JSON.parse(await readFile(join(root, "models.json"), "utf8"));
-  if (
-    !Array.isArray(raw) ||
-    raw.some((value) => {
-      if (!value || typeof value !== "object") return true;
-      const model = value as Record<string, unknown>;
-      return (
-        ["id", "name", "modelId", "baseUrl", "apiKey"].some(
-          (key) => typeof model[key] !== "string",
-        ) ||
-        !/^[a-zA-Z0-9_-]{1,100}$/.test(String(model.id)) ||
-        !/^https?:\/\//.test(String(model.baseUrl)) ||
-        !Number.isSafeInteger(model.contextWindow) ||
-        Number(model.contextWindow) < 4096 ||
-        !Number.isSafeInteger(model.maxTokens) ||
-        Number(model.maxTokens) <= 0
-      );
-    }) ||
-    new Set(raw.map((model) => model.id)).size !== raw.length
-  )
-    throw new Error("Invalid host models.json configuration");
-  const models = raw as HostModel[];
-  const worker = await openWorker(root, models, (subscription, value) =>
+  const worker = await openWorker(root, (subscription, value) =>
     process.send?.({ type: "view", subscription, value }),
   );
   let closing = false;
@@ -48,7 +23,15 @@ async function main(): Promise<void> {
     }
     void worker.command(message.command).then(
       (value) => process.send?.({ type: "response", id: message.id, value }),
-      () => process.send?.({ type: "response", id: message.id, error: "Worker operation failed" }),
+      () =>
+        process.send?.({
+          type: "response",
+          id: message.id,
+          error:
+            message.command.action === "send"
+              ? "Model unavailable. Choose a supported model and save its key in Provider settings."
+              : "Worker operation failed",
+        }),
     );
   });
   process.on("disconnect", () => {
@@ -60,11 +43,11 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => {
     void close();
   });
-  process.send({ type: "ready", models: models.map(({ id, name }) => ({ id, name })) });
+  process.send({ type: "ready" });
 }
 
 main().catch(() => {
-  console.error("Worker startup failed. Check the host model configuration and data root.");
+  console.error("Worker startup failed. Check the data root and provider credential storage.");
   process.exitCode = 1;
   process.disconnect?.();
 });
