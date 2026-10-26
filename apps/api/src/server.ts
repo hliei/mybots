@@ -254,8 +254,11 @@ export async function startApi(root: string, port = 0): Promise<ApiServer> {
       server.listen(port, "127.0.0.1", resolve);
     });
   } catch (error) {
-    await worker.close();
-    database.close();
+    try {
+      await worker.close();
+    } finally {
+      database.close();
+    }
     throw error;
   }
   return {
@@ -266,8 +269,11 @@ export async function startApi(root: string, port = 0): Promise<ApiServer> {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );
-      await worker.close();
-      database.close();
+      try {
+        await worker.close();
+      } finally {
+        database.close();
+      }
     },
   };
 }

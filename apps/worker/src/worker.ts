@@ -54,16 +54,25 @@ export async function openWorker(
     const trackTurn = (owner: CommandOwner) => {
       if (turns.has(owner.turnId)) return;
       const settled = (async () => {
-        const submission = await harness?.submission(Number(owner.turnId) as SubmissionId, context);
-        if (!submission) throw new Error("Computer owner submission unavailable");
-        const status = await submission.wait(context);
-        await sandbox.finishTurn(computer, owner, status.status === "done");
+        let completed = false;
+        try {
+          const submission = await harness?.submission(
+            Number(owner.turnId) as SubmissionId,
+            context,
+          );
+          if (!submission) throw new Error("Computer owner submission unavailable");
+          completed = (await submission.wait(context)).status === "done";
+        } catch (error) {
+          // Closing the SDK rejects pending waits without settling their inputs.
+          if (closing) return;
+          throw error;
+        }
+        await sandbox.finishTurn(computer, owner, completed);
         turns.delete(owner.turnId);
-        cleanupErrors.delete(owner.botId);
       })();
       turns.set(owner.turnId, { owner, settled });
       void settled.catch((error: unknown) => {
-        if (!closing) cleanupErrors.set(owner.botId, `Computer cleanup failed: ${String(error)}`);
+        cleanupErrors.set(owner.botId, `Computer cleanup failed: ${String(error)}`);
       });
     };
     const botForConversation = (conversationId: number) => {
@@ -302,6 +311,7 @@ export async function openWorker(
           database.close();
           ownership.close();
         }
+        if (cleanupErrors.size) throw new Error("Computer cleanup failed during shutdown");
       },
     };
   }

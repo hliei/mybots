@@ -690,9 +690,11 @@ test("resources, compacted originals and shared Computer compose across restart 
     expect(JSON.stringify(generations)).not.toContain("READER_PRIVATE_MEMORY");
     expect(JSON.stringify(generations)).toContain("FULL_COMBINED_SKILL");
     expect(JSON.stringify(generations)).toContain("Historical evidence");
-    expect(completed.messages.filter((message) => message.role === "tool").at(-1)?.text).toContain(
-      '"stdout":"COMBINED_ORIGINAL"',
-    );
+    expect(
+      JSON.parse(
+        completed.messages.filter((message) => message.role === "tool").at(-1)?.text ?? "{}",
+      ),
+    ).toMatchObject({ stdout: "COMBINED_ORIGINAL" });
     for (const request of generations) {
       expect(
         request.messages
@@ -1269,6 +1271,47 @@ test("native queued input takes precedence while a final-answer hook observes un
     expect((await fixture.request(`bots/${bot.id}/chat`)).messages.at(-1)?.text).toBe(
       "New instruction received",
     );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("shutdown reports failed Computer cleanup after releasing application resources", async () => {
+  let calls = 0;
+  const fixture = await chatComputerFixture(() =>
+    ++calls === 1
+      ? { tool: "start_service", arguments: { command: serviceCommand(8106) } }
+      : { hold: true },
+  );
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Cleanup failure",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.request(`bots/${bot.id}/send`, {
+      text: "Start work",
+      requestId: "cleanup-failure",
+    });
+    await fixture.service.waitForRequest(2);
+    // Exercise a real provider failure without touching any installation Computer.
+    await docker("docker", ["stop", "-t", "0", fixture.computer.id]);
+    const stopped = await fetch(new URL(`api/bots/${bot.id}/stop`, fixture.url), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${fixture.credential}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+    expect(stopped.status).toBe(400);
+    expect((await fixture.request(`bots/${bot.id}/chat`)).activity.join(" ")).toContain(
+      "Computer cleanup failed",
+    );
+    await expect(fixture.shutdown()).rejects.toThrow("Worker shutdown failed");
+    // A failed cleanup must not retain the data-root owner lock.
+    await fixture.reopen();
+    expect((await fixture.request(`bots/${bot.id}/chat`)).busy).toBe(false);
   } finally {
     await fixture.close();
   }

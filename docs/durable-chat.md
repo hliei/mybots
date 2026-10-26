@@ -166,7 +166,9 @@ Stop uses native abort and queued-input withdrawal, then joins cleanup of all
 commands and services owned by the current Agent turn. It preserves other Bots,
 services retained by earlier completed turns, the Computer and completed file
 effects. Inspecting an earlier service does not transfer its ownership to the
-current turn. A failed turn does not retain its newly started services.
+current turn. A failed turn does not retain its newly started services. Cleanup
+failures remain visible and cause application shutdown to fail after releasing
+SDK/database ownership; they are not silently treated as successful cleanup.
 
 Provider metadata under `/tmp/mybots-commands` associates command IDs and process
 groups with Bot IDs and the turn's first SDK submission ID, which remains stable
