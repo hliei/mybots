@@ -1,6 +1,7 @@
 # Documentation
 
-These documents describe the implemented local application. Controlled-model,
+The architecture and operation guides describe the implemented local application;
+ADRs identify accepted changes whose implementation is still pending. Controlled-model,
 Docker and browser checks cover its behavior; actual-provider acceptance remains
 a separate opt-in gate. Retired runtime designs remain available in Git history.
 
@@ -17,7 +18,8 @@ configuration, context defaults and current validation scope.
 
 ## Decisions
 
-The ADR sequence restarts at `0001`. All four decisions are accepted and implemented.
+The ADR sequence restarts at `0001`. Decisions 0001-0004 are accepted and
+implemented; 0005 is accepted with implementation pending.
 
 | ADR | Decision |
 | --- | --- |
@@ -25,6 +27,7 @@ The ADR sequence restarts at `0001`. All four decisions are accepted and impleme
 | [0002](adr/0002-durable-conversations-own-chat-execution.md) | Let Durable own conversation execution and history |
 | [0003](adr/0003-api-worker-and-local-storage-boundaries.md) | Separate API and worker with local SQLite persistence |
 | [0004](adr/0004-shared-skills-and-scoped-markdown-memory.md) | Store shared Skills and scoped memory as product data |
+| [0005](adr/0005-command-ownership-and-service-lifetime.md) | Scope command cleanup to its turn and retain intentionally launched services |
 
 ## Repository conventions
 
