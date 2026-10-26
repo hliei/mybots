@@ -73,7 +73,16 @@ record. No additional full-log store or tuning UI is provided.
 Stop uses native abort to cancel current work and withdraw queued input. Keep
 withdrawn input visible as unprocessed for deliberate resending. Cancellation
 must reach the actual Docker command and its owned work without stopping the
-shared Computer or another Bot. Completed file effects are not rolled back.
+shared Computer or another Bot. It also stops services started by the current
+turn, while preserving services retained by earlier successful turns. Retention
+is marked only after native input settlement, using the first submission ID
+across generation handovers. Completed file effects are not rolled back.
+
+Bounded Computer commands publish native tool progress and can return running
+output before exit. At a final-answer boundary, the native onYield continuation
+supplies their bounded final output without replaying the commands. This is
+separate from explicit retained-service launch; see the
+[Computer contract](durable-chat.md#team-computer).
 
 Independent Conversations may run concurrently without a global Computer lock,
 custom fairness queue or execution budget system. Shared-file conflicts remain

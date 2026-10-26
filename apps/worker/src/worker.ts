@@ -18,7 +18,7 @@ import {
 } from "@mybots/agent";
 import type { Bot, ChatMessage, ChatView, WorkerCommand } from "@mybots/contracts";
 import { ProductDatabase, ProviderSettings } from "@mybots/db";
-import { DockerSandbox } from "@mybots/sandbox";
+import { type CommandOwner, DockerSandbox } from "@mybots/sandbox";
 
 function text(content: unknown): string {
   if (typeof content === "string") return content;
@@ -48,6 +48,33 @@ export async function openWorker(
     const settings = new ProviderSettings(root);
     const computer = products.computer();
     const sandbox = new DockerSandbox(computer, join(root, "computer", "workspace"));
+    const turns = new Map<string, { owner: CommandOwner; settled: Promise<void> }>();
+    const cleanupErrors = new Map<string, string>();
+    let closing = false;
+    const trackTurn = (owner: CommandOwner) => {
+      if (turns.has(owner.turnId)) return;
+      const settled = (async () => {
+        let completed = false;
+        try {
+          const submission = await harness?.submission(
+            Number(owner.turnId) as SubmissionId,
+            context,
+          );
+          if (!submission) throw new Error("Computer owner submission unavailable");
+          completed = (await submission.wait(context)).status === "done";
+        } catch (error) {
+          // Closing the SDK rejects pending waits without settling their inputs.
+          if (closing) return;
+          throw error;
+        }
+        await sandbox.finishTurn(computer, owner, completed);
+        turns.delete(owner.turnId);
+      })();
+      turns.set(owner.turnId, { owner, settled });
+      void settled.catch((error: unknown) => {
+        cleanupErrors.set(owner.botId, `Computer cleanup failed: ${String(error)}`);
+      });
+    };
     const botForConversation = (conversationId: number) => {
       const bot = products.bots().find((bot) => bot.conversationId === conversationId);
       if (!bot) throw new Error("Bot not found for tool access");
@@ -57,13 +84,15 @@ export async function openWorker(
       join(root, "durable.sqlite"),
       [],
       [
-        computerTools(sandbox, computer, botForConversation),
+        computerTools(sandbox, computer, botForConversation, trackTurn),
         resourceTools(products, botForConversation),
       ],
       (id) => resourceContext(products, botForConversation(id)),
       (id) => settings.key(id),
     );
-    return await ownedWorker(database, harness, settings);
+    return await ownedWorker(database, harness, settings, turns, cleanupErrors, () => {
+      closing = true;
+    });
   } catch (error) {
     await harness?.close(context);
     database?.close();
@@ -75,6 +104,9 @@ export async function openWorker(
     database: ProductDatabase,
     harness: Harness,
     settings: ProviderSettings,
+    turns: Map<string, { owner: CommandOwner; settled: Promise<void> }>,
+    cleanupErrors: Map<string, string>,
+    beginClose: () => void,
   ): Promise<Worker> {
     const watches = new Map<string, ConversationWatch>();
     const conversation = async (bot: Bot) => {
@@ -156,6 +188,7 @@ export async function openWorker(
           busy: live?.run !== undefined,
           partial: text(live?.generation?.message?.content),
           activity: [
+            ...(cleanupErrors.has(bot.id) ? [cleanupErrors.get(bot.id) as string] : []),
             ...(live?.tools?.map((tool) => tool.name) ?? []),
             ...(live?.compactions?.length ? ["Compacting context"] : []),
             ...(live?.compactionFailure ? [live.compactionFailure.error] : []),
@@ -235,6 +268,11 @@ export async function openWorker(
           }
           case "stop":
             await chat.abort(context);
+            await Promise.all(
+              [...turns.values()]
+                .filter(({ owner }) => owner.botId === bot.id)
+                .map(({ settled }) => settled),
+            );
             return;
           case "view":
             return view(bot);
@@ -254,10 +292,26 @@ export async function openWorker(
         }
       },
       async close() {
+        beginClose();
         await Promise.all([...watches.values()].map((watch) => watch.stop()));
-        await harness.close(context);
-        database.close();
-        ownership.close();
+        // Reconcile already-settled submissions before closing their SDK handles.
+        await Promise.allSettled(
+          [...turns.values()].map(async ({ owner }) => {
+            const status = await (
+              await harness.submission(Number(owner.turnId) as SubmissionId, context)
+            )?.status(context);
+            if (status?.status === "done" || status?.status === "unanswered")
+              await turns.get(owner.turnId)?.settled;
+          }),
+        );
+        try {
+          await harness.close(context);
+          await Promise.allSettled([...turns.values()].map(({ settled }) => settled));
+        } finally {
+          database.close();
+          ownership.close();
+        }
+        if (cleanupErrors.size) throw new Error("Computer cleanup failed during shutdown");
       },
     };
   }

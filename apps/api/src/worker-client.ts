@@ -31,8 +31,10 @@ export async function startWorker(root: string): Promise<WorkerClient> {
     readyReject = reject;
   });
   let alive = true;
+  let exitCode: number | null | undefined;
   const exited = new Promise<void>((resolve) =>
-    child.once("exit", () => {
+    child.once("exit", (code) => {
+      exitCode = code;
       alive = false;
       const error = new Error("Worker unavailable");
       readyReject(error);
@@ -79,8 +81,11 @@ export async function startWorker(root: string): Promise<WorkerClient> {
     },
     subscribers,
     async close(): Promise<void> {
+      const requested = alive;
       if (alive) child.send({ id: ++serial, command: { action: "close" } });
       await exited;
+      if (requested && exitCode !== 0)
+        throw new Error("Worker shutdown failed; Computer cleanup could not be confirmed");
     },
   };
 }

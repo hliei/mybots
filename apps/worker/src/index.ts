@@ -11,14 +11,18 @@ async function main(): Promise<void> {
   async function close(): Promise<void> {
     if (closing) return;
     closing = true;
-    await worker.close();
-    process.disconnect?.();
+    try {
+      await worker.close();
+    } catch {
+      console.error("Worker shutdown failed. Computer cleanup could not be confirmed.");
+      process.exitCode = 1;
+    } finally {
+      if (process.connected) process.disconnect?.();
+    }
   }
   process.on("message", (message: WorkerRequest) => {
     if (message.command.action === "close") {
-      void close().catch(() => {
-        process.exitCode = 1;
-      });
+      void close();
       return;
     }
     void worker.command(message.command).then(
