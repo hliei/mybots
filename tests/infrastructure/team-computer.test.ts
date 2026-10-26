@@ -1504,9 +1504,28 @@ test("late Docker launches from a killed worker are fenced while new native tool
     restore();
     await writeFile(gate, "release");
     try {
-      await fixture?.close();
+      if (
+        await access(`${gate}.waiting`).then(
+          () => true,
+          () => false,
+        )
+      )
+        await expect
+          .poll(
+            () =>
+              access(`${gate}.result`).then(
+                () => true,
+                () => false,
+              ),
+            { timeout: 10000 },
+          )
+          .toBe(true);
     } finally {
-      await rm(tools, { recursive: true, force: true });
+      try {
+        await fixture?.close();
+      } finally {
+        await rm(tools, { recursive: true, force: true });
+      }
     }
   }
 });

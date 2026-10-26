@@ -89,6 +89,20 @@ test("built Web distinguishes worker recovery, reconstructed interruption and ex
       timeout: 15000,
     });
     await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+    let rejectedChat = false;
+    let reconnectedChat = false;
+    await page.route("**/api/bots/*/events", async (route) => {
+      if (!rejectedChat) {
+        rejectedChat = true;
+        await route.abort();
+      } else {
+        reconnectedChat = true;
+        await route.continue();
+      }
+    });
+    await page.getByRole("button", { name: "Select Recover", exact: true }).click();
+    await expect.poll(() => reconnectedChat).toBe(true);
+    await expect(page.locator("#connection")).toContainText("Automatic recovery stopped");
     await page.reload();
     await expect(page.locator("#connection")).toContainText("Automatic recovery stopped");
     await expect(page.locator("#chat-message")).toBeEmpty();

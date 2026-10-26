@@ -152,7 +152,7 @@ function choose(bot: Bot): void {
     renderWorkerStatus();
   };
   events.onerror = () => {
-    node("connection").textContent = "Reconnecting…";
+    if (workerAvailable()) node("connection").textContent = "Reconnecting…";
   };
 }
 async function refresh(preferred?: string): Promise<void> {
