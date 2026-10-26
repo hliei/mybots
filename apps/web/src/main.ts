@@ -1,4 +1,11 @@
-import type { Bot, ChatMessage, ChatView, ModelChoice, ProviderStatus } from "@mybots/contracts";
+import type {
+  Bot,
+  ChatMessage,
+  ChatView,
+  ModelChoice,
+  ProviderStatus,
+  WorkerStatus,
+} from "@mybots/contracts";
 import { request } from "./api.ts";
 import { historyBrowser } from "./history.ts";
 import { markdown } from "./markdown.ts";
@@ -11,6 +18,22 @@ let models: ModelChoice[] = [];
 let selected: Bot | undefined;
 let editing = false;
 let events: EventSource | undefined;
+let workerStatus: WorkerStatus = { state: "ready" };
+const workerAvailable = () => workerStatus.state === "ready" || workerStatus.state === "recovered";
+function renderWorkerStatus(): void {
+  node("connection").textContent =
+    workerStatus.state === "recovering"
+      ? `Worker recovering… attempt ${workerStatus.attempt}/3`
+      : workerStatus.state === "failed"
+        ? workerStatus.error
+        : workerStatus.state === "recovered"
+          ? "Worker recovered"
+          : "Connected";
+  node<HTMLButtonElement>("send").disabled =
+    !workerAvailable() ||
+    !models.some((model) => model.id === selected?.model && model.available !== false);
+  if (!workerAvailable()) node<HTMLButtonElement>("stop").disabled = true;
+}
 let pending: { botId: string; text: string; requestId: string } | undefined;
 const dialog = node<HTMLDialogElement>("bot-dialog");
 const message = node<HTMLTextAreaElement>("message-text");
@@ -121,22 +144,28 @@ function choose(bot: Bot): void {
   for (const row of node("bot-list").children)
     row.classList.toggle("selected", (row as HTMLElement).dataset.botId === bot.id);
   events = new EventSource(`/api/bots/${bot.id}/events`);
+  events.addEventListener("worker", (event) => {
+    workerStatus = JSON.parse((event as MessageEvent).data) as WorkerStatus;
+    renderWorkerStatus();
+    if (workerAvailable() && !models.length) void refresh(bot.id).catch(report);
+  });
   events.onmessage = (event) => {
     const view = JSON.parse(event.data) as ChatView;
     if (view.botId === selected?.id) renderMessages(view);
-    node("connection").textContent = "Connected";
+    renderWorkerStatus();
   };
   events.onerror = () => {
     node("connection").textContent = "Reconnecting…";
   };
 }
 async function refresh(preferred?: string): Promise<void> {
-  const data = await request<{ bots: Bot[]; models: ModelChoice[] }>("bots");
+  const data = await request<{ bots: Bot[]; models: ModelChoice[]; worker: WorkerStatus }>("bots");
+  workerStatus = data.worker;
   bots = data.bots;
   models = data.models;
   node("pairing").hidden = true;
   node("workspace").hidden = false;
-  node("connection").textContent = "Connected";
+  renderWorkerStatus();
   node("bot-list").replaceChildren();
   for (const bot of bots) {
     const row = document.createElement("div");
@@ -232,6 +261,7 @@ node("message-form").addEventListener("submit", (event) => {
   event.preventDefault();
   if (
     !selected ||
+    !workerAvailable() ||
     !message.value.trim() ||
     !models.some((model) => model.id === selected?.model && model.available !== false)
   )
@@ -249,9 +279,9 @@ node("message-form").addEventListener("submit", (event) => {
     })
     .catch(report)
     .finally(() => {
-      node<HTMLButtonElement>("send").disabled = !models.some(
-        (model) => model.id === selected?.model && model.available !== false,
-      );
+      node<HTMLButtonElement>("send").disabled =
+        !workerAvailable() ||
+        !models.some((model) => model.id === selected?.model && model.available !== false);
     });
 });
 message.addEventListener("keydown", (event) => {

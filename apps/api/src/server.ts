@@ -28,20 +28,29 @@ export interface ApiServer {
   close(): Promise<void>;
 }
 
-export async function startApi(root: string, port = 0): Promise<ApiServer> {
+export async function startApi(root: string, port = 0, signal?: AbortSignal): Promise<ApiServer> {
   await mkdir(root, { recursive: true, mode: 0o700 });
   const access = await LocalAccess.load(root);
-  const worker = await startWorker(root);
+  const worker = await startWorker(root, signal);
   const database = new ProductDatabase(join(root, "product.sqlite"));
   const streams = new Set<ServerResponse>();
-  void worker.closed.then(() => {
-    for (const stream of streams) stream.end();
+  worker.onStatus.add((status) => {
+    for (const stream of streams)
+      stream.write(`event: worker\ndata: ${JSON.stringify(status)}\n\n`);
   });
   const server = createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
-      const unavailable = error instanceof Error && error.message.startsWith("Model unavailable.");
+      const unavailable =
+        error instanceof Error &&
+        /^(Model unavailable\.|Worker |Computer recovery cleanup failed\.)/.test(error.message);
       if (!response.headersSent)
-        json(response, { error: unavailable ? (error as Error).message : "Request failed" }, 400);
+        json(
+          response,
+          { error: unavailable ? (error as Error).message : "Request failed" },
+          unavailable && worker.status.state !== "ready" && worker.status.state !== "recovered"
+            ? 503
+            : 400,
+        );
       else response.end();
     });
   });
@@ -61,6 +70,10 @@ export async function startApi(root: string, port = 0): Promise<ApiServer> {
     if (path === "/api/pair" && request.method === "POST") {
       response.writeHead(204, { "Set-Cookie": access.cookie(), "Cache-Control": "no-store" });
       response.end();
+      return;
+    }
+    if (path === "/api/worker" && request.method === "GET") {
+      json(response, worker.status);
       return;
     }
     if (path === "/api/providers" && request.method === "GET") {
@@ -86,7 +99,11 @@ export async function startApi(root: string, port = 0): Promise<ApiServer> {
     }
     const modelChoices = async () => (await worker.request({ action: "models" })) as ModelChoice[];
     if (path === "/api/bots" && request.method === "GET") {
-      json(response, { bots: database.bots(), models: await modelChoices() });
+      const models = await modelChoices().catch((error: unknown) => {
+        if (worker.status.state === "recovering" || worker.status.state === "failed") return [];
+        throw error;
+      });
+      json(response, { bots: database.bots(), models, worker: worker.status });
       return;
     }
     if (path === "/api/bots" && request.method === "POST") {
@@ -211,17 +228,16 @@ export async function startApi(root: string, port = 0): Promise<ApiServer> {
         });
         response.flushHeaders();
         streams.add(response);
-        worker.subscribers.set(subscription, (view) => {
+        response.write(`event: worker\ndata: ${JSON.stringify(worker.status)}\n\n`);
+        worker.subscribe(subscription, botId, (view) => {
           if (response.writableLength > 1024 * 1024) response.destroy();
           else response.write(`data: ${JSON.stringify(view)}\n\n`);
         });
         response.once("close", () => {
           streams.delete(response);
-          worker.subscribers.delete(subscription);
-          void worker.request({ action: "unsubscribe", subscription }).catch(() => {});
+          worker.unsubscribe(subscription);
         });
-        await worker.request({ action: "subscribe", botId, subscription });
-        if (response.destroyed) await worker.request({ action: "unsubscribe", subscription });
+        if (response.destroyed) worker.unsubscribe(subscription);
         return;
       }
     }

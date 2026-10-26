@@ -1,6 +1,6 @@
 # Command ownership and service lifetime
 
-Status: command ownership and service lifetime implemented; automatic worker recovery pending.
+Status: accepted and implemented.
 
 Associate Computer commands with the Bot and Agent turn that launched them.
 An intentionally launched background service may outlive a completed turn so

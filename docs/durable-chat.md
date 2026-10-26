@@ -22,6 +22,7 @@ data/
 ├── product.sqlite           # Bots, Threads, Skills and scoped memory
 ├── durable.sqlite           # SDK conversation and execution storage
 ├── worker-owner.sqlite      # Worker ownership lock
+├── command-owners.sqlite    # Computer Bot/turn cleanup ownership
 └── computer/workspace/      # Persistent working files mounted into Docker
 ```
 
@@ -92,10 +93,35 @@ arguments and requires built Web assets. Ctrl+C shuts down both processes;
 normal shutdown retains all data. On restart, the worker resumes supported work
 from SDK storage, including pending input and committed exchanges. Interrupted
 unsafe tools are reported as potentially partially run rather than replayed by
-the application. An abrupt worker kill can leave a Docker command running;
-recovery does not prove termination or roll back file effects. Use Stop while
-the worker is available to cancel its active commands. A second worker cannot
-open the same root.
+the application.
+
+Unexpected worker exit triggers up to three serialized restart attempts per
+application lifetime, delayed by 250 ms, 1 second and 4 seconds. Each startup
+attempt has a 10-second deadline. The budget does not reset after a successful
+restart; restart the application after resolving an exhausted failure. Web
+distinguishes worker recovery from a lost browser connection, reports recovery
+completion and shows an actionable failure when attempts are exhausted.
+
+Before enabling SDK execution, the worker reconciles persisted Computer Bot/turn
+ownership against native submission status. It terminates interrupted-turn work,
+including that turn's services, and preserves completed-turn services. If cleanup
+cannot be confirmed, execution stays paused and Web reports the failure. Restore
+Docker access or inspect the affected Computer, then restart the application;
+do not delete ownership records to bypass cleanup. No input is automatically
+resubmitted by the API, and an interrupted unsafe tool may have partially run.
+Cleanup cannot undo file effects or provide exactly-once effects.
+
+Plain chat does not require Docker when no command cleanup is pending. On the
+first upgrade from an installation without command ownership records, an existing
+Computer workspace requires Docker access once to discover provider ownership;
+this preserves existing services and interrupted work without resetting data.
+A stopped or removed Computer has no surviving processes and is not restarted
+just for cleanup. A second worker cannot open the same root.
+
+Shutdown cancels restart backoff and startup, closes subscriptions and suppresses
+respawn. A worker that has not exited within five seconds is killed; unconfirmed
+cleanup remains recorded for the next startup. Completed-turn retained services
+are not additional shutdown cleanup targets.
 If startup fails, check data-root ownership and provider credential storage
 before retrying. Missing keys do not prevent startup.
 
@@ -179,7 +205,8 @@ against PID reuse. Metadata survives worker death while the Computer runs;
 scoped cancellation. The worker marks retention only after committed SDK
 settlement. Recovery can reconcile a crash between settlement and that mark
 against the native submission; a transcript interruption alone proves nothing
-about process death. Automatic recovery cleanup remains a separate integration.
+about process death. The worker reconciles this ownership before enabling SDK
+execution after restart.
 
 Normal shutdown closes the worker without removing the container or workspace.
 The container may stay running. Later tool use starts a stopped container or

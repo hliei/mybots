@@ -117,6 +117,11 @@ export type WorkerCommand =
   | { action: "unsubscribe"; subscription: string }
   | { action: "close" };
 
+export type WorkerStatus =
+  | { state: "ready" | "recovered" }
+  | { state: "recovering"; attempt: number }
+  | { state: "failed"; error: string };
+
 export interface WorkerRequest {
   id: number;
   command: WorkerCommand;
@@ -124,6 +129,7 @@ export interface WorkerRequest {
 
 export type WorkerMessage =
   | { type: "ready" }
+  | { type: "startup-error"; error: string }
   | { type: "response"; id: number; value?: unknown; error?: string }
   | { type: "view"; subscription: string; value: ChatView };
 

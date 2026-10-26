@@ -11,7 +11,21 @@ async function main(): Promise<void> {
   });
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid port");
-  const api = await startApi(resolve(values.root), port);
+  const startup = new AbortController();
+  const abortStartup = () => startup.abort();
+  process.on("SIGTERM", abortStartup);
+  process.on("SIGINT", abortStartup);
+  let api: Awaited<ReturnType<typeof startApi>>;
+  try {
+    api = await startApi(resolve(values.root), port, startup.signal);
+  } finally {
+    process.off("SIGTERM", abortStartup);
+    process.off("SIGINT", abortStartup);
+  }
+  if (startup.signal.aborted) {
+    await api.close();
+    return;
+  }
   console.log(`Local chat on ${api.url}`);
   process.send?.({ url: api.url });
   let closing = false;
