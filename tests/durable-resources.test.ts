@@ -23,7 +23,7 @@ test("shared user Skills survive reopen and load full instructions only on deman
     const bot = await fixture.request("bots", {
       name: "Writer",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     await fixture.request(`bots/${bot.id}/send`, { text: "Use writing", requestId: "skill-read" });
     await settled(fixture, bot);
@@ -70,12 +70,12 @@ test("owner and Agent memory edits reach later requests with Bot scope preserved
     const first = (await fixture.request("bots", {
       name: "First",
       instructions: "Keep role",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     })) as Bot;
     const second = (await fixture.request("bots", {
       name: "Second",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     })) as Bot;
     await fixture.request("memory/owner", { content: "OWNER_PREFERENCE" }, "PUT");
     await fixture.request(`bots/${first.id}/memory`, { content: "FIRST_PRIVATE" }, "PUT");
@@ -151,7 +151,7 @@ test("resource edits leave an in-flight request unchanged and affect its next mo
     const bot = await fixture.request("bots", {
       name: "Working",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     await fixture.request("memory/owner", { content: "BEFORE_EDIT" }, "PUT");
     await fixture.request("skills/shared", { description: "OLD_CATALOG", content: "old" }, "PUT");
@@ -222,7 +222,7 @@ test("public edits reject invalid resources and both owner and Agent cannot chan
     const bot = await fixture.request("bots", {
       name: "Maintainer",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     await fixture.request(`bots/${bot.id}/send`, {
       text: "Try invalid edits",
@@ -266,12 +266,12 @@ test("Agent tools update and remove user Skills and current Bot memory without t
     const bot = await fixture.request("bots", {
       name: "Maintainer",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     const other = await fixture.request("bots", {
       name: "Other",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     await fixture.request(`bots/${other.id}/memory`, { content: "Other private fact" }, "PUT");
     await fixture.request("memory/owner", { content: "Owner retained fact" }, "PUT");

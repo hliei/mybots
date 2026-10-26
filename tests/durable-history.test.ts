@@ -25,12 +25,12 @@ test("owner searches a selected Thread with bounded pages and reads complete ori
     const bot: Bot = await fixture.request("bots", {
       name: "Writer",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     const other: Bot = await fixture.request("bots", {
       name: "Reader",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     const original = `ARCHIVE_NEEDLE ${"original detail ".repeat(1800)}END_OF_ORIGINAL`;
     const first = await send(fixture, bot, original);
@@ -127,14 +127,14 @@ test("Agent retrieves compacted originals after worker reopen within its own Thr
     const bot: Bot = await fixture.request("bots", {
       name: "Archivist",
       instructions: "Keep the current role",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     originalId = Number((await send(fixture, bot, "Save the source")).messages.at(-1)?.id);
     seed = false;
     const other: Bot = await fixture.request("bots", {
       name: "Other",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     foreignId = Number((await send(fixture, other, "PRIVATE_OTHER_THREAD")).messages[0]?.id);
     for (let index = 0; index < 5; index++) await send(fixture, bot, `recent-${index}`);
@@ -190,7 +190,7 @@ test("search continues past an empty scan page to originals outside the chat win
     const bot: Bot = await fixture.request("bots", {
       name: "Long Thread",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     const first = await send(fixture, bot, "DISTANT_ORIGINAL");
     for (let index = 0; index < 70; index++) await send(fixture, bot, `filler-${index}`);

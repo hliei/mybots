@@ -14,8 +14,8 @@ npm run prepare
 npm run build
 ```
 
-Create `data/models.json` using the [host configuration
-guide](docs/durable-chat.md#host-configuration-and-startup). Configuration, SQLite
+Start without credentials and use Web Provider settings as described in the [local configuration
+guide](docs/durable-chat.md#provider-settings-and-startup). Configuration, SQLite
 state and Computer files live together under `data/`, outside Git. Start the API,
 worker and built Web:
 

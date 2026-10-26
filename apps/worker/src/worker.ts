@@ -7,7 +7,8 @@ import {
   type ConversationWatch,
   computerTools,
   context,
-  type HostModel,
+  modelCatalog,
+  modelChoices,
   openAgent,
   readHistory,
   resourceContext,
@@ -16,7 +17,7 @@ import {
   searchHistory,
 } from "@mybots/agent";
 import type { Bot, ChatMessage, ChatView, WorkerCommand } from "@mybots/contracts";
-import { ProductDatabase } from "@mybots/db";
+import { ProductDatabase, ProviderSettings } from "@mybots/db";
 import { DockerSandbox } from "@mybots/sandbox";
 
 function text(content: unknown): string {
@@ -34,7 +35,6 @@ interface Worker {
 
 export async function openWorker(
   root: string,
-  models: HostModel[],
   publish: (subscription: string, value: ChatView) => void,
 ): Promise<Worker> {
   // A separate SQLite transaction gives this worker kernel-released exclusive ownership.
@@ -45,6 +45,7 @@ export async function openWorker(
     ownership.exec("BEGIN EXCLUSIVE");
     database = new ProductDatabase(join(root, "product.sqlite"));
     const products = database;
+    const settings = new ProviderSettings(root);
     const computer = products.computer();
     const sandbox = new DockerSandbox(computer, join(root, "computer", "workspace"));
     const botForConversation = (conversationId: number) => {
@@ -54,14 +55,15 @@ export async function openWorker(
     };
     harness = await openAgent(
       join(root, "durable.sqlite"),
-      models,
+      [],
       [
         computerTools(sandbox, computer, botForConversation),
         resourceTools(products, botForConversation),
       ],
       (id) => resourceContext(products, botForConversation(id)),
+      (id) => settings.key(id),
     );
-    return await ownedWorker(database, harness);
+    return await ownedWorker(database, harness, settings);
   } catch (error) {
     await harness?.close(context);
     database?.close();
@@ -69,7 +71,11 @@ export async function openWorker(
     throw error;
   }
 
-  async function ownedWorker(database: ProductDatabase, harness: Harness): Promise<Worker> {
+  async function ownedWorker(
+    database: ProductDatabase,
+    harness: Harness,
+    settings: ProviderSettings,
+  ): Promise<Worker> {
     const watches = new Map<string, ConversationWatch>();
     const conversation = async (bot: Bot) => {
       const chat = await harness.conversation(bot.conversationId as ConversationId, context);
@@ -77,10 +83,14 @@ export async function openWorker(
       return chat;
     };
     async function configure(bot: Bot): Promise<void> {
-      const model = models.find((model) => model.id === bot.model);
-      if (!model) throw new Error("Configured model unavailable");
+      const model = modelCatalog.find((model) => `${model.provider}/${model.id}` === bot.model);
+      if (!model) return;
       await (await conversation(bot)).configure(
-        { model: { provider: model.id, modelId: model.modelId }, instructions: bot.instructions },
+        {
+          model: { provider: model.provider, modelId: model.id },
+          thinkingLevel: "high",
+          instructions: bot.instructions,
+        },
         context,
       );
     }
@@ -157,12 +167,16 @@ export async function openWorker(
       }
     }
     for (const bot of database.bots()) {
-      if (models.some((model) => model.id === bot.model)) await configure(bot);
+      await configure(bot);
     }
     harness.resume();
     return {
       async command(command: WorkerCommand): Promise<unknown> {
         if (command.action === "close") return;
+        if (command.action === "models") return modelChoices((id) => settings.key(id));
+        if (command.action === "providers") return settings.status();
+        if (command.action === "provider-update")
+          return settings.update(command.provider, command.apiKey, command.remove);
         if (command.action === "unsubscribe") {
           await watches.get(command.subscription)?.stop();
           watches.delete(command.subscription);
@@ -183,6 +197,14 @@ export async function openWorker(
           case "configure":
             return configure(bot);
           case "send": {
+            if (
+              !modelChoices((id) => settings.key(id)).some(
+                (model) => model.id === bot.model && model.available,
+              )
+            )
+              throw new Error(
+                "Model unavailable. Choose a supported model and save its key in Provider settings.",
+              );
             await configure(bot);
             const submission = await chat.submit(
               {

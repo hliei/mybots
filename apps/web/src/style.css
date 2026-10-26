@@ -108,3 +108,6 @@ dialog::backdrop { background: #0009; }
 #back-to-latest { position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translateX(-50%); border-radius: 24px; background: #222; box-shadow: 0 3px 12px #0008; }
 
 #open-create { width: 32px; height: 32px; background: transparent; border-color: var(--line); }
+
+#providers-dialog form { margin-bottom: 16px; }
+#providers-dialog .header-actions { flex-wrap: wrap; margin-left: 0; }

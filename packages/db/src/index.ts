@@ -167,3 +167,5 @@ export class ProductDatabase {
     this.database.close();
   }
 }
+
+export { ProviderSettings } from "./providers.ts";

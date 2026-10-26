@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect } from "vitest";
-import { type ApiServer, startApi } from "../apps/api/src/server.ts";
+import type { ApiServer } from "../apps/api/src/server.ts";
 import { startDurableModel } from "./durable-model-fixture.ts";
+import { configureFixture, startFixtureApi } from "./provider-fixture.ts";
 
 export async function apiFixture(
   respond: Parameters<typeof startDurableModel>[0] = () => ({ text: "Persistent answer" }),
@@ -27,8 +28,8 @@ export async function apiFixture(
   }
   try {
     service = await startDurableModel(respond, options);
-    await writeFile(join(root, "models.json"), JSON.stringify([service.config]), { mode: 0o600 });
-    api = await startApi(root);
+    configureFixture(root);
+    api = await startFixtureApi(root, service);
     const credential = (await readFile(join(root, "client-credential"), "utf8")).trim();
     const request = async (path: string, body?: unknown, method = body ? "POST" : "GET") => {
       if (!api) throw new Error("API is closed");
@@ -79,7 +80,8 @@ export async function apiFixture(
         const previous = api;
         api = undefined;
         await previous?.close();
-        api = await startApi(root);
+        if (!service) throw new Error("Model service closed");
+        api = await startFixtureApi(root, service);
       },
       close,
     };

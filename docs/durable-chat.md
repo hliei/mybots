@@ -10,14 +10,14 @@ Use Node.js 24.21.0 and install with `npm ci`, then `npm run prepare` and
 `npm run build`. The Web stylesheet, safe Markdown renderer and reading-position
 behavior live in `apps/web`.
 
-## Host configuration and startup
+## Provider settings and startup
 
 The default data directory is `data/` in the repository root. `--root` selects
 another data directory with the same layout; it does not add a nested `data/`:
 
 ```text
 data/
-├── models.json              # Host model configuration
+├── providers/credentials.json # Owner-only provider keys
 ├── client-credential        # Local browser connection credential
 ├── product.sqlite           # Bots, Threads, Skills and scoped memory
 ├── durable.sqlite           # SDK conversation and execution storage
@@ -29,31 +29,28 @@ SQLite may create adjacent journal files. Keep the whole data directory when
 backing up a stopped installation. The Computer workspace is created on first
 tool use. Application logs go to the terminal; startup does not create `logs/`.
 
-Create the `data/` directory and `data/models.json` with a JSON array of host-configured
-OpenAI Chat Completions compatible models. For example, replace the endpoint,
-model and credential placeholders with your installation values:
+Start without a model file or provider key, connect to Web, then open **Provider
+settings**. Save one DeepSeek key and/or one OpenCode Go key. Saving is local:
+it does not contact the provider or prove access. The first explicit message
+checks authentication, quota, subscription and model availability. Errors are
+sanitized before conversation persistence. See [supported models](providers.md)
+for protocols and the supported text/tool catalog.
 
-```json
-[
-  {
-    "id": "personal",
-    "name": "Personal model",
-    "modelId": "your-model-id",
-    "baseUrl": "https://your-provider.example/v1",
-    "apiKey": "your-provider-credential",
-    "contextWindow": 32768,
-    "maxTokens": 4096
-  }
-]
-```
+Keys live in `providers/credentials.json` under the selected root. The directory
+is owner-only (`0700`) and the atomically replaced file is owner-readable/writable
+(`0600`). Include it in private backups; never commit or copy it into the Computer.
+Web receives configured status, never saved keys, and clears key input fields.
+An empty field preserves the existing key; use **Remove** to delete it explicitly.
 
-Keep this file readable only by the owner (`chmod 600`); the default installation
-root is ignored by Git. Use an empty array to check startup without a configured
-provider. The model endpoint and credentials stay in the worker; the browser
-receives only model choice IDs and display names. Each choice ID must be unique.
-Restart the application after changing host model configuration. A Bot whose
-saved choice was removed remains editable with its original Thread; choose an
-available model in Bot settings before sending new input.
+Replacement/removal affects the next model request, including a later tool
+follow-up in an ongoing turn. Already-issued requests finish with their original
+key. No restart or input replay is needed. Removing a key blocks later calls
+without changing the Bot's model or history. Existing `models.json` files remain
+untouched but are no longer read. Existing unavailable model choices remain
+editable; select a supported model and save its provider key before sending.
+Each Bot keeps an independent choice; new Bots default to DeepSeek. Select Go
+explicitly for coding-agent work. No provider fallback or arbitrary endpoint
+configuration is available.
 
 For Computer tools, start Docker Desktop and build the tool image once (and
 again after updating its Dockerfile or helper):
@@ -88,8 +85,9 @@ Use a different fresh root or port with:
 npm start -- --root /absolute/path/to/new-installation --port 4174
 ```
 
-The selected root must contain its own `models.json`. Do not point the new entry
-at legacy runtime data. The source entry is `npm run dev` with the same
+The selected root keeps its own provider settings. Preserve existing current
+Bot, Thread, history and workspace data when upgrading. Do not point the entry
+at incompatible legacy runtime data. The source entry is `npm run dev` with the same
 arguments and requires built Web assets. Ctrl+C shuts down both processes;
 normal shutdown retains all data. On restart, the worker resumes supported work
 from SDK storage, including pending input and committed exchanges. Interrupted
@@ -98,8 +96,8 @@ the application. An abrupt worker kill can leave a Docker command running;
 recovery does not prove termination or roll back file effects. Use Stop while
 the worker is available to cancel its active commands. A second worker cannot
 open the same root.
-If startup fails, check the model file, its required fields and data-root
-ownership before retrying.
+If startup fails, check data-root ownership and provider credential storage
+before retrying. Missing keys do not prevent startup.
 
 ## Team Computer
 
@@ -284,7 +282,7 @@ installation path before stopping its PID. Do not kill unrelated Node processes.
 Inspect Docker container names and mounts before stopping any old runner. Keep
 shared gateways and unrelated containers. This application does not use the old
 gateway, Telegram configuration or environment-file setup. Configure model
-credentials directly in the selected root's owner-readable `models.json`.
+credentials through Web Provider settings.
 
 Old `groups/`, `host.json`, logs and credentials can remain inactive. If
 discarding old installation files, identify them and back up anything needed

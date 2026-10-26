@@ -1,9 +1,10 @@
 import { fork } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { startDurableModel } from "../durable-model-fixture.ts";
+import { configureFixture, fixtureEnvironment } from "../provider-fixture.ts";
 
 test("built Web retains withdrawn and failed inputs, resends and reconstructs missed output", async ({
   page,
@@ -36,14 +37,16 @@ test("built Web retains withdrawn and failed inputs, resends and reconstructs mi
       errors.push(message.text());
   });
   try {
-    await writeFile(join(root, "models.json"), JSON.stringify([service.config]), { mode: 0o600 });
+    configureFixture(root);
     child = fork(
       new URL("../../apps/api/dist/index.js", import.meta.url),
       ["--root", root, "--port", "0"],
       {
         execArgv: ["--no-strip-types"],
         silent: true,
-        env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== "NO_COLOR")),
+        env: Object.fromEntries(
+          Object.entries(fixtureEnvironment(service)).filter(([key]) => key !== "NO_COLOR"),
+        ),
       },
     );
     let stderr = "";
@@ -91,7 +94,7 @@ test("built Web retains withdrawn and failed inputs, resends and reconstructs mi
     await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Queued instruction");
     await page.getByRole("button", { name: "Send message" }).click();
     const failure = page.locator("#unprocessed article").filter({ hasText: "model_error" });
-    await expect(failure).toContainText("Controlled model failure");
+    await expect(failure).toContainText("model request failed");
     await page.reload();
     await expect(failure).toContainText("Queued instruction");
     await page.screenshot({ path: "/tmp/mybots-control-model-failure.png", fullPage: true });

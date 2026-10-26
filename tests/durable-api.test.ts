@@ -1,6 +1,4 @@
-import { writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
-import { join } from "node:path";
 import type { Bot, ChatView } from "@mybots/contracts";
 import { expect, test } from "vitest";
 import { apiFixture } from "./durable-api-fixture.ts";
@@ -11,7 +9,7 @@ test("chat offers Computer and resource tools without starting Docker", async ()
     const bot = (await fixture.request("bots", {
       name: "Computer user",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     })) as Bot;
     await fixture.request(`bots/${bot.id}/send`, { text: "Hello", requestId: "tools" });
     await settled(fixture, bot);
@@ -57,12 +55,12 @@ test("public API admits once, streams and reopens separate Bot Threads", async (
     const first = (await fixture.request("bots", {
       name: "Writer",
       instructions: "Write clearly",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     })) as Bot;
     const second = (await fixture.request("bots", {
       name: "Reader",
       instructions: "Read carefully",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     })) as Bot;
     expect(first.threadId).not.toBe(second.threadId);
     expect(first.conversationId).not.toBe(second.conversationId);
@@ -97,7 +95,7 @@ test("busy sends use native steering and Stop retains withdrawn inputs after reo
     const bot = (await fixture.request("bots", {
       name: "Busy Bot",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     })) as Bot;
     await fixture.request(`bots/${bot.id}/send`, { text: "Working input", requestId: "working" });
     await fixture.service.waitForRequest();
@@ -167,11 +165,11 @@ test("local access rejects foreign origins and configuration hides host credenti
     const bot = (await fixture.request("bots", {
       name: "Before",
       instructions: "Initial role",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     })) as Bot;
     const changed = (await fixture.request(
       `bots/${bot.id}`,
-      { name: "After", instructions: "Updated role", model: "controlled" },
+      { name: "After", instructions: "Updated role", model: "deepseek/deepseek-flash" },
       "PATCH",
     )) as Bot;
     expect(changed.threadId).toBe(bot.threadId);
@@ -207,7 +205,7 @@ test("public event stream delivers partial and settled committed answers", async
     const bot = (await fixture.request("bots", {
       name: "Streaming",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     })) as Bot;
     const response = await fetch(new URL(`api/bots/${bot.id}/events`, fixture.url), {
       headers: { Authorization: `Bearer ${fixture.credential}` },
@@ -261,7 +259,7 @@ test("one worker owns a data root and another startup cannot disrupt admitted ch
     const bot = (await fixture.request("bots", {
       name: "Owner",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     })) as Bot;
     await fixture.request(`bots/${bot.id}/send`, { text: "Still available", requestId: "owner" });
     expect((await settled(fixture, bot)).messages.at(-1)?.text).toBe("Persistent answer");
@@ -277,23 +275,19 @@ test("removing a configured model preserves startup and permits changing the sav
     const bot = (await fixture.request("bots", {
       name: "Existing Bot",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     })) as Bot;
     await fixture.request(`bots/${bot.id}/send`, {
       text: "Original message",
       requestId: "original",
     });
     const before = await settled(fixture, bot);
-    await writeFile(
-      join(fixture.root, "models.json"),
-      JSON.stringify([{ ...fixture.service.config, id: "replacement" }]),
-      { mode: 0o600 },
-    );
+    await fixture.request("providers/deepseek", undefined, "DELETE");
     await fixture.reopen();
     expect((await settled(fixture, bot)).messages).toEqual(before.messages);
     const changed = (await fixture.request(
       `bots/${bot.id}`,
-      { name: bot.name, instructions: "Use the replacement", model: "replacement" },
+      { name: bot.name, instructions: "Use the replacement", model: "opencode-go/glm-5.3" },
       "PATCH",
     )) as Bot;
     expect(changed.conversationId).toBe(bot.conversationId);
@@ -318,7 +312,7 @@ test("invalid Computer tool paths produce a visible failure without reading host
     const bot = await fixture.request("bots", {
       name: "Reader",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     await fixture.request(`bots/${bot.id}/send`, { text: "Read", requestId: "invalid-path" });
     const view = await settled(fixture, bot);
@@ -339,7 +333,7 @@ test("model failure keeps admitted input visibly unanswered and resendable after
     const bot = await fixture.request("bots", {
       name: "Failed Bot",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     const sent = await fixture.request(`bots/${bot.id}/send`, {
       text: "Keep this failed input",
@@ -352,7 +346,7 @@ test("model failure keeps admitted input visibly unanswered and resendable after
       text: "Keep this failed input",
       status: "unanswered",
       reason: "model_error",
-      detail: expect.stringContaining("Controlled model failure"),
+      detail: expect.stringContaining("model request failed"),
     });
     expect(fixture.service.requests).toHaveLength(1);
     await fixture.reopen();
@@ -382,7 +376,7 @@ test("steering arriving behind a final answer becomes subsequent native work", a
     const bot = await fixture.request("bots", {
       name: "Steering",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     await fixture.request(`bots/${bot.id}/send`, { text: "First work", requestId: "first-work" });
     await fixture.service.waitForRequest(1);
@@ -432,7 +426,7 @@ test("worker crash resumes admitted work and queued steering without replaying c
     const bot = await fixture.request("bots", {
       name: "Recover",
       instructions: "",
-      model: "controlled",
+      model: "deepseek/deepseek-flash",
     });
     const admitted = await fixture.request(`bots/${bot.id}/send`, {
       text: "Do tool work",

@@ -26,7 +26,6 @@ const root = await mkdtemp(join(tmpdir(), "mybots-startup-"));
 const command = process.argv.includes("--source") ? "dev" : "start";
 let credential;
 try {
-  await writeFile(join(root, "models.json"), "[]", { mode: 0o600 });
   await mkdir(join(root, "computer/workspace"), { recursive: true });
   await writeFile(join(root, "computer/workspace/keep.txt"), "Persistent working file");
   for (const signal of ["SIGINT", "SIGTERM"]) {
@@ -70,7 +69,10 @@ try {
       credential = saved;
       const headers = { Authorization: `Bearer ${credential}` };
       const bots = await fetch(new URL("api/bots", url), { headers });
-      assert.deepEqual(await bots.json(), { bots: [], models: [] });
+      const choices = await bots.json();
+      assert.deepEqual(choices.bots, []);
+      assert.equal(choices.models[0].id, "deepseek/deepseek-flash");
+      assert.ok(choices.models.every((model) => !model.available));
       for (const route of ["status", "sessions", "runs", "routines", "attachments"])
         assert.equal((await fetch(new URL(`api/${route}`, url), { headers })).status, 404);
       const memoryUrl = new URL("api/memory/owner", url);

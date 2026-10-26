@@ -3,7 +3,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { botConfiguration } from "@mybots/contracts";
+import { botConfiguration, type ModelChoice } from "@mybots/contracts";
 import { ProductDatabase } from "@mybots/db";
 import { LocalAccess } from "./local-access.ts";
 import { startWorker } from "./worker-client.ts";
@@ -38,8 +38,10 @@ export async function startApi(root: string, port = 0): Promise<ApiServer> {
     for (const stream of streams) stream.end();
   });
   const server = createServer((request, response) => {
-    void handle(request, response).catch(() => {
-      if (!response.headersSent) json(response, { error: "Request failed" }, 400);
+    void handle(request, response).catch((error: unknown) => {
+      const unavailable = error instanceof Error && error.message.startsWith("Model unavailable.");
+      if (!response.headersSent)
+        json(response, { error: unavailable ? (error as Error).message : "Request failed" }, 400);
       else response.end();
     });
   });
@@ -61,12 +63,34 @@ export async function startApi(root: string, port = 0): Promise<ApiServer> {
       response.end();
       return;
     }
+    if (path === "/api/providers" && request.method === "GET") {
+      json(response, await worker.request({ action: "providers" }));
+      return;
+    }
+    const provider = /^\/api\/providers\/(deepseek|opencode-go)$/.exec(path);
+    if (provider && (request.method === "PUT" || request.method === "DELETE")) {
+      const value = request.method === "PUT" ? await body(request) : undefined;
+      json(
+        response,
+        await worker.request({
+          action: "provider-update",
+          provider: provider[1] as "deepseek" | "opencode-go",
+          apiKey:
+            value && typeof value === "object"
+              ? (value as Record<string, unknown>).apiKey
+              : undefined,
+          remove: request.method === "DELETE",
+        }),
+      );
+      return;
+    }
+    const modelChoices = async () => (await worker.request({ action: "models" })) as ModelChoice[];
     if (path === "/api/bots" && request.method === "GET") {
-      json(response, { bots: database.bots(), models: worker.models });
+      json(response, { bots: database.bots(), models: await modelChoices() });
       return;
     }
     if (path === "/api/bots" && request.method === "POST") {
-      const configuration = botConfiguration(await body(request), worker.models);
+      const configuration = botConfiguration(await body(request), await modelChoices());
       json(response, await worker.request({ action: "create", configuration }), 201);
       return;
     }
@@ -133,7 +157,15 @@ export async function startApi(root: string, port = 0): Promise<ApiServer> {
       database.bot(botId);
       const action = match[2];
       if (!action && request.method === "PATCH") {
-        const bot = database.update(botId, botConfiguration(await body(request), worker.models));
+        const current = database.bot(botId);
+        const choices = await modelChoices();
+        const bot = database.update(
+          botId,
+          botConfiguration(await body(request), [
+            ...choices,
+            { id: current.model, name: "Unavailable saved model" },
+          ]),
+        );
         await worker.request({ action: "configure", botId });
         json(response, bot);
         return;

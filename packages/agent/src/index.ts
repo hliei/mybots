@@ -11,6 +11,11 @@ import {
   LiveDoc,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import type { ProviderId } from "@mybots/contracts";
+import { providerModels } from "./providers.ts";
+
+export { modelCatalog, modelChoices } from "./providers.ts";
+
 import { historyTools } from "./history.ts";
 
 export { computerTools } from "./computer-tools.ts";
@@ -32,8 +37,9 @@ export async function openAgent(
   configured: HostModel[],
   extensions: Extension[] = [],
   loadContext?: (conversationId: number) => string,
+  key?: (id: ProviderId) => string | undefined,
 ): Promise<Harness> {
-  const models = createModels();
+  const models = key ? providerModels(key) : createModels();
   for (const config of configured) {
     models.setProvider(
       createProvider({
@@ -143,6 +149,7 @@ export async function openAgent(
     {
       models,
       registry,
+      identity: { userAgent: { custom: "mybots/0.0.0" }, attribution: null },
       settings: {
         compaction: { reserveTokens: 1024, keepRecentTokens: 2048, backgroundTokens: 0 },
       },

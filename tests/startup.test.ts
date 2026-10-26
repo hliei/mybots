@@ -1,12 +1,11 @@
 import { fork } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 
 test.each(["SIGINT", "SIGTERM"] as const)("worker closes cleanly on %s", async (signal) => {
   const root = await mkdtemp(join(tmpdir(), "mybots-worker-shutdown-"));
-  await writeFile(join(root, "models.json"), "[]", { mode: 0o600 });
   const child = fork(new URL("../apps/worker/src/index.ts", import.meta.url), [root], {
     execArgv: ["--conditions=mybots-source"],
     silent: true,
@@ -42,7 +41,6 @@ test.each(["SIGINT", "SIGTERM"] as const)("worker closes cleanly on %s", async (
 test("default startup keeps configuration and state in one data directory", async () => {
   const root = await mkdtemp(join(tmpdir(), "mybots-default-root-"));
   await mkdir(join(root, "data"), { mode: 0o700 });
-  await writeFile(join(root, "data", "models.json"), "[]", { mode: 0o600 });
   const child = fork(new URL("../apps/api/src/index.ts", import.meta.url), ["--port", "0"], {
     cwd: root,
     execArgv: ["--conditions=mybots-source"],
@@ -71,7 +69,12 @@ test("default startup keeps configuration and state in one data directory", asyn
       headers: { Authorization: `Bearer ${credential}` },
     });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ bots: [], models: [] });
+    expect(await response.json()).toMatchObject({
+      bots: [],
+      models: expect.arrayContaining([
+        expect.objectContaining({ id: "deepseek/deepseek-flash", available: false }),
+      ]),
+    });
     child.kill("SIGTERM");
     expect(await exited).toEqual({ code: 0, signal: null });
     expect(errors).toBe("");
@@ -79,7 +82,7 @@ test("default startup keeps configuration and state in one data directory", asyn
     const files = await readdir(join(root, "data"));
     expect(files).toEqual(
       expect.arrayContaining([
-        "models.json",
+        "providers",
         "client-credential",
         "product.sqlite",
         "durable.sqlite",
