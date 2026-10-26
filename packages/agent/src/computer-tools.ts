@@ -13,6 +13,13 @@ export function computerTools(
   const output = (text: string) => ({ output: [{ type: "text" as const, text }] });
   return {
     name: "computer-tools",
+    sections: [
+      {
+        key: "computer",
+        render: ({ conversationId }) =>
+          `The Team Computer is a shared Linux container with Python 3 and /bin/sh. Your default shell directory is /workspace/${path(conversationId)}; shared working files live in /workspace/shared. All Bots share the same files; Bot directories organize work, not access isolation. File-tool paths and shell cwd are workspace-relative: ordinary relative paths start in your Bot directory; shared/..., bots/... and /... start at the workspace root. Do not prefix those tool paths with /workspace; absolute paths inside shell commands use the actual Linux filesystem. The root filesystem is read-only. Write persistent files and local installs/caches under your Bot directory or shared workspace; /tmp is temporary. Do not assume Node, npm or other toolchains are installed; inspect before using them. shell returns after the command exits, with a 120-second deadline; it does not provide managed background services or a host preview URL. Stop cannot undo completed file effects. read_file and write_file handle UTF-8 files up to 1 MiB; writes replace contents. Shell output and SDK tool results are bounded. If output is truncated, obtain needed original slices with a shell command or explicitly write a log in the workspace before reading it.`,
+      },
+    ],
     tools: [
       defineTool({
         name: "shell",

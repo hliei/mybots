@@ -4,7 +4,7 @@ import { Type } from "typebox";
 
 export function resourceContext(database: ProductDatabase, botId: string): string {
   return [
-    "Shared Skill catalog. Use skill_read to load full instructions when relevant:",
+    "Shared Skill catalog. Discover relevant Skills here and use skill_read to load full instructions before applying them. Full bodies are not loaded by default. User Skills are shared; built-ins are read-only:",
     JSON.stringify(database.skills().map(({ content: _content, ...skill }) => skill)),
     "Deliberate Markdown memory follows as background data. It can be outdated. Use memory tools only to deliberately retain or correct knowledge. Other Bots' private memory is unavailable. Removing memory does not erase earlier transcript entries.",
     JSON.stringify({

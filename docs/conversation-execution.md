@@ -31,6 +31,43 @@ selection with native compaction and reopen, preserving current tool pairs and
 original history. The [context defaults](durable-chat.md#persistence-and-context)
 are fixed implementation limits, not a tuning interface.
 
+Runtime guidance is composed as SDK prompt sections alongside Bot instructions.
+It describes the offered Computer tools, actual paths and writable directories,
+Skill discovery, scoped memory and original-history retrieval. Current resources
+are injected for each generation request; instructions, model selection and
+provider credentials refresh at the next model boundary. Editing them does not
+rewrite an already issued request. Tool output, recalled memory and retrieved
+history are background evidence, not fresh execution authority.
+
+## Model outcomes and fixed limits
+
+Generation uses the SDK's persisted retry policy: up to three retries, with
+2-, 4- and 8-second backoff (capped at 60 seconds). In-request provider retries
+are disabled to avoid multiplying that budget. Authentication, subscription
+quota and other permanent failures remain actionable failures; sanitized errors
+retain the SDK's transient-error classification without retaining provider bodies.
+
+Requests use a 120-second response-header timeout where the adapter supports it.
+An additional 180-second model-progress idle timeout aborts a silent stream,
+including adapters without a header timeout. Each SDK model event resets the
+idle timer; SSE keepalives do not. Timeouts and missing terminal signals enter
+the same bounded SDK retry policy. Active streams may last longer while making
+progress. Stop aborts the request or retry backoff immediately.
+
+An empty or whitespace-only final response, reasoning without an answer, invalid
+tool completion, or output-token exhaustion becomes an SDK model failure rather
+than successful completion. Earlier narration and completed tools do not count
+as a final reply. The admitted input remains visibly unanswered with its failure
+reason. There is no automatic prose-only continuation or replay of committed
+tools or user input; deliberate resending is new work. Genuine provider failures
+are not reclassified as missing final prose.
+
+SDK tool results retain their native limits (2,000 lines or 50 KiB, whichever
+comes first) and truncation diagnostics. Model and tool progress use the SDK's
+100 ms persistence interval. Read a required original slice through shell/file
+tools or explicitly save a workspace log; truncated output is not a complete
+record. No additional full-log store or tuning UI is provided.
+
 ## Stop, concurrency and recovery
 
 Stop uses native abort to cancel current work and withdraw queued input. Keep
