@@ -265,3 +265,88 @@ test("explicit Resend of unanswered input creates new work after a lost acknowle
     await fixture.close();
   }
 });
+
+test("enabling tool-only activity preserves its position before the final reply", async ({
+  page,
+}) => {
+  let calls = 0;
+  const fixture = await apiFixture(() =>
+    ++calls === 1
+      ? { tool: "memory_read", arguments: { scope: "bot" } }
+      : { text: calls === 2 ? "Final after the tool" : "Later answer" },
+  );
+  try {
+    await fixture.request("bots", {
+      name: "Ordered",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await page.goto(fixture.url);
+    await page.getByLabel("Connection credential").fill(fixture.credential);
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    for (const text of ["First question", "Later question"]) {
+      await page.getByLabel("Message", { exact: true }).fill(text);
+      await page.getByRole("button", { name: "Send message" }).click();
+      await expect(page.locator("#thread-messages")).toContainText(
+        text === "First question" ? "Final after the tool" : "Later answer",
+      );
+      await expect(page.locator("#stop")).toBeDisabled();
+      await expect(page.getByLabel("Message", { exact: true })).toHaveValue("");
+    }
+    await expect(page.locator("#thread-messages")).toContainText("Later answer");
+    await page.getByLabel("Tool activity", { exact: true }).check();
+    await expect(page.locator("#thread-messages > article").nth(1)).toHaveClass("tool-activity");
+    await expect(page.locator(".tool-activity + .assistant")).toContainText("Final after the tool");
+    await page.reload();
+    await expect(page.locator("#thread-messages > article").nth(1)).toHaveClass("tool-activity");
+    await expect(page.locator(".tool-activity + .assistant")).toContainText("Final after the tool");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("Resend requires resolving an unrelated unconfirmed delivery even when text matches", async ({
+  page,
+}) => {
+  const fixture = await apiFixture(() => ({ status: 401 }));
+  const ids: string[] = [];
+  try {
+    await fixture.request("bots", {
+      name: "Pending resend",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await page.goto(fixture.url);
+    await page.getByLabel("Connection credential").fill(fixture.credential);
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.route("**/api/bots/*/send", async (route) => {
+      ids.push(route.request().postDataJSON().requestId);
+      const response = await route.fetch();
+      if (ids.length === 2) await route.abort("failed");
+      else await route.fulfill({ response });
+    });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await page.getByLabel("Message", { exact: true }).fill("Same text, different work");
+      await page.getByRole("button", { name: "Send message" }).click();
+      await expect(page.locator("#unprocessed article")).toHaveCount(attempt + 1);
+    }
+    await expect(page.getByRole("button", { name: "Retry delivery", exact: true })).toBeEnabled();
+    const original = page
+      .locator("#unprocessed article")
+      .first()
+      .getByRole("button", { name: "Resend", exact: true });
+    await original.click();
+    await expect(page.locator("#chat-message")).toHaveText(
+      "Retry or discard the unconfirmed delivery before resending another input.",
+    );
+    expect(fixture.service.requests).toHaveLength(2);
+    await page.getByRole("button", { name: "Discard pending delivery", exact: true }).click();
+    await original.click();
+    await page.getByRole("button", { name: "Send message" }).click();
+    await expect.poll(() => fixture.service.requests.length).toBe(3);
+    expect(ids[2]).not.toBe(ids[0]);
+    expect(ids[2]).not.toBe(ids[1]);
+  } finally {
+    await fixture.close();
+  }
+});

@@ -384,6 +384,7 @@ export async function openWorker(
             : text(live?.generation?.message?.content),
           activity: [
             ...(cleanupErrors.has(bot.id) ? [cleanupErrors.get(bot.id) as string] : []),
+            ...(live?.tools?.map((tool) => tool.name) ?? []),
             ...(live?.compactions?.length ? ["Compacting context"] : []),
             ...(live?.compactionFailure ? [live.compactionFailure.error] : []),
             ...(live?.generation?.retry ? ["Retrying model request"] : []),
@@ -453,7 +454,7 @@ export async function openWorker(
               );
             await configure(bot);
             // Persist display text before admission; only a matching native input makes it visible.
-            await chat.submit(
+            const receipt = await chat.submit(
               {
                 type: "write",
                 requestId: `receipt:${command.requestId}`,
@@ -467,6 +468,13 @@ export async function openWorker(
               },
               context,
             );
+            const savedReceipt = await receipt.status(context);
+            const savedEntry =
+              savedReceipt.entry === undefined
+                ? undefined
+                : await harness.records.entry(chat.id, savedReceipt.entry, context);
+            if ((savedEntry?.entry.data as { text?: string } | undefined)?.text !== command.text)
+              throw new Error("Submission identity already belongs to different input");
             const submission = await chat.submit(
               {
                 type: "input",

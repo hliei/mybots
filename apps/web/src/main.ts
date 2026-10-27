@@ -79,6 +79,7 @@ function renderMessages(view: ChatView): void {
   const keep = new Set(items.map((item) => item.id));
   for (const child of [...container.children])
     if (!keep.has((child as HTMLElement).dataset.messageId ?? "")) child.remove();
+  let position = 0;
   for (const item of items) {
     let article = [...container.children].find(
       (child) => (child as HTMLElement).dataset.messageId === item.id,
@@ -88,6 +89,8 @@ function renderMessages(view: ChatView): void {
       article.dataset.messageId = item.id;
       container.append(article);
     }
+    const before = container.children[position++];
+    if (article !== before) container.insertBefore(article, before ?? null);
     article.className = item.text.trim() ? `message ${item.role}` : "tool-activity";
     const signature = JSON.stringify([item, showTools.checked]);
     if (article.dataset.content === signature) continue;
@@ -128,7 +131,10 @@ function renderMessages(view: ChatView): void {
       article.append(details);
     }
   }
-  node("live-execution").textContent = view.activity.join(" · ") || (view.busy ? "Working…" : "");
+  const activity = view.activity.filter(
+    (label) => !view.messages.some((item) => item.tools.includes(label)),
+  );
+  node("live-execution").textContent = activity.join(" · ") || (view.busy ? "Working…" : "");
   node<HTMLButtonElement>("stop").disabled =
     !view.busy && !view.inputs.some((input) => input.status === "queued");
   const unprocessed = node("unprocessed");
@@ -148,7 +154,12 @@ function renderMessages(view: ChatView): void {
       const resend = document.createElement("button");
       resend.textContent = "Resend";
       resend.addEventListener("click", () => {
-        if (pending?.requestId === input.requestId) acknowledge(pending);
+        if (pending && pending.requestId !== input.requestId) {
+          node("chat-message").textContent =
+            "Retry or discard the unconfirmed delivery before resending another input.";
+          return;
+        }
+        if (pending) acknowledge(pending);
         message.value = input.text;
         message.focus();
       });

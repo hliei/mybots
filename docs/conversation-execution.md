@@ -14,11 +14,13 @@ text and request ID in browser local storage. Reload and worker recovery only lo
 up native admission; they never send automatically. Retry delivery reuses that
 identity. Discard removes only the browser record, so previously admitted work
 continues; a later intentional send or Resend uses a new identity. Draft edits
-cannot silently replace an unconfirmed delivery.
+cannot silently replace an unconfirmed delivery. Resolve an unrelated pending
+delivery before deliberately resending older unanswered input.
 
 The worker persists display text as an idempotent SDK write before input admission.
 Only a matching native input makes that text visible as queued or unanswered; an
-orphan display record never starts work. Public SDK submission scans discover
+orphan display record never starts work. Retries must match the persisted display
+text before admitting that identity. Public SDK submission scans discover
 unanswered inputs independently of the recent chat window, including withdrawn
 inputs without a transcript entry. No SDK-private table queries are used.
 
@@ -36,8 +38,8 @@ bubbles. Raw arguments and full tool output remain in the original-history reade
 and history tools; chat transports at most 500 characters of each tool result and
 160 characters of a step's diagnostic or current output.
 
-Steps associate calls and results by native call ID and retain failed/interrupted
-outcomes. Only an SDK input's answer entry is labelled Completed; narration,
+Each step associates its assistant entry and native call ID with its result,
+retaining failed/interrupted outcomes. Only an SDK input's answer entry is labelled Completed; narration,
 interrupted fragments and partial streams never establish completion. Projection
 uses at most 200 recent entries at the observed watch boundary, avoiding a new
 transcript or a separate event log. Outstanding inputs are read in SDK pages of

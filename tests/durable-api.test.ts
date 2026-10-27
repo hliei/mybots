@@ -671,3 +671,58 @@ test("tool call identifiers reused in later replies keep their own results", asy
     await fixture.close();
   }
 });
+
+test("a saved display receipt cannot admit different input under the same identity", async () => {
+  const fixture = await apiFixture(() => ({ status: 401 }));
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Receipt",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.shutdown();
+    const { openAgent, context } = await import("@mybots/agent");
+    const { join } = await import("node:path");
+    const harness = await openAgent(join(fixture.root, "durable.sqlite"), []);
+    try {
+      const chat = await harness.conversation(bot.conversationId, context);
+      if (!chat) throw new Error("Missing Conversation");
+      await chat.submit(
+        {
+          type: "write",
+          requestId: "receipt:receipt-only",
+          entry: {
+            kind: "chat.input",
+            data: { requestId: "receipt-only", text: "Original input" },
+          },
+        },
+        context,
+      );
+    } finally {
+      await harness.close(context);
+    }
+    await fixture.reopen();
+    expect(await fixture.request(`bots/${bot.id}/submissions/receipt-only`)).toBeNull();
+    expect((await settled(fixture, bot)).inputs).toEqual([]);
+    expect(fixture.service.requests).toHaveLength(0);
+    const response = await fetch(new URL(`api/bots/${bot.id}/send`, fixture.url), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${fixture.credential}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text: "Changed input", requestId: "receipt-only" }),
+    });
+    expect(response.status).toBe(400);
+    expect(fixture.service.requests).toHaveLength(0);
+    await fixture.request(`bots/${bot.id}/send`, {
+      text: "Original input",
+      requestId: "receipt-only",
+    });
+    expect((await settled(fixture, bot)).inputs).toContainEqual(
+      expect.objectContaining({ text: "Original input", status: "unanswered" }),
+    );
+  } finally {
+    await fixture.close();
+  }
+});
