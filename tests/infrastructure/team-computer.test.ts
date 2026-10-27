@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -8,6 +9,230 @@ import { DockerSandbox } from "@mybots/sandbox";
 import { expect, test } from "vitest";
 
 const docker = promisify(execFile);
+
+function previewRequest(
+  url: string,
+  host = new URL(url).host,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      {
+        hostname: "127.0.0.1",
+        port: new URL(url).port,
+        headers: { Host: host, Cookie: "mybots_connection=must-not-reach-preview" },
+        signal: AbortSignal.timeout(2000),
+      },
+      (response) => {
+        let body = "";
+        response.on("data", (chunk) => {
+          body += chunk;
+        });
+        response.on("end", () => resolve({ status: response.statusCode ?? 0, body }));
+      },
+    );
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+test("checked preview opens in the host browser, isolates product access and survives whole-app exit", async () => {
+  const { chromium } = await import("@playwright/test");
+  let calls = 0;
+  let commandId = "";
+  let previewUrl = "";
+  const fixture = await chatComputerFixture((request) => {
+    if (++calls === 1)
+      return {
+        tool: "start_service",
+        arguments: { command: "python3 -u -m http.server 8120 --bind 0.0.0.0" },
+      };
+    if (calls === 2) {
+      commandId = JSON.parse(String(request.messages.at(-1)?.content)).commandId;
+      return { tool: "preview_service", arguments: { commandId, port: 8120 } };
+    }
+    previewUrl = String(request.messages.at(-1)?.content);
+    return { text: `Preview ready: ${previewUrl}` };
+  });
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Preview",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.provider.writeFile(
+      fixture.computer,
+      `bots/${bot.id}/index.html`,
+      "<!doctype html><title>Local preview</title><h1>Retained preview</h1><button onclick=\"this.textContent='Clicked'\">Try preview</button>",
+    );
+    const [before] = JSON.parse((await docker("docker", ["inspect", fixture.computer.id])).stdout);
+    await fixture.request(`bots/${bot.id}/send`, {
+      text: "Start a checked preview",
+      requestId: "preview",
+    });
+    await expect
+      .poll(async () => (await fixture.request(`bots/${bot.id}/chat`)).busy, { timeout: 30000 })
+      .toBe(false);
+    expect(previewUrl).toMatch(/^http:\/\/[a-f0-9-]+\.localhost:\d+\/$/);
+    expect((await fixture.request(`bots/${bot.id}/chat`)).messages.at(-1)?.text).toBe(
+      `Preview ready: ${previewUrl}`,
+    );
+    const [after] = JSON.parse((await docker("docker", ["inspect", fixture.computer.id])).stdout);
+    expect(after.Id).toBe(before.Id);
+    expect(
+      await fixture.provider.readFile(fixture.computer, `bots/${bot.id}/index.html`),
+    ).toContain("Retained preview");
+    const relays = JSON.parse(
+      (await docker("docker", ["inspect", `${fixture.computer.id}-preview-${commandId}-8120`]))
+        .stdout,
+    );
+    expect(relays[0].HostConfig.PortBindings).toEqual({
+      "8080/tcp": [{ HostIp: "127.0.0.1", HostPort: "" }],
+    });
+    expect(relays[0].Mounts).toEqual([]);
+
+    browser = await chromium.launch();
+    const context = await browser.newContext();
+    const product = await context.newPage();
+    // Pair both supported hostnames so same-site localhost attacks are covered too.
+    for (const hostname of ["127.0.0.1", "localhost"]) {
+      const url = new URL(fixture.url);
+      url.hostname = hostname;
+      await product.goto(url.href);
+      await product.getByLabel("Connection credential").fill(fixture.credential);
+      await product.getByRole("button", { name: "Connect", exact: true }).click();
+      await expect.poll(() => context.cookies(url.href).then((cookies) => cookies.length)).toBe(1);
+    }
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    const headers: Promise<Record<string, string>>[] = [];
+    page.on("request", (request) => {
+      if (request.url().startsWith(previewUrl)) headers.push(request.allHeaders());
+    });
+    await page.goto(previewUrl);
+    expect(await page.title()).toBe("Local preview");
+    expect(await page.locator("h1").textContent()).toBe("Retained preview");
+    await page.getByRole("button", { name: "Try preview" }).click();
+    expect(await page.getByRole("button").textContent()).toBe("Clicked");
+    expect(await page.evaluate(() => document.cookie)).not.toContain("mybots_connection");
+    expect(await context.cookies(previewUrl)).toEqual([]);
+    const sentHeaders = JSON.stringify(await Promise.all(headers));
+    expect(sentHeaders).not.toContain(fixture.credential);
+    expect(sentHeaders).not.toContain("mybots_connection");
+    for (const hostname of ["127.0.0.1", "localhost"]) {
+      const url = new URL(fixture.url);
+      url.hostname = hostname;
+      const attacks = await page.evaluate(
+        async (base) =>
+          Promise.all([
+            fetch(`${base}api/providers`, { credentials: "include" }).then(
+              () => "readable",
+              () => "blocked",
+            ),
+            fetch(`${base}api/providers/deepseek`, {
+              method: "DELETE",
+              credentials: "include",
+            }).then(
+              () => "changed",
+              () => "blocked",
+            ),
+            fetch(`${base}api/pair`, { method: "POST", credentials: "include" }).then(
+              () => "paired",
+              () => "blocked",
+            ),
+          ]),
+        url.href,
+      );
+      expect(attacks).toEqual(["blocked", "blocked", "blocked"]);
+      expect(
+        (await previewRequest(previewUrl, `${hostname}:${new URL(previewUrl).port}`)).status,
+      ).toBe(403);
+    }
+    expect(JSON.stringify(await fixture.request("providers"))).toContain('"configured":true');
+    expect(errors).toEqual([]);
+    await page.screenshot({ path: "/tmp/mybots-local-service-preview.png" });
+    await fixture.shutdown();
+    await page.reload();
+    expect(await page.locator("h1").textContent()).toBe("Retained preview");
+    expect(await fixture.provider.previewService(fixture.computer, commandId, 8120, bot.id)).toBe(
+      previewUrl,
+    );
+    await fixture.provider.cancelCommand(fixture.computer, commandId, bot.id);
+    await expect(
+      fixture.provider.previewService(fixture.computer, commandId, 8120, bot.id),
+    ).rejects.toThrow("not running");
+    await expect
+      .poll(
+        () =>
+          previewRequest(previewUrl).then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 10000 },
+      )
+      .toBe(false);
+  } finally {
+    await browser?.close();
+    await fixture.close();
+  }
+});
+
+test("preview rejects unavailable and occupied ports without replacing the Computer or claiming a stale URL", async () => {
+  const fixture = await computerFixture();
+  const { provider, computer } = fixture;
+  const owner = { botId: "preview", turnId: "1" };
+  try {
+    const first = await provider.startCommand(
+      computer,
+      "python3 -u -m http.server 8121 --bind 0.0.0.0",
+      "shared",
+      owner,
+      true,
+    );
+    await provider.observeCommand(computer, first.commandId);
+    const url = await provider.previewService(computer, first.commandId, 8121, owner.botId);
+    const second = await provider.startCommand(
+      computer,
+      "python3 -u -m http.server 8121 --bind 0.0.0.0",
+      "shared",
+      owner,
+      true,
+    );
+    expect((await provider.observeCommand(computer, second.commandId)).exitCode).not.toBe(0);
+    await expect(
+      provider.previewService(computer, second.commandId, 8121, owner.botId),
+    ).rejects.toThrow("not running");
+    await expect(
+      provider.previewService(computer, first.commandId, 8122, owner.botId),
+    ).rejects.toThrow("Preview unavailable");
+    await expect(
+      provider.previewService(computer, first.commandId, 8121, "other-bot"),
+    ).rejects.toThrow();
+    await expect(
+      provider.previewService(computer, first.commandId, 0, owner.botId),
+    ).rejects.toThrow("service port");
+    expect((await previewRequest(url)).status).toBe(200);
+    const reopened = new DockerSandbox(computer, fixture.workspace);
+    expect(await reopened.previewService(computer, first.commandId, 8121, owner.botId)).toBe(url);
+    await provider.cancelCommand(computer, first.commandId, owner.botId);
+    await expect(
+      reopened.previewService(computer, first.commandId, 8121, owner.botId),
+    ).rejects.toThrow("not running");
+    await expect
+      .poll(
+        () =>
+          previewRequest(url).then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 10000 },
+      )
+      .toBe(false);
+  } finally {
+    await fixture.close();
+  }
+});
 
 test("bounded commands publish output before exit and preserve the final error", async () => {
   const fixture = await computerFixture();

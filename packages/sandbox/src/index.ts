@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, open, writeFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -61,6 +62,13 @@ export interface SandboxProvider {
     untilExit?: boolean,
   ): Promise<CommandSnapshot>;
   listCommands(computer: ComputerRef): Promise<CommandSnapshot[]>;
+  previewService(
+    computer: ComputerRef,
+    id: string,
+    port: number,
+    botId: string,
+    signal?: AbortSignal,
+  ): Promise<string>;
   cancelCommand(computer: ComputerRef, id: string, botId?: string): Promise<void>;
   finishTurn(computer: ComputerRef, owner: CommandOwner, completed: boolean): Promise<void>;
   listFiles(computer: ComputerRef, path: string, signal?: AbortSignal): Promise<string>;
@@ -337,6 +345,114 @@ export class DockerSandbox implements SandboxProvider {
     return JSON.parse(
       (await this.call(computer, { action: "commands" })).toString(),
     ) as CommandSnapshot[];
+  }
+
+  async previewService(
+    computer: ComputerRef,
+    id: string,
+    port: number,
+    botId: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    if (!Number.isInteger(port) || port < 1 || port > 65535)
+      throw new Error("Expected a service port from 1 to 65535");
+    signal?.throwIfAborted();
+    const state = JSON.parse(
+      (await this.call(computer, { action: "snapshot", id, botId })).toString(),
+    ) as CommandSnapshot;
+    if (!state.service || !state.running) throw new Error("Service is not running");
+    const [target] = JSON.parse((await docker(["inspect", computer.id])).toString()) as Array<{
+      Id: string;
+      NetworkSettings: { Networks: { bridge: { IPAddress: string } } };
+    }>;
+    if (!target?.NetworkSettings.Networks.bridge?.IPAddress)
+      throw new Error("Computer bridge network is unavailable");
+    const name = `${computer.id}-preview-${id}-${port}`;
+    const hostname = `${id}.localhost`;
+    const existing = (await docker(["ps", "-q", "--filter", `name=^/${name}$`])).toString().trim();
+    let created = false;
+    try {
+      if (!existing) {
+        await docker([
+          "run",
+          "-d",
+          "--rm",
+          "--name",
+          name,
+          "--label",
+          `mybots.preview-computer=${target.Id}`,
+          "--read-only",
+          "--cap-drop",
+          "ALL",
+          "--security-opt",
+          "no-new-privileges",
+          "--pids-limit",
+          "32",
+          "--memory",
+          "64m",
+          "--publish",
+          "127.0.0.1::8080",
+          image,
+          "python3",
+          "/opt/mybots/preview.py",
+          hostname,
+          target.NetworkSettings.Networks.bridge.IPAddress,
+          String(port),
+        ]);
+        created = true;
+      }
+      const [relay] = JSON.parse((await docker(["inspect", name])).toString()) as Array<{
+        Config: { Labels: Record<string, string> };
+        NetworkSettings: { Ports: Record<string, { HostIp: string; HostPort: string }[]> };
+      }>;
+      const binding = relay?.NetworkSettings.Ports["8080/tcp"]?.[0];
+      if (
+        relay?.Config.Labels["mybots.preview-computer"] !== target.Id ||
+        binding?.HostIp !== "127.0.0.1"
+      )
+        throw new Error("Preview binding or Computer mismatch");
+      const url = `http://${hostname}:${binding.HostPort}/`;
+      const deadline = Date.now() + 10000;
+      while (true) {
+        signal?.throwIfAborted();
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const request = httpRequest(
+              {
+                hostname: "127.0.0.1",
+                port: binding.HostPort,
+                path: "/",
+                headers: { Host: new URL(url).host },
+                signal: AbortSignal.any([AbortSignal.timeout(1500), ...(signal ? [signal] : [])]),
+              },
+              (response) => {
+                response.destroy();
+                if (
+                  response.statusCode !== undefined &&
+                  response.statusCode >= 200 &&
+                  response.statusCode < 300
+                )
+                  resolve();
+                else reject(new Error("Preview did not return a successful HTTP response"));
+              },
+            );
+            request.on("error", reject);
+            request.end();
+          });
+          signal?.throwIfAborted();
+          return url;
+        } catch (error) {
+          if (Date.now() >= deadline) throw error;
+          await delay(200, undefined, { signal });
+        }
+      }
+    } catch (error) {
+      if (created) await docker(["rm", "-f", name]);
+      throw new Error(
+        "Preview unavailable. Check the running service, bind it to 0.0.0.0, and use its HTTP port.",
+        { cause: error },
+      );
+    }
   }
 
   private async running(computer: ComputerRef): Promise<boolean> {
