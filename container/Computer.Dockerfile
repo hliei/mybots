@@ -16,5 +16,6 @@ RUN set -eu; \
     tar -xzf /tmp/uv.tar.gz -C /usr/local/bin --strip-components=1 "uv-${uv_arch}-unknown-linux-gnu/uv" "uv-${uv_arch}-unknown-linux-gnu/uvx"; \
     rm /tmp/uv.tar.gz
 COPY packages/sandbox/src/computer.py /opt/mybots/computer.py
+COPY packages/sandbox/src/preview.py /opt/mybots/preview.py
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

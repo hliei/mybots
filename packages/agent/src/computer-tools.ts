@@ -26,7 +26,7 @@ export function computerTools(
     defineTool({
       name: service ? "start_service" : "shell",
       description: service
-        ? "Intentionally start a service on the Team Computer. Run it in the foreground; it may survive this turn and application shutdown. Returns a commandId for command_status/stop_service. No host preview URL is provided."
+        ? "Intentionally start a service on the Team Computer. Run it in the foreground; it may survive this turn and application shutdown. Returns a commandId for command_status/stop_service. For host-browser access, bind HTTP services to 0.0.0.0 and use preview_service."
         : `Run a bounded bash command on the Team Computer (deadline ${commandTimeoutMs()} ms). Returns early after output goes quiet or 10 seconds; running:true is unfinished work, not a detached service. Use command_status to continue; final output is also supplied at the native final-answer boundary. Interrupted effects are not rolled back.`,
       parameters: Type.Object({ command: Type.String(), cwd: Type.Optional(Type.String()) }),
       replay: "unsafe",
@@ -71,7 +71,7 @@ export function computerTools(
       {
         key: "computer",
         render: ({ conversationId }) =>
-          `The Team Computer is shared Linux with Python 3, bash, curl, git, gh, jq, SSH client, uv/uvx, unzip, procps, PDF utilities, pandoc and openpyxl. Your default shell directory is /workspace/${path(conversationId)}; shared files live in /workspace/shared. All Bots share files; directories organize work, not access isolation. File-tool paths and shell cwd are workspace-relative: ordinary relative paths start in your Bot directory; shared/..., bots/... and /... start at the workspace root. Do not prefix tool paths with /workspace; shell arguments use the actual Linux filesystem. The root filesystem is read-only. Shell HOME, local bin and cache paths use cwd; put persistent installs/files under your Bot directory or shared workspace. /tmp is temporary. Inspect before assuming Node/npm or other toolchains exist. shell has a ${commandTimeoutMs()} ms deadline independent of early output; running:true means unfinished work. command_status continues observation. Relay useful progress or sign-in codes before waiting; never describe early output as completion. Only start_service intentionally retains work after a completed Agent turn, with no automatic deadline; run services in the foreground. Check command_status/list_services before claiming a service is alive. stop_service can stop this Bot's earlier services when the owner asks. Stop cancels this turn's commands and services, preserving prior retained services and other Bots. It cannot undo file effects. No host preview URL is available. list_files lists up to 1000 entries; read_file and write_file handle UTF-8 files up to 1 MiB; writes replace contents. Output retains up to 64 KiB per stream and SDK limits also apply. If truncated, use shell to read needed original slices or explicitly write a workspace log; no full command log is retained automatically.`,
+          `The Team Computer is shared Linux with Python 3, bash, curl, git, gh, jq, SSH client, uv/uvx, unzip, procps, PDF utilities, pandoc and openpyxl. Your default shell directory is /workspace/${path(conversationId)}; shared files live in /workspace/shared. All Bots share files; directories organize work, not access isolation. File-tool paths and shell cwd are workspace-relative: ordinary relative paths start in your Bot directory; shared/..., bots/... and /... start at the workspace root. Do not prefix tool paths with /workspace; shell arguments use the actual Linux filesystem. The root filesystem is read-only. Shell HOME, local bin and cache paths use cwd; put persistent installs/files under your Bot directory or shared workspace. /tmp is temporary. Inspect before assuming Node/npm or other toolchains exist. shell has a ${commandTimeoutMs()} ms deadline independent of early output; running:true means unfinished work. command_status continues observation. Relay useful progress or sign-in codes before waiting; never describe early output as completion. Only start_service intentionally retains work after a completed Agent turn, with no automatic deadline; run services in the foreground. Check command_status/list_services before claiming a service is alive. stop_service can stop this Bot's earlier services when the owner asks. Stop cancels this turn's commands and services, preserving prior retained services and other Bots. It cannot undo file effects. Use preview_service with a running service commandId and HTTP port to obtain a checked host-browser URL. Bind preview services to 0.0.0.0; only the requested port is exposed on host loopback. Preview content has its own hostname and is untrusted. Recheck before claiming a previous URL is still available; there is no automatic service restart. list_files lists up to 1000 entries; read_file and write_file handle UTF-8 files up to 1 MiB; writes replace contents. Output retains up to 64 KiB per stream and SDK limits also apply. If truncated, use shell to read needed original slices or explicitly write a workspace log; no full command log is retained automatically.`,
       },
     ],
     hooks: [
@@ -123,6 +123,26 @@ export function computerTools(
     tools: [
       launch(false),
       launch(true),
+      defineTool({
+        name: "preview_service",
+        description:
+          "Check this Bot's running service and expose its HTTP port through an isolated loopback-only host-browser URL. Bind the service to 0.0.0.0. Returns a URL only after a successful host HTTP check; report failures honestly. Access survives application exit while the service lives. Recheck before claiming an old URL is available.",
+        parameters: Type.Object({
+          commandId: Type.String(),
+          port: Type.Integer({ minimum: 1, maximum: 65535 }),
+        }),
+        replay: "unsafe",
+        execute: async (args, api, context) =>
+          output(
+            await provider.previewService(
+              computer,
+              args.commandId,
+              args.port,
+              botForConversation(api.conversationId),
+              context.abortSignal,
+            ),
+          ),
+      }),
       defineTool({
         name: "command_status",
         description:

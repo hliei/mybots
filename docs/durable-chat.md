@@ -195,7 +195,38 @@ chat request can invoke `stop_service` for this Bot's earlier service. Services
 are retained only after the SDK settles the originating input successfully.
 They can use CPU, memory and ports after the application exits. This does not
 manage arbitrary daemons that escape the command's process group and provides
-no host preview URL, management screen or automatic restart.
+no management screen or automatic restart.
+
+For a browser preview, bind the HTTP service to `0.0.0.0` inside the Computer,
+then call `preview_service` with its `commandId` and container `port`. It returns
+`http://<commandId>.localhost:<port>/` only after a successful HTTP response at
+the host's loopback port. Checks follow up to five redirects within the preview
+origin and return the final URL after a 2xx response. Check an old URL again with
+the tool before claiming it still works. A stopped service,
+unreachable port, port conflict or failed check is a tool failure, not a live URL.
+
+Each requested port uses a separate Docker relay with an automatically assigned
+host port bound only to `127.0.0.1`. The preview hostname is distinct from the
+product's `localhost`/`127.0.0.1` origins and host-only connection cookies. The
+relay rejects alternate Host names before forwarding headers; product Host,
+Origin and credential checks still apply. Relays have no host/workspace mounts
+or product credentials. Open the returned `.localhost` address in the host
+browser; replacing it with `localhost` or `127.0.0.1` is rejected.
+
+The relay runs independently of API and worker, so a retained service's URL
+survives normal application exit and temporary listener reloads. Its process
+shares the Computer's PID namespace and watches the originating command
+supervisor with a process start token. It releases its port when that command
+ends, even if a different service reuses the port. Stop and explicit
+`stop_service` end availability with the service; there is no service restart or background availability UI. Preview
+URLs use HTTP and require a browser that resolves `.localhost` to loopback
+(verified with Chromium).
+
+Rebuild the Computer image to install the relay script. Existing compatible
+Computers need no replacement or added port mappings: relays use the new image
+and reach the existing Computer through its Docker bridge. Its live services,
+identity and workspace remain intact. Computer replacement still ends services
+and requires deliberately starting new ones and requesting new preview URLs.
 
 Stop uses native abort and queued-input withdrawal, then joins cleanup of all
 commands and services owned by the current Agent turn. It preserves other Bots,
@@ -351,8 +382,10 @@ real Docker file/shell agreement, concurrent first use, process-group cancellati
 scoped public Stop, SDK progress/continuation, retained services through whole-app
 shutdown, provider cleanup after worker death, deadlines, truncation, declared
 CLI facilities, application reopen/container replacement, unsafe
-path/archive rejection and workspace transfer using temporary resources and a
-controlled HTTP model. It needs Docker but no personal provider credentials.
+path/archive rejection, checked host-browser previews and workspace transfer
+using temporary resources and a controlled HTTP model. It needs Docker but no personal provider credentials.
+Preview checks include app-exit availability, stopped/occupied/unreachable ports,
+loopback publication, cookie separation and rejected browser API mutations.
 
 The default startup smoke exercises both shutdown signals, child-process cleanup,
 authenticated resource persistence, retained working files and retired-route rejection.

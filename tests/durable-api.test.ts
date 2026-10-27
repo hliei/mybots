@@ -22,6 +22,7 @@ test("chat offers Computer and resource tools without starting Docker", async ()
       "memory_delete",
       "memory_read",
       "memory_write",
+      "preview_service",
       "read_file",
       "shell",
       "skill_delete",
