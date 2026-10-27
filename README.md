@@ -25,7 +25,9 @@ npm start
 
 Open `http://127.0.0.1:4173` and connect with the credential in
 `data/client-credential`. Ctrl+C stops the application
-and preserves its data. Start Docker Desktop and run `npm run build:computer`
+and preserves its data. Services retained by completed turns can keep running
+after application exit; stop them through chat or stop the Computer when finished.
+Start Docker Desktop and run `npm run build:computer`
 once before using shell/file tools. Plain chat does not require Docker.
 
 See [local operation](docs/durable-chat.md) for model configuration, alternate
@@ -34,13 +36,16 @@ roots/ports, recovery and [retiring an older installation](docs/durable-chat.md#
 ## Documentation and development
 
 The [documentation index](docs/README.md) covers the implemented architecture and
-its four decision records. See the [glossary](GLOSSARY.md) for product vocabulary.
+its five decision records. See the [glossary](GLOSSARY.md) for product vocabulary.
 
 Install Chromium with `npx playwright install chromium`. Run `npm run verify`
 for formatting, lint, types, offline tests, builds, compiled startup and browser
 checks; run `bash tests/workflow.sh` for Git workflow checks.
-`npm run test:infrastructure` separately exercises real Docker with a controlled
-model. These checks do not establish actual-provider acceptance.
+`npm run test:infrastructure` builds the application and Computer image, then
+separately exercises real Docker and built Web with controlled models, including
+the documented startup, retained previews and worker recovery. See the
+[acceptance coverage](docs/durable-chat.md#verification). These checks do not
+establish actual-provider acceptance.
 
 Use `npm run dev` for source API/worker startup with the same arguments as
 `npm start`; it serves the built Web. Use `npm run test:watch` for offline tests.

@@ -133,9 +133,10 @@ before retrying. Missing keys do not prevent startup.
 ## Team Computer
 
 The worker registers `shell`, `list_files`, `read_file` and `write_file`, plus
-`start_service`, `command_status`, `list_services` and `stop_service` for managed
-processes. All use the same ComputerRef and Docker SandboxProvider. Product SQLite
-retains one Computer identity for the default Space. Working files use
+`start_service`, `command_status`, `list_services`, `stop_service` and
+`preview_service` for managed processes. All use the same ComputerRef and Docker
+SandboxProvider. Product SQLite retains one Computer identity for the default
+Space. Working files use
 `<root>/computer/workspace`, exposed read/write as `/workspace`. A second,
 read-only bind mount exposes only `<root>/computer/worker-generations` at
 `/var/lib/mybots/worker-generations`. These small markers fence late command
@@ -308,9 +309,11 @@ background memory extraction.
 Product SQLite stores the default Space, Bots and each Bot's stable
 Thread/Conversation association. Only the worker opens the separate Durable
 SQLite store. There is no application transcript or execution queue. A send
-returns its SDK submission identity only after native admission and a
-non-model-visible SDK receipt; retries reuse the same request ID. That receipt
-lets withdrawn text remain visible after the SDK removes it from its inbox.
+returns its SDK submission identity only after a non-model-visible display
+receipt and native input admission; retries reuse the same request ID. Only a
+matching native input makes the receipt visible. Public SDK submission scans keep
+unanswered or withdrawn input discoverable independently of the recent history
+window. An orphan receipt cannot start work.
 
 Reload and reconnect read committed SDK originals and live state. The initial
 chat view contains the latest 200 SDK entries. Use **History** to search or browse
@@ -389,9 +392,55 @@ loopback publication, cookie separation and rejected browser API mutations.
 
 The default startup smoke exercises both shutdown signals, child-process cleanup,
 authenticated resource persistence, retained working files and retired-route rejection.
-Integrated Docker checks combine resource context, native compaction, original
-retrieval and tools across restart and multiple Bots. Controlled-model success
-does not establish actual-provider acceptance.
+The infrastructure command builds all application workspaces before the Computer
+image so the combined browser journey runs fresh compiled API/worker code through
+`npm start`. It joins first-use provider setup, multi-tool file/preview creation,
+key replacement/removal during work, steering, Stop, worker SIGKILL, reload,
+normal shutdown and reopen. The retained preview stays reachable across those
+lifecycle events until explicitly stopped. A separate combination checks resources,
+native compaction and original retrieval across restart with Bots using different
+providers. Fixtures use temporary roots and remove their own processes, Computers
+and preview relays; they never use the owner's root or saved keys.
+
+The following coverage runs at the delivered source revision. Test paths are
+relative to `tests/` (the startup script is relative to the repository root).
+Each row identifies the relevant observable checks rather
+than treating a test count as acceptance. `npm run verify` supplies controlled
+provider, compiled startup and built-Web evidence; `npm run test:infrastructure`
+supplies real Docker and additional host-browser evidence.
+
+| Acceptance | Evidence |
+| --- | --- |
+| A01: Empty-key startup and retained history | `scripts/check-startup.mjs`, `startup.test.ts`, `browser/provider-settings.spec.ts`, `durable-api.test.ts` |
+| A02: Local key save/replace/remove without disclosure | `provider-settings.test.ts`, `browser/provider-settings.spec.ts` |
+| A03: In-flight key updates affect the next request | Provider barriers in `provider-settings.test.ts`; actual shell completion after removal in `infrastructure/runtime-chain.test.ts` |
+| A04: Supported protocols, reasoning, stable Go session and no fallback | Per-model fixtures and permanent failures in `provider-settings.test.ts`; quota and model faults in `agent-runtime.test.ts` |
+| A05: Runtime guidance, scoped resources, native compaction and originals | `agent-runtime.test.ts`, `durable-context.test.ts`, `durable-history.test.ts`, `durable-resources.test.ts`; cross-provider combination in `infrastructure/team-computer.test.ts` |
+| A06: Bounded honest model completion and faults | `agent-runtime.test.ts`, `provider-stream.test.ts` |
+| A07: Shared bytes, progress, deadlines and truncation | File/shell, native continuation, original-slice and image-facility checks in `infrastructure/team-computer.test.ts` |
+| A08: Retained services and scoped Stop | Multi-Bot process/socket checks and built-Web steering in `infrastructure/team-computer.test.ts` |
+| A09: Cleanup before crash recovery, without duplicate admission | SIGKILL, launch-fencing and retained-service checks in `infrastructure/team-computer.test.ts`; compiled journey in `infrastructure/runtime-chain.test.ts` |
+| A10: Bounded recovery, failed cleanup, shutdown and competing owner | `worker-recovery.test.ts`, `durable-api.test.ts`, `browser/worker-recovery.spec.ts`; real failed-cleanup checks in `infrastructure/team-computer.test.ts` |
+| A11: Checked host preview, app-exit availability and stale rejection | Host HTTP/browser, redirect and port-reuse checks in `infrastructure/team-computer.test.ts`; compiled shutdown/reopen in `infrastructure/runtime-chain.test.ts` |
+| A12: Preview origin, cookie, API and listener isolation | Browser attacks, header checks and Docker binding/mount assertions in `infrastructure/team-computer.test.ts` |
+| A13: Readable narration, steps, failures and final replies after reconnect | `browser/chat-recovery.spec.ts`, `browser/durable-control.spec.ts`; real Docker interruption in `infrastructure/team-computer.test.ts` |
+| A14: Lost acknowledgement, retry identity and deliberate resend | `browser/chat-recovery.spec.ts`, `durable-api.test.ts` |
+| A15: Admission crash window and old unanswered input | Real worker/SDK reopen and window-eviction checks in `durable-api.test.ts` |
+| A16: Combined owner workflow | `infrastructure/runtime-chain.test.ts` and the resources/compacted-originals/multiple-Bots scenario in `infrastructure/team-computer.test.ts` |
+
+Supported models, protocol mappings and text-only input limits are declared in
+[Model providers](providers.md). Fixed context limits are above; model retry,
+stream-idle and completion limits are in [Conversation execution](conversation-execution.md#model-outcomes-and-fixed-limits).
+The Computer image, command/output bounds and retained-service restrictions are
+in [Team Computer](#team-computer). These defaults are application contracts,
+not proof of an actual provider's current availability.
+
+Actual DeepSeek and Go requests are not performed by either command. They require
+separate explicit service-use authorization and usable credentials/subscriptions.
+Record each observed model/protocol/options and outcome separately; one live
+model cannot validate an entire catalog. Until that separate acceptance is run,
+authentication, subscription availability and live model/tool quality remain
+unverified. Controlled-model success does not establish actual-provider acceptance.
 
 ## Retiring an older installation
 

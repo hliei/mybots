@@ -23,3 +23,10 @@ is closed. Working files persist across Computer replacement, but services do
 not automatically restart. This accepts explicit service cleanup in exchange
 for keeping useful processes independent of conversation and application
 lifetime, without adding scheduling or an application execution state machine.
+
+The controlled real-Docker checks exercise scoped Stop, cleanup before native
+resume, failed cleanup, retained services, late-launch fencing and normal
+application shutdown. The compiled startup/browser combination also retains a
+checked preview through Stop, worker SIGKILL and whole-application exit/reopen.
+See [acceptance coverage](../durable-chat.md#verification) for the checks and
+the separate, unperformed actual-provider gate.
