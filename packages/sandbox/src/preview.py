@@ -1,7 +1,17 @@
 import asyncio
+from pathlib import Path
 import sys
 
 hostname, target, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
+supervisor, token = sys.argv[4:6]
+
+
+def alive():
+    try:
+        fields = Path(f"/proc/{supervisor}/stat").read_text().rsplit(")", 1)[1].split()
+        return fields[0] != "Z" and fields[19] == token
+    except FileNotFoundError:
+        return False
 
 
 async def connect():
@@ -47,23 +57,9 @@ async def forward(reader, writer):
 async def main():
     server = await asyncio.start_server(forward, "0.0.0.0", 8080)
     async with server:
-        # Bound startup, then release the relay and its published port when the service exits.
-        for _ in range(10):
-            try:
-                _, writer = await connect()
-                writer.close()
-                break
-            except OSError:
-                await asyncio.sleep(0.5)
-        else:
-            return
-        while True:
-            await asyncio.sleep(1)
-            try:
-                _, writer = await connect()
-                writer.close()
-            except (OSError, asyncio.TimeoutError):
-                return
+        # The shared PID namespace and start token keep cleanup tied to the original service.
+        while alive():
+            await asyncio.sleep(0.2)
 
 
 asyncio.run(main())

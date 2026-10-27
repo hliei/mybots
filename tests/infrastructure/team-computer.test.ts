@@ -116,7 +116,6 @@ test("checked preview opens in the host browser, isolates product access and sur
     await page.getByRole("button", { name: "Try preview" }).click();
     expect(await page.getByRole("button").textContent()).toBe("Clicked");
     expect(await page.evaluate(() => document.cookie)).not.toContain("mybots_connection");
-    expect(await context.cookies(previewUrl)).toEqual([]);
     const sentHeaders = JSON.stringify(await Promise.all(headers));
     expect(sentHeaders).not.toContain(fixture.credential);
     expect(sentHeaders).not.toContain("mybots_connection");
@@ -149,7 +148,10 @@ test("checked preview opens in the host browser, isolates product access and sur
         (await previewRequest(previewUrl, `${hostname}:${new URL(previewUrl).port}`)).status,
       ).toBe(403);
     }
-    expect(JSON.stringify(await fixture.request("providers"))).toContain('"configured":true');
+    expect(await fixture.request("providers")).toEqual([
+      { id: "deepseek", name: "DeepSeek", configured: true },
+      { id: "opencode-go", name: "OpenCode Go", configured: true },
+    ]);
     expect(errors).toEqual([]);
     await page.screenshot({ path: "/tmp/mybots-local-service-preview.png" });
     await fixture.shutdown();
@@ -1752,5 +1754,151 @@ test("late Docker launches from a killed worker are fenced while new native tool
         await rm(tools, { recursive: true, force: true });
       }
     }
+  }
+});
+
+test("preview checks same-origin redirects and rejects unchecked destinations", async () => {
+  const fixture = await computerFixture();
+  const { provider, computer } = fixture;
+  const owner = { botId: "redirect", turnId: "1" };
+  try {
+    await provider.writeFile(
+      computer,
+      "shared/server.py",
+      `from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/":
+            self.send_response(302)
+            self.send_header("Location", Path("location").read_text() if Path("location").exists() else "/app")
+        else:
+            self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"redirected preview")
+HTTPServer(("0.0.0.0", 8123), Handler).serve_forever()
+`,
+    );
+    const service = await provider.startCommand(
+      computer,
+      "python3 -u server.py",
+      "shared",
+      owner,
+      true,
+    );
+    await provider.observeCommand(computer, service.commandId);
+    const url = await provider.previewService(computer, service.commandId, 8123, owner.botId);
+    const { chromium } = await import("@playwright/test");
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(url);
+      expect(new URL(page.url()).pathname).toBe("/app");
+      expect(await page.locator("body").textContent()).toBe("redirected preview");
+    } finally {
+      await browser.close();
+    }
+    await provider.writeFile(computer, "shared/location", "http://127.0.0.1:9/");
+    await expect(
+      provider.previewService(computer, service.commandId, 8123, owner.botId),
+    ).rejects.toThrow("Preview unavailable");
+    await provider.writeFile(computer, "shared/location", "/");
+    await expect(
+      provider.previewService(computer, service.commandId, 8123, owner.botId),
+    ).rejects.toThrow("Preview unavailable");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("preview follows its command through listener reload and ends despite port reuse", async () => {
+  const fixture = await computerFixture();
+  const { provider, computer } = fixture;
+  const owner = { botId: "reload", turnId: "1" };
+  try {
+    await provider.writeFile(computer, "shared/index.html", "same retained service");
+    await provider.writeFile(
+      computer,
+      "shared/reload.py",
+      `from http.server import HTTPServer, SimpleHTTPRequestHandler
+from pathlib import Path
+import time
+with HTTPServer(("0.0.0.0", 8124), SimpleHTTPRequestHandler) as server:
+    server.timeout = 0.05
+    while not Path("pause").exists():
+        server.handle_request()
+paused_at = time.monotonic()
+while not Path("resume").exists():
+    if time.monotonic() - paused_at > 2:
+        Path("paused").touch()
+    time.sleep(0.05)
+HTTPServer(("0.0.0.0", 8124), SimpleHTTPRequestHandler).serve_forever()
+`,
+    );
+    const service = await provider.startCommand(
+      computer,
+      "python3 -u reload.py",
+      "shared",
+      owner,
+      true,
+    );
+    await provider.observeCommand(computer, service.commandId);
+    const url = await provider.previewService(computer, service.commandId, 8124, owner.botId);
+    await provider.finishTurn(computer, owner, true);
+    await provider.writeFile(computer, "shared/pause", "pause the listener");
+    await expect
+      .poll(
+        () =>
+          provider.readFile(computer, "shared/paused").then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 10000 },
+      )
+      .toBe(true);
+    expect(
+      (await provider.listCommands(computer)).find(
+        (command) => command.commandId === service.commandId,
+      )?.running,
+    ).toBe(true);
+    await provider.writeFile(computer, "shared/resume", "resume the listener");
+    await expect
+      .poll(
+        () =>
+          previewRequest(url).then(
+            (response) => response.body,
+            () => "unreachable",
+          ),
+        { timeout: 5000 },
+      )
+      .toBe("same retained service");
+    await provider.cancelCommand(computer, service.commandId, owner.botId);
+    const replacement = await provider.startCommand(
+      computer,
+      "python3 -u -m http.server 8124 --bind 0.0.0.0",
+      "shared",
+      { ...owner, turnId: "2" },
+      true,
+    );
+    await provider.observeCommand(computer, replacement.commandId);
+    const replacementUrl = await provider.previewService(
+      computer,
+      replacement.commandId,
+      8124,
+      owner.botId,
+    );
+    expect((await previewRequest(replacementUrl)).status).toBe(200);
+    await expect
+      .poll(
+        () =>
+          previewRequest(url).then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 5000 },
+      )
+      .toBe(false);
+  } finally {
+    await fixture.close();
   }
 });

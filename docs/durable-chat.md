@@ -200,8 +200,9 @@ no management screen or automatic restart.
 For a browser preview, bind the HTTP service to `0.0.0.0` inside the Computer,
 then call `preview_service` with its `commandId` and container `port`. It returns
 `http://<commandId>.localhost:<port>/` only after a successful HTTP response at
-the host's loopback port. The root path must return a 2xx response. Check an old
-URL again with the tool before claiming it still works. A stopped service,
+the host's loopback port. Checks follow up to five redirects within the preview
+origin and return the final URL after a 2xx response. Check an old URL again with
+the tool before claiming it still works. A stopped service,
 unreachable port, port conflict or failed check is a tool failure, not a live URL.
 
 Each requested port uses a separate Docker relay with an automatically assigned
@@ -213,10 +214,13 @@ or product credentials. Open the returned `.localhost` address in the host
 browser; replacing it with `localhost` or `127.0.0.1` is rejected.
 
 The relay runs independently of API and worker, so a retained service's URL
-survives normal application exit. It releases its port when the target stops
-accepting connections. Stop and explicit `stop_service` end availability with
-the service; there is no service restart or background availability UI. Preview
-URLs use HTTP and require a browser that resolves `.localhost` to loopback (verified with Chromium).
+survives normal application exit and temporary listener reloads. Its process
+shares the Computer's PID namespace and watches the originating command
+supervisor with a process start token. It releases its port when that command
+ends, even if a different service reuses the port. Stop and explicit
+`stop_service` end availability with the service; there is no service restart or background availability UI. Preview
+URLs use HTTP and require a browser that resolves `.localhost` to loopback
+(verified with Chromium).
 
 Rebuild the Computer image to install the relay script. Existing compatible
 Computers need no replacement or added port mappings: relays use the new image

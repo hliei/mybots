@@ -18,12 +18,11 @@ their deadline. Intentional services use explicit launch/status/stop tools and
 can survive a successful Agent turn and application shutdown. `preview_service`
 checks an HTTP service from the host and supplies an isolated `.localhost` URL
 through one loopback-only Docker relay per requested port. Relays survive app
-shutdown and release their port when the service becomes unavailable; they do
+shutdown and release their port when the originating command ends; they do
 not require replacing an existing Computer or publishing its other ports.
 Provider metadata owns processes by Bot and native input identity; Stop cleans
-only the current
-turn's work, preserving earlier retained services and other Bots. Before recovery
-resumes SDK execution, seal the interrupted worker's launch generation and clean
+only the current turn's work, preserving earlier retained services and other Bots.
+Before recovery resumes SDK execution, seal the interrupted worker's launch generation and clean
 its interrupted turns. Launch closure markers are host-owned and mounted
 read-only, separately from working files; Computer tools cannot reopen a closed
 generation or alter the host metadata.

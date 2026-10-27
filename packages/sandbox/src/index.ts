@@ -357,9 +357,23 @@ export class DockerSandbox implements SandboxProvider {
     if (!Number.isInteger(port) || port < 1 || port > 65535)
       throw new Error("Expected a service port from 1 to 65535");
     signal?.throwIfAborted();
+    this.check(computer);
+    // Read existing ownership metadata without upgrading or replacing a live Computer.
     const state = JSON.parse(
-      (await this.call(computer, { action: "snapshot", id, botId })).toString(),
-    ) as CommandSnapshot;
+      (
+        await docker(
+          [
+            "exec",
+            "-i",
+            computer.id,
+            "python3",
+            "-c",
+            'import json, sys; sys.path.insert(0, "/opt/mybots"); from computer import snapshot; print(json.dumps(snapshot(json.load(sys.stdin))))',
+          ],
+          Buffer.from(JSON.stringify({ id, botId })),
+        )
+      ).toString(),
+    ) as CommandSnapshot & { supervisor: number; supervisorToken: string };
     if (!state.service || !state.running) throw new Error("Service is not running");
     const [target] = JSON.parse((await docker(["inspect", computer.id])).toString()) as Array<{
       Id: string;
@@ -390,6 +404,8 @@ export class DockerSandbox implements SandboxProvider {
           "32",
           "--memory",
           "64m",
+          "--pid",
+          `container:${target.Id}`,
           "--publish",
           "127.0.0.1::8080",
           image,
@@ -398,6 +414,8 @@ export class DockerSandbox implements SandboxProvider {
           hostname,
           target.NetworkSettings.Networks.bridge.IPAddress,
           String(port),
+          String(state.supervisor),
+          state.supervisorToken,
         ]);
         created = true;
       }
@@ -416,31 +434,43 @@ export class DockerSandbox implements SandboxProvider {
       while (true) {
         signal?.throwIfAborted();
         try {
-          await new Promise<void>((resolve, reject) => {
-            const request = httpRequest(
-              {
-                hostname: "127.0.0.1",
-                port: binding.HostPort,
-                path: "/",
-                headers: { Host: new URL(url).host },
-                signal: AbortSignal.any([AbortSignal.timeout(1500), ...(signal ? [signal] : [])]),
-              },
-              (response) => {
-                response.destroy();
-                if (
-                  response.statusCode !== undefined &&
-                  response.statusCode >= 200 &&
-                  response.statusCode < 300
-                )
-                  resolve();
-                else reject(new Error("Preview did not return a successful HTTP response"));
+          let checked = new URL(url);
+          for (let redirects = 0; redirects <= 5; redirects++) {
+            const result = await new Promise<{ status: number; location?: string }>(
+              (resolve, reject) => {
+                const request = httpRequest(
+                  {
+                    hostname: "127.0.0.1",
+                    port: binding.HostPort,
+                    path: checked.pathname + checked.search,
+                    headers: { Host: checked.host },
+                    signal: AbortSignal.any([
+                      AbortSignal.timeout(1500),
+                      ...(signal ? [signal] : []),
+                    ]),
+                  },
+                  (response) => {
+                    response.destroy();
+                    resolve({
+                      status: response.statusCode ?? 0,
+                      location: response.headers.location,
+                    });
+                  },
+                );
+                request.on("error", reject);
+                request.end();
               },
             );
-            request.on("error", reject);
-            request.end();
-          });
-          signal?.throwIfAborted();
-          return url;
+            signal?.throwIfAborted();
+            if (result.status >= 200 && result.status < 300) return checked.href;
+            if (![301, 302, 303, 307, 308].includes(result.status) || !result.location)
+              throw new Error("Preview did not return a successful HTTP response");
+            const next = new URL(result.location, checked);
+            if (next.origin !== checked.origin || next.username || next.password)
+              throw new Error("Preview redirected outside its isolated origin");
+            checked = next;
+          }
+          throw new Error("Too many preview redirects");
         } catch (error) {
           if (Date.now() >= deadline) throw error;
           await delay(200, undefined, { signal });
