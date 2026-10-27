@@ -572,16 +572,9 @@ test("worker crash records an unsafe shell as interrupted without reexecuting it
       )
       .not.toBe("");
     await fixture.crashWorker();
-    // A killed host cannot promise to cancel Docker effects; let this owned fixture command finish.
-    await fixture.provider.writeFile(fixture.computer, `bots/${bot.id}/release`, "go");
     await expect
-      .poll(
-        async () =>
-          fixture.provider.readFile(fixture.computer, `bots/${bot.id}/finished`).catch(() => ""),
-        { timeout: 10000 },
-      )
-      .toBe("done");
-    await fixture.reopen();
+      .poll(() => fixture.request("worker"), { timeout: 15000 })
+      .toEqual({ state: "recovered" });
     await expect
       .poll(async () => (await fixture.request(`bots/${bot.id}/chat`)).busy, { timeout: 10000 })
       .toBe(false);
@@ -960,25 +953,43 @@ test("a completed-turn service responds after normal whole-application shutdown"
   }
 });
 
-test("provider ownership survives worker SIGKILL and distinguishes interrupted work from retained services", async () => {
+test("worker SIGKILL cleans interrupted work before native resume and preserves retained services and other Bots", async () => {
   let calls = 0;
-  const fixture = await chatComputerFixture(() => {
+  let observedBeforeResume = "";
+  const fixture = await chatComputerFixture(async () => {
     calls++;
     if (calls === 1) return { tool: "start_service", arguments: { command: serviceCommand(8104) } };
     if (calls === 2) return { text: "Retain this service" };
-    return {
-      tools: [
-        { name: "start_service", arguments: { command: serviceCommand(8105) } },
-        {
-          name: "shell",
-          arguments: { command: "echo $$ > interrupted-pid; while :; do sleep 1; done" },
-        },
-      ],
-    };
+    if (calls === 3)
+      return {
+        tools: [
+          { name: "start_service", arguments: { command: serviceCommand(8105) } },
+          {
+            name: "shell",
+            arguments: { command: "echo $$ > interrupted-pid; while :; do sleep 1; done" },
+          },
+        ],
+      };
+    // Observe the real process before responding to the first resumed model request.
+    observedBeforeResume = (
+      await fixture.provider.execute(
+        fixture.computer,
+        'python3 -c \'from pathlib import Path; print(Path("/proc", Path("interrupted-pid").read_text().strip()).exists())\'',
+        `bots/${botId}`,
+      )
+    ).stdout;
+    return { text: "Recovered work finished" };
   });
+  let botId = "";
   try {
     const bot = await fixture.request("bots", {
       name: "Crash",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    botId = bot.id;
+    const beta = await fixture.request("bots", {
+      name: "Other",
       instructions: "",
       model: "deepseek/deepseek-flash",
     });
@@ -989,62 +1000,69 @@ test("provider ownership survives worker SIGKILL and distinguishes interrupted w
     await expect
       .poll(async () => (await fixture.request(`bots/${bot.id}/chat`)).busy, { timeout: 15000 })
       .toBe(false);
+    await expect
+      .poll(
+        async () =>
+          (await fixture.provider.listCommands(fixture.computer)).some((item) => item.retained),
+        { timeout: 5000 },
+      )
+      .toBe(true);
+    // This separate provider client has no interrupted worker invocation to recover.
+    const control = await fixture.provider.startCommand(
+      fixture.computer,
+      serviceCommand(8110),
+      `bots/${beta.id}`,
+      { botId: beta.id, turnId: "999999" },
+      true,
+    );
     const admission = await fixture.request(`bots/${bot.id}/send`, {
       text: "Work before crash",
       requestId: "interrupted",
     });
     await expect
       .poll(
-        async () => {
-          const commands = await fixture.provider.listCommands(fixture.computer);
-          return commands.filter(
+        async () =>
+          (await fixture.provider.listCommands(fixture.computer)).filter(
             (item) => item.owner?.turnId === String(admission.id) && item.running,
-          ).length;
-        },
+          ).length,
         { timeout: 15000 },
       )
       .toBe(2);
     await expect.poll(() => serviceAnswers(fixture, 8105), { timeout: 10000 }).toBe(true);
+    await fixture.request(`bots/${bot.id}/send`, {
+      text: "Resume after interruption",
+      requestId: "resume-after-crash",
+    });
     await fixture.crashWorker();
-    const reopened = new DockerSandbox(
-      fixture.computer,
-      join(fixture.root, "computer", "workspace"),
-    );
-    const commands = await reopened.listCommands(fixture.computer);
-    expect(commands.filter((item) => item.retained && item.service && item.running)).toHaveLength(
-      1,
-    );
-    expect(commands.filter((item) => item.owner?.turnId === String(admission.id))).toEqual([
-      expect.objectContaining({
-        owner: { botId: bot.id, turnId: String(admission.id) },
-        retained: false,
-        running: true,
-      }),
-      expect.objectContaining({
-        owner: { botId: bot.id, turnId: String(admission.id) },
-        retained: false,
-        running: true,
-      }),
-    ]);
-    // The recovery ticket will invoke this provider seam before SDK resume.
-    await reopened.finishTurn(
-      fixture.computer,
-      { botId: bot.id, turnId: String(admission.id) },
-      false,
-    );
+    await expect
+      .poll(() => fixture.request("worker"), { timeout: 15000 })
+      .toEqual({ state: "recovered" });
+    await expect
+      .poll(async () => (await fixture.request(`bots/${bot.id}/chat`)).busy, { timeout: 15000 })
+      .toBe(false);
+    expect(observedBeforeResume).toBe("False\n");
     expect(await serviceAnswers(fixture, 8104)).toBe(true);
     expect(await serviceAnswers(fixture, 8105)).toBe(false);
+    expect(await serviceAnswers(fixture, 8110)).toBe(true);
     expect(
-      (await reopened.listCommands(fixture.computer)).filter(
+      (await fixture.provider.observeCommand(fixture.computer, control.commandId)).running,
+    ).toBe(true);
+    expect(
+      (await fixture.provider.listCommands(fixture.computer)).filter(
         (item) => item.owner?.turnId === String(admission.id),
       ),
     ).toEqual([]);
-    const check = await reopened.execute(
-      fixture.computer,
-      'python3 -c \'from pathlib import Path; print(Path("/proc", Path("interrupted-pid").read_text().strip()).exists())\'',
-      `bots/${bot.id}`,
+    const view = await fixture.request(`bots/${bot.id}/chat`);
+    expect(view.messages.map((item: { text: string }) => item.text).join(" ")).toContain(
+      "interrupted and may have partially run",
     );
-    expect(check.stdout).toBe("False\n");
+    expect(
+      view.messages.filter(
+        (item: { role: string; text: string }) =>
+          item.role === "user" && item.text === "Work before crash",
+      ),
+    ).toHaveLength(1);
+    expect(view.messages.at(-1)?.text).toBe("Recovered work finished");
   } finally {
     await fixture.close();
   }
@@ -1314,5 +1332,200 @@ test("shutdown reports failed Computer cleanup after releasing application resou
     expect((await fixture.request(`bots/${bot.id}/chat`)).busy).toBe(false);
   } finally {
     await fixture.close();
+  }
+});
+
+test("unconfirmed crash cleanup fails visibly without resuming SDK work or hiding a live command", async () => {
+  const { writeFile } = await import("node:fs/promises");
+  const fixture = await chatComputerFixture(
+    () => ({
+      tool: "shell",
+      arguments: { command: "echo $$ > pid; while :; do sleep 1; done" },
+    }),
+    { workerFaults: true },
+  );
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Unsafe cleanup",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.request(`bots/${bot.id}/send`, { text: "Work", requestId: "cleanup-crash" });
+    await expect
+      .poll(
+        () => fixture.provider.readFile(fixture.computer, `bots/${bot.id}/pid`).catch(() => ""),
+        { timeout: 10000 },
+      )
+      .not.toBe("");
+    const commands = await fixture.provider.listCommands(fixture.computer);
+    const command = commands.find((item) => item.owner?.botId === bot.id);
+    if (!command) throw new Error("Owned command unavailable");
+    await writeFile(join(fixture.root, "worker-fault"), "hold");
+    await fixture.crashWorker();
+    const requestsBeforeRecovery = fixture.service.requests.length;
+    // Losing the provider supervisor is a real unconfirmed-cleanup failure, not a mocked rejection.
+    await docker("docker", [
+      "exec",
+      fixture.computer.id,
+      "python3",
+      "-c",
+      `import json,os; from pathlib import Path; s=json.loads(Path('/tmp/mybots-commands/${command.commandId}/state.json').read_text()); os.kill(s['supervisor'],9)`,
+    ]);
+    await writeFile(join(fixture.root, "worker-fault"), "");
+    await expect
+      .poll(() => fixture.request("worker"), { timeout: 20000 })
+      .toMatchObject({
+        state: "failed",
+        error: expect.stringContaining("Computer recovery cleanup failed"),
+      });
+    expect(fixture.service.requests).toHaveLength(requestsBeforeRecovery);
+    const check = await docker("docker", [
+      "exec",
+      fixture.computer.id,
+      "python3",
+      "-c",
+      `from pathlib import Path; print(Path('/proc',Path('/workspace/bots/${bot.id}/pid').read_text().strip()).exists())`,
+    ]);
+    expect(check.stdout).toBe("True\n");
+    const response = await fetch(new URL(`api/bots/${bot.id}/chat`, fixture.url), {
+      headers: { Authorization: `Bearer ${fixture.credential}` },
+    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      error: expect.stringContaining("execution has not resumed"),
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("late Docker launches from a killed worker are fenced while new native tool work proceeds", async () => {
+  const { access, chmod, copyFile, readFile, writeFile } = await import("node:fs/promises");
+  const tools = await mkdtemp(join(tmpdir(), "mybots-launch-gate-"));
+  const gate = join(tools, "release");
+  const realDocker = (await docker("which", ["docker"])).stdout.trim();
+  await copyFile(new URL("./docker-launch-gate.py", import.meta.url), join(tools, "docker"));
+  await chmod(join(tools, "docker"), 0o700);
+  const previous = {
+    PATH: process.env.PATH,
+    MYBOTS_REAL_DOCKER: process.env.MYBOTS_REAL_DOCKER,
+    MYBOTS_DOCKER_LAUNCH_GATE: process.env.MYBOTS_DOCKER_LAUNCH_GATE,
+  };
+  function restore(): void {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+  let fixture: Awaited<ReturnType<typeof chatComputerFixture>> | undefined;
+  let calls = 0;
+  try {
+    process.env.PATH = `${tools}:${previous.PATH}`;
+    process.env.MYBOTS_REAL_DOCKER = realDocker;
+    process.env.MYBOTS_DOCKER_LAUNCH_GATE = gate;
+    fixture = await chatComputerFixture(() => {
+      calls++;
+      if (calls === 1)
+        return {
+          tool: "shell",
+          arguments: { command: "echo $$ > late-pid; while :; do sleep 1; done" },
+        };
+      if (calls === 2)
+        return { tool: "shell", arguments: { command: "printf resumed > new-work" } };
+      return { text: "New native tool work finished" };
+    });
+    restore();
+    const running = fixture;
+    const bot = await fixture.request("bots", {
+      name: "Late launch",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.request(`bots/${bot.id}/send`, { text: "Launch once", requestId: "late-launch" });
+    await expect
+      .poll(
+        () =>
+          access(`${gate}.waiting`).then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 10000 },
+      )
+      .toBe(true);
+    await fixture.crashWorker();
+    await expect
+      .poll(() => running.request("worker"), { timeout: 15000 })
+      .toEqual({ state: "recovered" });
+    await expect
+      .poll(async () => (await running.request(`bots/${bot.id}/chat`)).messages.at(-1)?.text, {
+        timeout: 15000,
+      })
+      .toBe("New native tool work finished");
+    expect(await fixture.provider.readFile(fixture.computer, `bots/${bot.id}/new-work`)).toBe(
+      "resumed",
+    );
+    await writeFile(gate, "release");
+    await expect
+      .poll(
+        () =>
+          access(`${gate}.result`).then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 10000 },
+      )
+      .toBe(true);
+    expect(JSON.parse(await readFile(`${gate}.result`, "utf8"))).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("generation is closed"),
+    });
+    expect(
+      await fixture.provider
+        .readFile(fixture.computer, `bots/${bot.id}/late-pid`)
+        .catch(() => null),
+    ).toBeNull();
+    expect(
+      (await fixture.provider.listCommands(fixture.computer)).filter(
+        (command) => command.owner?.botId === bot.id,
+      ),
+    ).toEqual([]);
+    const protectedMetadata = await fixture.provider.execute(
+      fixture.computer,
+      "if touch /var/lib/mybots/worker-generations/forbidden; then exit 1; fi; echo read-only",
+      "shared",
+    );
+    expect(protectedMetadata).toMatchObject({
+      exitCode: 0,
+      stdout: "read-only\n",
+      stderr: expect.stringContaining("Read-only file system"),
+    });
+    expect(calls).toBe(3);
+  } finally {
+    restore();
+    await writeFile(gate, "release");
+    try {
+      if (
+        await access(`${gate}.waiting`).then(
+          () => true,
+          () => false,
+        )
+      )
+        await expect
+          .poll(
+            () =>
+              access(`${gate}.result`).then(
+                () => true,
+                () => false,
+              ),
+            { timeout: 10000 },
+          )
+          .toBe(true);
+    } finally {
+      try {
+        await fixture?.close();
+      } finally {
+        await rm(tools, { recursive: true, force: true });
+      }
+    }
   }
 });

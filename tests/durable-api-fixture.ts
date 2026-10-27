@@ -10,7 +10,7 @@ import { configureFixture, startFixtureApi } from "./provider-fixture.ts";
 
 export async function apiFixture(
   respond: Parameters<typeof startDurableModel>[0] = () => ({ text: "Persistent answer" }),
-  options?: Parameters<typeof startDurableModel>[1],
+  options?: Parameters<typeof startDurableModel>[1] & { workerFaults?: boolean },
 ) {
   const root = await mkdtemp(join(tmpdir(), "mybots-durable-api-"));
   let service: Awaited<ReturnType<typeof startDurableModel>> | undefined;
@@ -29,7 +29,7 @@ export async function apiFixture(
   try {
     service = await startDurableModel(respond, options);
     configureFixture(root);
-    api = await startFixtureApi(root, service);
+    api = await startFixtureApi(root, service, options?.workerFaults);
     const credential = (await readFile(join(root, "client-credential"), "utf8")).trim();
     const request = async (path: string, body?: unknown, method = body ? "POST" : "GET") => {
       if (!api) throw new Error("API is closed");
@@ -86,7 +86,7 @@ export async function apiFixture(
         api = undefined;
         await previous?.close();
         if (!service) throw new Error("Model service closed");
-        api = await startFixtureApi(root, service);
+        api = await startFixtureApi(root, service, options?.workerFaults);
       },
       close,
     };

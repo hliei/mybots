@@ -22,7 +22,10 @@ data/
 ├── product.sqlite           # Bots, Threads, Skills and scoped memory
 ├── durable.sqlite           # SDK conversation and execution storage
 ├── worker-owner.sqlite      # Worker ownership lock
-└── computer/workspace/      # Persistent working files mounted into Docker
+├── command-owners.sqlite    # Computer Bot/turn cleanup ownership
+└── computer/
+    ├── workspace/          # Persistent working files mounted into Docker
+    └── worker-generations/ # Read-only launch closure metadata in Docker
 ```
 
 SQLite may create adjacent journal files. Keep the whole data directory when
@@ -92,10 +95,38 @@ arguments and requires built Web assets. Ctrl+C shuts down both processes;
 normal shutdown retains all data. On restart, the worker resumes supported work
 from SDK storage, including pending input and committed exchanges. Interrupted
 unsafe tools are reported as potentially partially run rather than replayed by
-the application. An abrupt worker kill can leave a Docker command running;
-recovery does not prove termination or roll back file effects. Use Stop while
-the worker is available to cancel its active commands. A second worker cannot
-open the same root.
+the application.
+
+Unexpected worker exit triggers up to three serialized restart attempts per
+application lifetime, delayed by 250 ms, 1 second and 4 seconds. Each startup
+attempt has a 10-second deadline. The budget does not reset after a successful
+restart; restart the application after resolving an exhausted failure. Web
+distinguishes worker recovery from a lost browser connection, reports recovery
+completion and shows an actionable failure when attempts are exhausted.
+
+Before enabling SDK execution, the worker reconciles persisted Computer Bot/turn
+ownership against native submission status. It terminates interrupted-turn work,
+including that turn's services, and preserves completed-turn services. Old worker
+launch generations are closed before scanning: a provider lock joins launches
+already entering the Computer and rejects Docker execs that arrive later. The
+replacement worker uses a fresh generation, including for native continuation of
+the same Agent turn. If cleanup cannot be confirmed, execution stays paused and Web reports the failure. Restore
+Docker access or inspect the affected Computer, then restart the application;
+do not delete ownership records to bypass cleanup. No input is automatically
+resubmitted by the API, and an interrupted unsafe tool may have partially run.
+Cleanup cannot undo file effects or provide exactly-once effects.
+
+Plain chat does not require Docker when no command cleanup is pending. On the
+first upgrade from an installation without command ownership records, an existing
+Computer workspace requires Docker access once to discover provider ownership;
+this preserves existing services and interrupted work without resetting data.
+A stopped or removed Computer has no surviving processes and is not restarted
+just for cleanup. A second worker cannot open the same root.
+
+Shutdown cancels restart backoff and startup, closes subscriptions and suppresses
+respawn. A worker that has not exited within five seconds is killed; unconfirmed
+cleanup remains recorded for the next startup. Completed-turn retained services
+are not additional shutdown cleanup targets.
 If startup fails, check data-root ownership and provider credential storage
 before retrying. Missing keys do not prevent startup.
 
@@ -104,9 +135,13 @@ before retrying. Missing keys do not prevent startup.
 The worker registers `shell`, `list_files`, `read_file` and `write_file`, plus
 `start_service`, `command_status`, `list_services` and `stop_service` for managed
 processes. All use the same ComputerRef and Docker SandboxProvider. Product SQLite
-retains one Computer identity for the default Space. Its sole host mount is
-`<root>/computer/workspace`, exposed as `/workspace` in the container. Host model
-configuration and databases are outside that mount.
+retains one Computer identity for the default Space. Working files use
+`<root>/computer/workspace`, exposed read/write as `/workspace`. A second,
+read-only bind mount exposes only `<root>/computer/worker-generations` at
+`/var/lib/mybots/worker-generations`. These small markers fence late command
+launches across worker/container lifetimes; they are outside workspace export
+and cannot be edited by Computer tools. Host credentials, model configuration
+and databases are outside both mounts.
 
 Relative tool paths and default command directories use `bots/<botId>/`.
 `shared/...`, `bots/...` and `/...` explicitly select paths from the workspace
@@ -179,11 +214,18 @@ against PID reuse. Metadata survives worker death while the Computer runs;
 scoped cancellation. The worker marks retention only after committed SDK
 settlement. Recovery can reconcile a crash between settlement and that mark
 against the native submission; a transcript interruption alone proves nothing
-about process death. Automatic recovery cleanup remains a separate integration.
+about process death. The worker reconciles this ownership before enabling SDK
+execution after restart.
 
 Normal shutdown closes the worker without removing the container or workspace.
 The container may stay running. Later tool use starts a stopped container or
-recreates a removed container with the same persistent mount. Rebuilding the
+recreates a removed container with the same persistent workspace and read-only
+launch metadata mounts. Existing containers from before launch fencing need
+explicit replacement with the current image and both mounts; the application
+refuses incompatible mounts rather than attaching unsafely. Preserve the
+workspace and generation metadata directories when replacing a container. Its
+processes end, so retained services must be started again deliberately.
+Rebuilding the
 image requires removing the installation's container before the next tool use;
 identify its name through `ProductDatabase.computer().id`, and preserve the
 workspace directory. Tool binaries and `/tmp` are disposable; working files

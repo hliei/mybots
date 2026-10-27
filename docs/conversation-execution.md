@@ -88,7 +88,24 @@ Independent Conversations may run concurrently without a global Computer lock,
 custom fairness queue or execution budget system. Shared-file conflicts remain
 an owner coordination responsibility.
 
-After worker restart, reopen Durable storage and resume supported work using
+The API supervises the worker with a bounded restart budget and rebinds existing
+subscriptions without resubmitting admitted input. Pending IPC calls fail on
+process loss; the owner checks the reconstructed chat before retrying ambiguous
+input. Recovery status is separate from browser connectivity.
+
+Before enabling execution after reopen, reconcile Computer ownership with native
+submission status and clean interrupted-turn work. `Harness.open` reconciles tasks
+without dispatch; cleanup uses read-only submission status before `resume`,
+submission, abort or wait operations can enable scheduling. Failed cleanup leaves
+execution paused and ownership records intact. Before scanning commands, seal
+previous worker launch generations and join their provider-side launch locks;
+late Docker execs are rejected even after a container restart or replacement.
+Fresh worker generations still allow native continuation to launch new work. Completed-turn retained services
+are preserved, including a service whose native submission settled just before
+the old worker could mark retention. The host ownership journal records only
+Bot/turn identities and a launch generation before process launch; it is not an execution queue.
+
+After confirmed cleanup, resume supported work using
 SDK retry and tool replay semantics. Surface actual failures and interrupted
 tool outcomes; do not automatically replay the entire request or create a
 separate uncertain-outcome workflow. Interrupted tools may have changed files,

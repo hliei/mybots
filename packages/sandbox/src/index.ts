@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { mkdir, open, writeFile } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 export interface ComputerRef {
@@ -126,9 +126,11 @@ async function docker(args: string[], input?: Uint8Array): Promise<Buffer> {
 }
 
 export class DockerSandbox implements SandboxProvider {
+  readonly generation = randomUUID();
   private preparing: Promise<void> | undefined;
   private readonly computer: ComputerRef;
   private readonly workspace: string;
+  private readonly generations: string;
 
   constructor(computer: ComputerRef, workspace: string) {
     if (!/^mybots-[a-f0-9-]{36}$/.test(computer.id)) throw new Error("Invalid Computer identity");
@@ -136,6 +138,7 @@ export class DockerSandbox implements SandboxProvider {
       throw new Error("Invalid workspace mount");
     this.computer = computer;
     this.workspace = workspace;
+    this.generations = join(workspace, "..", "worker-generations");
   }
 
   async prepare(computer: ComputerRef): Promise<void> {
@@ -153,6 +156,7 @@ export class DockerSandbox implements SandboxProvider {
 
   private async provision(): Promise<void> {
     await mkdir(this.workspace, { recursive: true });
+    await mkdir(this.generations, { recursive: true });
     const containers = (await docker(["container", "ls", "-a", "--format", "{{.Names}}"]))
       .toString()
       .split("\n");
@@ -176,6 +180,8 @@ export class DockerSandbox implements SandboxProvider {
         "256",
         "--mount",
         `type=bind,source=${this.workspace},target=/workspace`,
+        "--mount",
+        `type=bind,source=${this.generations},target=/var/lib/mybots/worker-generations,readonly`,
         image,
       ]);
     } else {
@@ -186,10 +192,16 @@ export class DockerSandbox implements SandboxProvider {
       }>;
       if (
         info?.Config.Labels["mybots.team-computer"] !== "true" ||
-        info.Mounts.length !== 1 ||
+        info.Mounts.length !== 2 ||
         !info.Mounts.some(
           (mount) =>
             mount.Source === this.workspace && mount.Destination === "/workspace" && mount.RW,
+        ) ||
+        !info.Mounts.some(
+          (mount) =>
+            mount.Source === this.generations &&
+            mount.Destination === "/var/lib/mybots/worker-generations" &&
+            !mount.RW,
         )
       )
         throw new Error("Computer mount or ownership mismatch");
@@ -223,9 +235,14 @@ export class DockerSandbox implements SandboxProvider {
     signal?.throwIfAborted();
     await this.prepare(computer);
     signal?.throwIfAborted();
+    const directory = this.generations;
+    await mkdir(directory, { recursive: true });
+    // Create host-owned metadata before the container acquires its launch lock.
+    await (await open(join(directory, this.generation), "a")).close();
     const id = randomUUID();
     const result = await this.call(computer, {
       action: "start",
+      generation: this.generation,
       command,
       cwd,
       id,
@@ -316,23 +333,40 @@ export class DockerSandbox implements SandboxProvider {
   }
 
   async listCommands(computer: ComputerRef): Promise<CommandSnapshot[]> {
-    this.check(computer);
-    const running = (
-      await docker([
-        "container",
-        "ls",
-        "--filter",
-        `name=^/${computer.id}$`,
-        "--format",
-        "{{.Names}}",
-      ])
-    )
-      .toString()
-      .trim();
-    if (!running) return [];
+    if (!(await this.running(computer))) return [];
     return JSON.parse(
       (await this.call(computer, { action: "commands" })).toString(),
     ) as CommandSnapshot[];
+  }
+
+  private async running(computer: ComputerRef): Promise<boolean> {
+    this.check(computer);
+    return (
+      (
+        await docker([
+          "container",
+          "ls",
+          "--filter",
+          `name=^/${computer.id}$`,
+          "--format",
+          "{{.Names}}",
+        ])
+      )
+        .toString()
+        .trim() === computer.id
+    );
+  }
+
+  async sealGeneration(computer: ComputerRef, generation: string): Promise<void> {
+    this.check(computer);
+    if (!/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(generation))
+      throw new Error("Invalid command generation");
+    // Persistent closure rejects old Docker execs even after Computer replacement.
+    const directory = this.generations;
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, generation), "closed");
+    if (await this.running(computer))
+      await this.call(computer, { action: "seal_generation", generation });
   }
 
   async cancelCommand(computer: ComputerRef, id: string, botId?: string): Promise<void> {

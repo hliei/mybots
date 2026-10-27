@@ -225,6 +225,7 @@ test("public event stream delivers partial and settled committed answers", async
         if (boundary >= 0) {
           const frame = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 2);
+          if (frame.startsWith("event:")) continue;
           const view = JSON.parse(frame.slice(6)) as ChatView;
           if (predicate(view)) return view;
         } else {
@@ -447,7 +448,18 @@ test("worker crash resumes admitted work and queued steering without replaying c
     const before = (await fixture.request(`bots/${bot.id}/chat`)) as ChatView;
     expect(before.messages.filter((message) => message.role === "tool")).toHaveLength(1);
     await fixture.crashWorker();
-    await fixture.reopen();
+    await expect
+      .poll(
+        async () => {
+          try {
+            return (await fixture.request(`bots/${bot.id}/chat`)).busy;
+          } catch {
+            return true;
+          }
+        },
+        { timeout: 10000 },
+      )
+      .toBe(false);
     const after = await settled(fixture, bot);
     expect(after.threadId).toBe(bot.threadId);
     expect(after.messages.filter((message) => message.role === "tool")).toEqual(

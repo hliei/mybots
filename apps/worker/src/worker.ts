@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Harness } from "@mybots/agent";
@@ -36,13 +37,34 @@ interface Worker {
 export async function openWorker(
   root: string,
   publish: (subscription: string, value: ChatView) => void,
+  signal?: AbortSignal,
 ): Promise<Worker> {
   // A separate SQLite transaction gives this worker kernel-released exclusive ownership.
   const ownership = new DatabaseSync(join(root, "worker-owner.sqlite"));
   let database: ProductDatabase | undefined;
   let harness: Harness | undefined;
+  let commandOwners: DatabaseSync | undefined;
   try {
-    ownership.exec("BEGIN EXCLUSIVE");
+    try {
+      ownership.exec("BEGIN EXCLUSIVE");
+    } catch {
+      throw new Error(
+        "Worker unavailable. Another worker owns this data root; stop the other application before restarting.",
+      );
+    }
+    const ownerFile = join(root, "command-owners.sqlite");
+    commandOwners = new DatabaseSync(ownerFile);
+    commandOwners.exec(
+      "CREATE TABLE IF NOT EXISTS turns (turn_id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, generation TEXT)",
+    );
+    const owners = commandOwners;
+    const discoverOwners =
+      owners.prepare("PRAGMA user_version").get()?.user_version === 0 &&
+      existsSync(join(root, "computer", "workspace"));
+    const remember = owners.prepare(
+      "INSERT OR IGNORE INTO turns (turn_id, bot_id, generation) VALUES (?, ?, ?)",
+    );
+    const forget = owners.prepare("DELETE FROM turns WHERE turn_id = ?");
     database = new ProductDatabase(join(root, "product.sqlite"));
     const products = database;
     const settings = new ProviderSettings(root);
@@ -53,6 +75,8 @@ export async function openWorker(
     let closing = false;
     const trackTurn = (owner: CommandOwner) => {
       if (turns.has(owner.turnId)) return;
+      // Commit ownership before launching any Computer process, independently of the owner lock.
+      remember.run(owner.turnId, owner.botId, sandbox.generation);
       const settled = (async () => {
         let completed = false;
         try {
@@ -68,6 +92,7 @@ export async function openWorker(
           throw error;
         }
         await sandbox.finishTurn(computer, owner, completed);
+        forget.run(owner.turnId);
         turns.delete(owner.turnId);
       })();
       turns.set(owner.turnId, { owner, settled });
@@ -90,12 +115,57 @@ export async function openWorker(
       (id) => resourceContext(products, botForConversation(id)),
       (id) => settings.key(id),
     );
+    // Harness.open reconciles tasks without dispatch. Do not wait/submit/abort until cleanup finishes.
+    try {
+      if (discoverOwners) {
+        for (const command of await sandbox.listCommands(computer)) {
+          if (command.owner) remember.run(command.owner.turnId, command.owner.botId, null);
+        }
+      }
+      owners.exec("PRAGMA user_version = 1");
+      const interrupted = owners
+        .prepare("SELECT turn_id AS turnId, bot_id AS botId, generation FROM turns")
+        .all() as unknown as (CommandOwner & { generation: string | null })[];
+      if (interrupted.length) {
+        for (const generation of new Set(interrupted.map((owner) => owner.generation)))
+          await sandbox.sealGeneration(
+            computer,
+            generation ?? "00000000-0000-0000-0000-000000000000",
+          );
+        const commands = await sandbox.listCommands(computer);
+        for (const owner of interrupted) {
+          const submission = await harness.submission(
+            Number(owner.turnId) as SubmissionId,
+            context,
+          );
+          const status = await submission?.status(context);
+          if (!status) throw new Error("Computer owner submission unavailable");
+          if (
+            commands.some(
+              (command) =>
+                command.owner?.turnId === owner.turnId && command.owner.botId === owner.botId,
+            )
+          )
+            await sandbox.finishTurn(
+              computer,
+              { botId: owner.botId, turnId: owner.turnId },
+              status.status === "done",
+            );
+          forget.run(owner.turnId);
+        }
+      }
+    } catch {
+      throw new Error(
+        "Computer recovery cleanup failed. Restore Docker access and inspect the Team Computer before restarting; execution has not resumed.",
+      );
+    }
     return await ownedWorker(database, harness, settings, turns, cleanupErrors, () => {
       closing = true;
     });
   } catch (error) {
     await harness?.close(context);
     database?.close();
+    commandOwners?.close();
     ownership.close();
     throw error;
   }
@@ -108,7 +178,7 @@ export async function openWorker(
     cleanupErrors: Map<string, string>,
     beginClose: () => void,
   ): Promise<Worker> {
-    const watches = new Map<string, ConversationWatch>();
+    const watches = new Map<string, Promise<ConversationWatch>>();
     const conversation = async (bot: Bot) => {
       const chat = await harness.conversation(bot.conversationId as ConversationId, context);
       if (!chat) throw new Error("Conversation not found");
@@ -202,6 +272,7 @@ export async function openWorker(
     for (const bot of database.bots()) {
       await configure(bot);
     }
+    signal?.throwIfAborted();
     harness.resume();
     return {
       async command(command: WorkerCommand): Promise<unknown> {
@@ -211,8 +282,9 @@ export async function openWorker(
         if (command.action === "provider-update")
           return settings.update(command.provider, command.apiKey, command.remove);
         if (command.action === "unsubscribe") {
-          await watches.get(command.subscription)?.stop();
+          const watch = watches.get(command.subscription);
           watches.delete(command.subscription);
+          await (await watch)?.stop();
           return;
         }
         if (command.action === "create") {
@@ -281,8 +353,13 @@ export async function openWorker(
           case "history-read":
             return readHistory(chat, command.entryId, command.offset, context);
           case "subscribe": {
-            const watch = await chat.watch(context);
-            watches.set(command.subscription, watch);
+            const opening = chat.watch(context);
+            watches.set(command.subscription, opening);
+            const watch = await opening;
+            if (watches.get(command.subscription) !== opening) {
+              await watch.stop();
+              return;
+            }
             publish(command.subscription, await view(bot, watch.value));
             watch.start(async (state) =>
               publish(command.subscription, await view(database.bot(bot.id), state)),
@@ -293,7 +370,7 @@ export async function openWorker(
       },
       async close() {
         beginClose();
-        await Promise.all([...watches.values()].map((watch) => watch.stop()));
+        await Promise.all([...watches.values()].map(async (watch) => (await watch).stop()));
         // Reconcile already-settled submissions before closing their SDK handles.
         await Promise.allSettled(
           [...turns.values()].map(async ({ owner }) => {
@@ -309,6 +386,7 @@ export async function openWorker(
           await Promise.allSettled([...turns.values()].map(({ settled }) => settled));
         } finally {
           database.close();
+          commandOwners?.close();
           ownership.close();
         }
         if (cleanupErrors.size) throw new Error("Computer cleanup failed during shutdown");
