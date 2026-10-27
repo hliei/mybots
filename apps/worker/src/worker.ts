@@ -6,8 +6,10 @@ import {
   type ConversationId,
   type ConversationView,
   type ConversationWatch,
+  type Cursor,
   computerTools,
   context,
+  type LiveState,
   modelCatalog,
   modelChoices,
   openAgent,
@@ -204,59 +206,182 @@ export async function openWorker(
         state = acquired.value;
       }
       try {
-        const entries = [...(await chat.entries({}, 200, undefined, context)).items].reverse();
+        const latest = state.entries.at(-1)?.id;
+        const entries =
+          latest === undefined
+            ? []
+            : [
+                ...(await chat.entries({ maxEntryId: latest }, 200, undefined, context)).items,
+              ].reverse();
+        const live = state.docs["pi.live"] as LiveState | undefined;
+        const first = live?.run?.inputs[0];
+        const activeInput =
+          first === undefined
+            ? undefined
+            : await (await harness.submission(first, context))?.status(context);
+        const answers = new Set<number>();
+        let cursor: Cursor | undefined;
+        let older = false;
+        do {
+          const page = await harness.records.scanSubmissions(
+            { conversationId: chat.id, status: "done", order: "descending" },
+            200,
+            cursor,
+            context,
+          );
+          for (const submission of page.items) {
+            if (submission.type !== "input" || submission.status !== "done") continue;
+            answers.add(submission.answer);
+            if (submission.answer < (entries[0]?.id ?? Infinity)) older = true;
+          }
+          cursor = page.next;
+        } while (cursor && !older);
+        const callEntries = new Map<string, number>();
+        const results = new Map(
+          entries.flatMap((entry) =>
+            (entry.model ?? []).flatMap((message) => {
+              if (message.role === "assistant") {
+                for (const block of message.content)
+                  if (block.type === "toolCall") callEntries.set(block.id, entry.id);
+              }
+              return message.role === "toolResult"
+                ? [
+                    [
+                      `${callEntries.get(message.toolCallId)}:${message.toolCallId}`,
+                      { entry, message },
+                    ] as const,
+                  ]
+                : [];
+            }),
+          ),
+        );
         const messages: ChatMessage[] = [];
         const inputs: ChatView["inputs"] = [];
         for (const entry of entries) {
-          if (entry.kind === "chat.input") {
-            const data = entry.data as { submissionId: number; requestId: string; text: string };
-            const status = await (
-              await harness.submission(data.submissionId as SubmissionId, context)
-            )?.status(context);
-            if (status && (status.status === "queued" || status.status === "unanswered"))
-              inputs.push({
-                id: data.submissionId,
-                requestId: data.requestId,
-                text: data.text,
-                status: status.status,
-                reason: status.reason,
-                detail: typeof status.detail === "string" ? status.detail : undefined,
-              });
-            continue;
-          }
           if (!["pi.user", "pi.assistant", "pi.tool-result"].includes(entry.kind)) continue;
           for (const message of entry.model ?? []) {
             if (message.role === "system") continue;
             messages.push({
               id: String(entry.id),
               role: message.role === "toolResult" ? "tool" : message.role,
-              text: text(message.content),
+              text:
+                message.role === "toolResult"
+                  ? text(message.content).slice(0, 500)
+                  : text(message.content),
               tools:
                 message.role === "assistant"
                   ? message.content.flatMap((block) =>
                       block.type === "toolCall" ? [block.name] : [],
                     )
                   : [],
-              status: message.role === "assistant" ? message.stopReason : undefined,
+              active:
+                message.role === "assistant" &&
+                activeInput?.entry !== undefined &&
+                entry.id >= activeInput.entry,
+              steps:
+                message.role === "assistant"
+                  ? message.content.flatMap((block) => {
+                      if (block.type !== "toolCall") return [];
+                      const result = results.get(`${entry.id}:${block.id}`);
+                      const diagnostics = result?.entry.data as
+                        | { diagnostics?: { code?: string; message: string }[] }
+                        | undefined;
+                      const interrupted = diagnostics?.diagnostics?.some(
+                        (item) => item.code === "interrupted" || item.code === "aborted",
+                      );
+                      const slot =
+                        callEntries.get(block.id) === entry.id
+                          ? live?.tools?.find((tool) => tool.callId === block.id)
+                          : undefined;
+                      return [
+                        {
+                          callId: block.id,
+                          name: block.name,
+                          status: result
+                            ? interrupted
+                              ? ("Interrupted" as const)
+                              : result.message.isError
+                                ? ("Failed" as const)
+                                : ("Completed" as const)
+                            : slot?.status === "running"
+                              ? ("Running" as const)
+                              : slot?.status === "pending"
+                                ? ("Pending" as const)
+                                : ("Interrupted" as const),
+                          summary: (result?.message.isError
+                            ? diagnostics?.diagnostics?.map((item) => item.message).join(" · ") ||
+                              text(result.message.content)
+                            : slot?.output
+                          )
+                            ?.replace(/\s+/g, " ")
+                            .slice(0, 160),
+                          resultId: result?.entry.id,
+                        },
+                      ];
+                    })
+                  : undefined,
+              status:
+                message.role === "assistant"
+                  ? answers.has(entry.id)
+                    ? "Completed"
+                    : ["error", "aborted"].includes(message.stopReason)
+                      ? message.stopReason
+                      : "Narration"
+                  : undefined,
             });
           }
         }
-        const live = state.docs["pi.live"] as
-          | {
-              run?: unknown;
-              generation?: { message?: { content?: unknown }; retry?: { error: string } };
-              tools?: { name: string }[];
-              compactions?: unknown[];
-              compactionFailure?: { error: string };
+        for (const status of ["queued", "unanswered"] as const) {
+          let cursor: Cursor | undefined;
+          do {
+            const page = await harness.records.scanSubmissions(
+              { conversationId: chat.id, status },
+              200,
+              cursor,
+              context,
+            );
+            for (const submission of page.items) {
+              if (submission.type !== "input" || !submission.requestId) continue;
+              const receipt = await harness.records.submissionByRequest(
+                chat.id,
+                `receipt:${submission.requestId}`,
+                context,
+              );
+              const entryId = receipt?.entry ?? submission.entry;
+              const entry =
+                entryId === undefined
+                  ? undefined
+                  : await harness.records.entry(chat.id, entryId, context);
+              const data = entry?.entry.data as { text?: string } | undefined;
+              inputs.push({
+                id: submission.id,
+                requestId: submission.requestId,
+                text: data?.text ?? text(entry?.entry.model?.[0]?.content),
+                status: submission.status,
+                reason: submission.reason,
+                detail: typeof submission.detail === "string" ? submission.detail : undefined,
+              });
             }
-          | undefined;
+            cursor = page.next;
+          } while (cursor);
+        }
         return {
           botId: bot.id,
           threadId: bot.threadId,
           messages,
           inputs,
           busy: live?.run !== undefined,
-          partial: text(live?.generation?.message?.content),
+          partial: entries.some(
+            (entry) =>
+              entry.kind === "pi.assistant" &&
+              entry.model?.some(
+                (message) =>
+                  message.role === "assistant" &&
+                  message.timestamp === live?.generation?.message?.timestamp,
+              ),
+          )
+            ? undefined
+            : text(live?.generation?.message?.content),
           activity: [
             ...(cleanupErrors.has(bot.id) ? [cleanupErrors.get(bot.id) as string] : []),
             ...(live?.tools?.map((tool) => tool.name) ?? []),
@@ -301,7 +426,24 @@ export async function openWorker(
         switch (command.action) {
           case "configure":
             return configure(bot);
+          case "submission": {
+            const submission = await harness.records.submissionByRequest(
+              chat.id,
+              command.requestId,
+              context,
+            );
+            return submission?.type === "input"
+              ? { id: submission.id, requestId: command.requestId, status: submission.status }
+              : null;
+          }
           case "send": {
+            const existing = await harness.records.submissionByRequest(
+              chat.id,
+              command.requestId,
+              context,
+            );
+            if (existing?.type === "input")
+              return { id: existing.id, requestId: command.requestId };
             if (
               !modelChoices((id) => settings.key(id)).some(
                 (model) => model.id === bot.model && model.available,
@@ -311,28 +453,34 @@ export async function openWorker(
                 "Model unavailable. Choose a supported model and save its key in Provider settings.",
               );
             await configure(bot);
-            const submission = await chat.submit(
-              {
-                type: "input",
-                content: command.text,
-                requestId: command.requestId,
-                whenBusy: "steer",
-              },
-              context,
-            );
-            // Display-only SDK receipt retains withdrawn input; it is never a second execution queue.
-            await chat.submit(
+            // Persist display text before admission; only a matching native input makes it visible.
+            const receipt = await chat.submit(
               {
                 type: "write",
                 requestId: `receipt:${command.requestId}`,
                 entry: {
                   kind: "chat.input",
                   data: {
-                    submissionId: submission.id,
                     requestId: command.requestId,
                     text: command.text,
                   },
                 },
+              },
+              context,
+            );
+            const savedReceipt = await receipt.status(context);
+            const savedEntry =
+              savedReceipt.entry === undefined
+                ? undefined
+                : await harness.records.entry(chat.id, savedReceipt.entry, context);
+            if ((savedEntry?.entry.data as { text?: string } | undefined)?.text !== command.text)
+              throw new Error("Submission identity already belongs to different input");
+            const submission = await chat.submit(
+              {
+                type: "input",
+                content: command.text,
+                requestId: command.requestId,
+                whenBusy: "steer",
               },
               context,
             );

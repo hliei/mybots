@@ -32,10 +32,27 @@ function renderWorkerStatus(): void {
           : "Connected";
   node<HTMLButtonElement>("send").disabled =
     !workerAvailable() ||
+    sendingBots.has(selected?.id ?? "") ||
     !models.some((model) => model.id === selected?.model && model.available !== false);
+  node<HTMLButtonElement>("retry-delivery").disabled =
+    !workerAvailable() || sendingBots.has(selected?.id ?? "");
   if (!workerAvailable()) node<HTMLButtonElement>("stop").disabled = true;
 }
-let pending: { botId: string; text: string; requestId: string } | undefined;
+interface PendingDelivery {
+  botId: string;
+  conversationId: number;
+  text: string;
+  requestId: string;
+}
+let pending: PendingDelivery | undefined;
+const sendingBots = new Set<string>();
+let lastView: ChatView | undefined;
+const showTools = node<HTMLInputElement>("show-tools");
+showTools.checked = localStorage.getItem("durable-tool-activity") === "on";
+showTools.addEventListener("change", () => {
+  localStorage.setItem("durable-tool-activity", showTools.checked ? "on" : "off");
+  if (lastView) renderMessages(lastView);
+});
 const dialog = node<HTMLDialogElement>("bot-dialog");
 const message = node<HTMLTextAreaElement>("message-text");
 
@@ -45,8 +62,12 @@ function report(error: unknown): void {
 }
 
 function renderMessages(view: ChatView): void {
+  lastView = view;
   const container = node("thread-messages");
-  const items: ChatMessage[] = [...view.messages];
+  const items: ChatMessage[] = view.messages.filter(
+    (item) =>
+      item.role !== "tool" && (item.text.trim() || (showTools.checked && item.steps?.length)),
+  );
   if (view.partial)
     items.push({
       id: "partial",
@@ -58,6 +79,7 @@ function renderMessages(view: ChatView): void {
   const keep = new Set(items.map((item) => item.id));
   for (const child of [...container.children])
     if (!keep.has((child as HTMLElement).dataset.messageId ?? "")) child.remove();
+  let position = 0;
   for (const item of items) {
     let article = [...container.children].find(
       (child) => (child as HTMLElement).dataset.messageId === item.id,
@@ -67,10 +89,16 @@ function renderMessages(view: ChatView): void {
       article.dataset.messageId = item.id;
       container.append(article);
     }
-    article.className = `message ${item.role}`;
-    const signature = JSON.stringify(item);
+    const before = container.children[position++];
+    if (article !== before) container.insertBefore(article, before ?? null);
+    article.className = item.text.trim() ? `message ${item.role}` : "tool-activity";
+    const signature = JSON.stringify([item, showTools.checked]);
     if (article.dataset.content === signature) continue;
     article.dataset.content = signature;
+    const live = item.active ?? false;
+    const open =
+      article.dataset.live === String(live) ? article.querySelector("details")?.open : live;
+    article.dataset.live = String(live);
     article.replaceChildren();
     const meta = document.createElement("div");
     meta.className = "message-meta";
@@ -80,19 +108,33 @@ function renderMessages(view: ChatView): void {
         : item.role === "tool"
           ? "Tool result"
           : (selected?.name ?? "Bot");
-    if (item.status && !["stop", "toolUse"].includes(item.status))
-      meta.textContent += ` · ${item.status}`;
-    article.append(
-      meta,
-      markdown(item.text, async () => item.text),
-    );
-    if (item.tools.length) {
-      const tools = document.createElement("p");
-      tools.textContent = `Tools: ${item.tools.join(", ")}`;
-      article.append(tools);
+    if (item.status) meta.textContent += ` · ${item.status}`;
+    if (item.text.trim())
+      article.append(
+        meta,
+        markdown(item.text, async () => item.text),
+      );
+    if (showTools.checked && item.steps?.length) {
+      const details = document.createElement("details");
+      details.className = "tool-steps";
+      details.open = open ?? live;
+      const summary = document.createElement("summary");
+      summary.textContent = `${live ? "Working…" : "Tool activity"} · ${item.steps.length} ${item.steps.length === 1 ? "step" : "steps"}`;
+      const list = document.createElement("ol");
+      for (const step of item.steps) {
+        const row = document.createElement("li");
+        row.dataset.callId = step.callId;
+        row.textContent = `${step.name} · ${step.status}${step.summary ? ` · ${step.summary}` : ""}`;
+        list.append(row);
+      }
+      details.append(summary, list);
+      article.append(details);
     }
   }
-  node("live-execution").textContent = view.activity.join(" · ") || (view.busy ? "Working…" : "");
+  const activity = view.activity.filter(
+    (label) => !view.messages.some((item) => item.tools.includes(label)),
+  );
+  node("live-execution").textContent = activity.join(" · ") || (view.busy ? "Working…" : "");
   node<HTMLButtonElement>("stop").disabled =
     !view.busy && !view.inputs.some((input) => input.status === "queued");
   const unprocessed = node("unprocessed");
@@ -112,6 +154,12 @@ function renderMessages(view: ChatView): void {
       const resend = document.createElement("button");
       resend.textContent = "Resend";
       resend.addEventListener("click", () => {
+        if (pending && pending.requestId !== input.requestId) {
+          node("chat-message").textContent =
+            "Retry or discard the unconfirmed delivery before resending another input.";
+          return;
+        }
+        if (pending) acknowledge(pending);
         message.value = input.text;
         message.focus();
       });
@@ -122,7 +170,15 @@ function renderMessages(view: ChatView): void {
   restoreReadingPosition();
 }
 function choose(bot: Bot): void {
+  const changed = selected?.id !== bot.id;
   selected = bot;
+  lastView = undefined;
+  const previousPending = pending;
+  pending = readPending(bot);
+  if (pending && (changed || !message.value)) message.value = pending.text;
+  else if (changed && previousPending && message.value === previousPending.text) message.value = "";
+  renderPending();
+  void reconcilePending(bot).catch(report);
   localStorage.setItem("durable-bot", bot.id);
   events?.close();
   node("thread-messages").replaceChildren();
@@ -169,6 +225,7 @@ async function refresh(preferred?: string): Promise<void> {
       workerStatus = JSON.parse((event as MessageEvent).data) as WorkerStatus;
       renderWorkerStatus();
       if (workerAvailable() && !models.length) void refresh(selected?.id).catch(report);
+      else if (workerAvailable() && selected) void reconcilePending(selected).catch(report);
     });
     workerEvents.onerror = () => {
       node("connection").textContent = "Reconnecting…";
@@ -266,6 +323,73 @@ node("pair-form").addEventListener("submit", (event) => {
     })
     .catch(report);
 });
+function readPending(bot: Bot): PendingDelivery | undefined {
+  const raw = localStorage.getItem(`durable-pending:${bot.id}`);
+  if (!raw) return;
+  try {
+    const value = JSON.parse(raw) as PendingDelivery;
+    if (
+      value?.botId === bot.id &&
+      value.conversationId === bot.conversationId &&
+      typeof value.text === "string" &&
+      value.text.trim() &&
+      value.text.length <= 32000 &&
+      typeof value.requestId === "string" &&
+      /^[a-zA-Z0-9_-]{1,100}$/.test(value.requestId)
+    )
+      return value;
+  } catch {
+    /* An invalid transport record cannot authorize a send. */
+  }
+}
+function renderPending(): void {
+  node("pending-delivery").hidden = !pending;
+  node("pending-text").textContent = pending
+    ? `Delivery unconfirmed: ${pending.text.slice(0, 500)}`
+    : "";
+  renderWorkerStatus();
+}
+function acknowledge(delivery: PendingDelivery): void {
+  const bot = bots.find((bot) => bot.id === delivery.botId);
+  if (!bot || readPending(bot)?.requestId !== delivery.requestId) return;
+  localStorage.removeItem(`durable-pending:${delivery.botId}`);
+  if (selected?.id === delivery.botId) {
+    if (message.value === delivery.text) message.value = "";
+    if (pending?.requestId === delivery.requestId) pending = undefined;
+    node("chat-message").textContent = "";
+    renderPending();
+  }
+}
+async function reconcilePending(bot: Bot): Promise<void> {
+  const delivery = readPending(bot);
+  if (!delivery) return;
+  const admitted = await request(`bots/${bot.id}/submissions/${delivery.requestId}`);
+  if (admitted) acknowledge(delivery);
+}
+function sendDelivery(delivery: PendingDelivery): void {
+  if (!workerAvailable() || sendingBots.has(delivery.botId)) return;
+  // Store identity before transport; reloading only reconciles and never submits.
+  localStorage.setItem(`durable-pending:${delivery.botId}`, JSON.stringify(delivery));
+  sendingBots.add(delivery.botId);
+  pending = delivery;
+  renderPending();
+  void request(`bots/${delivery.botId}/send`, delivery)
+    .then(() => acknowledge(delivery))
+    .catch(report)
+    .finally(() => {
+      sendingBots.delete(delivery.botId);
+      renderWorkerStatus();
+    });
+}
+node("retry-delivery").addEventListener("click", () => {
+  if (pending) sendDelivery(pending);
+});
+node("discard-delivery").addEventListener("click", () => {
+  if (!pending || sendingBots.has(pending.botId)) return;
+  localStorage.removeItem(`durable-pending:${pending.botId}`);
+  pending = undefined;
+  renderPending();
+});
 node("message-form").addEventListener("submit", (event) => {
   event.preventDefault();
   if (
@@ -275,23 +399,19 @@ node("message-form").addEventListener("submit", (event) => {
     !models.some((model) => model.id === selected?.model && model.available !== false)
   )
     return;
-  const text = message.value;
-  if (!pending || pending.botId !== selected.id || pending.text !== text)
-    pending = { botId: selected.id, text, requestId: crypto.randomUUID() };
-  const sending = pending;
-  node<HTMLButtonElement>("send").disabled = true;
-  void request(`bots/${sending.botId}/send`, sending)
-    .then(() => {
-      if (selected?.id === sending.botId && message.value === sending.text) message.value = "";
-      if (pending === sending) pending = undefined;
-      node("chat-message").textContent = "";
-    })
-    .catch(report)
-    .finally(() => {
-      node<HTMLButtonElement>("send").disabled =
-        !workerAvailable() ||
-        !models.some((model) => model.id === selected?.model && model.available !== false);
-    });
+  if (pending && pending.text !== message.value) {
+    node("chat-message").textContent =
+      "Retry or discard the unconfirmed delivery before sending a different message.";
+    return;
+  }
+  sendDelivery(
+    pending ?? {
+      botId: selected.id,
+      conversationId: selected.conversationId,
+      text: message.value,
+      requestId: crypto.randomUUID(),
+    },
+  );
 });
 message.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {

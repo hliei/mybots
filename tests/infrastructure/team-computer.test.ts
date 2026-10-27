@@ -733,9 +733,12 @@ test("built Web steers at a real tool boundary and stops only the selected Bot's
     expect(processState.stdout).toBe("False True\n");
     expect((await fixture.request(`bots/${beta.id}/chat`)).busy).toBe(true);
     await page.reload();
-    await expect
-      .poll(() => page.locator("article.tool").allTextContents())
-      .toContainEqual(expect.stringMatching(/abort|interrupt/i));
+    expect(await page.locator("article.tool").count()).toBe(0);
+    await page.getByLabel("Tool activity", { exact: true }).check();
+    const interrupted = page.locator(".tool-steps").filter({ hasText: "shell · Interrupted" });
+    await expect.poll(() => interrupted.count()).toBe(1);
+    await interrupted.locator("summary").click();
+    await expect.poll(() => interrupted.locator("li").last().isVisible()).toBe(true);
     const withdrawn = page
       .locator("#unprocessed article")
       .filter({ hasText: "Withdraw this input" });

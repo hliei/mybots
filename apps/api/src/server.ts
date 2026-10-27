@@ -183,6 +183,16 @@ export async function startApi(root: string, port = 0, signal?: AbortSignal): Pr
       );
       return;
     }
+    const submission = /^\/api\/bots\/([^/]+)\/submissions\/([a-zA-Z0-9_-]{1,100})$/.exec(path);
+    if (submission && request.method === "GET") {
+      const botId = submission[1] as string;
+      database.bot(botId);
+      json(
+        response,
+        await worker.request({ action: "submission", botId, requestId: submission[2] as string }),
+      );
+      return;
+    }
     const match = /^\/api\/bots\/([^/]+)(?:\/(chat|events|send|stop))?$/.exec(path);
     if (match) {
       const botId = match[1] as string;

@@ -70,12 +70,18 @@ test("public API admits once, streams and reopens separate Bot Threads", async (
     })) as Bot;
     expect(first.threadId).not.toBe(second.threadId);
     expect(first.conversationId).not.toBe(second.conversationId);
+    expect(await fixture.request(`bots/${first.id}/submissions/send-once`)).toBeNull();
     const sent = await fixture.request(`bots/${first.id}/send`, {
       text: "Remember this original",
       requestId: "send-once",
     });
     expect(sent.id).toBeGreaterThan(0);
     const before = await settled(fixture, first);
+    expect(await fixture.request(`bots/${first.id}/submissions/send-once`)).toEqual({
+      ...sent,
+      status: "done",
+    });
+    expect(await fixture.request(`bots/${second.id}/submissions/send-once`)).toBeNull();
     expect(before.messages.map((message) => message.text)).toEqual([
       "Remember this original",
       "Persistent answer",
@@ -492,3 +498,231 @@ test("worker crash resumes admitted work and queued steering without replaying c
     await fixture.close();
   }
 }, 15000);
+
+test("unanswered input survives history window eviction and a fresh worker", async () => {
+  const fixture = await apiFixture(() => ({ status: 401 }));
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Old input",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.request(`bots/${bot.id}/send`, {
+      text: "Keep this unanswered",
+      requestId: "old-input",
+    });
+    await settled(fixture, bot);
+    await fixture.shutdown();
+    const { openAgent, context } = await import("@mybots/agent");
+    const { join } = await import("node:path");
+    const harness = await openAgent(join(fixture.root, "durable.sqlite"), []);
+    try {
+      const chat = await harness.conversation(bot.conversationId, context);
+      if (!chat) throw new Error("Missing Conversation");
+      for (let i = 0; i < 205; i++)
+        await chat.submit(
+          { type: "write", entry: { kind: "display.padding", data: { index: i } } },
+          context,
+        );
+    } finally {
+      await harness.close(context);
+    }
+    await fixture.reopen();
+    const view = await settled(fixture, bot);
+    expect(view.inputs).toContainEqual(
+      expect.objectContaining({
+        text: "Keep this unanswered",
+        requestId: "old-input",
+        status: "unanswered",
+      }),
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("input admitted before a lost display receipt remains discoverable after a crash", async () => {
+  const { writeFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const fixture = await apiFixture(() => ({ hold: true }), { workerFaults: true });
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Admission gap",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.request(`bots/${bot.id}/send`, { text: "Active input", requestId: "active-gap" });
+    await fixture.service.waitForRequest();
+    await writeFile(join(fixture.root, "worker-fault"), "admission-crash");
+    const response = await fetch(new URL(`api/bots/${bot.id}/send`, fixture.url), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${fixture.credential}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text: "Keep the admitted input", requestId: "gap-input" }),
+    });
+    expect(response.status).toBe(503);
+    await expect
+      .poll(
+        async () =>
+          (
+            await (
+              await fetch(new URL("api/worker", fixture.url), {
+                headers: { Authorization: `Bearer ${fixture.credential}` },
+              })
+            ).json()
+          ).state,
+        { timeout: 10000 },
+      )
+      .toBe("recovered");
+    await fixture.service.waitForRequest(2);
+    await fixture.request(`bots/${bot.id}/stop`, {});
+    const view = await settled(fixture, bot);
+    expect(view.inputs).toContainEqual(
+      expect.objectContaining({
+        text: "Keep the admitted input",
+        requestId: "gap-input",
+        status: "unanswered",
+      }),
+    );
+    expect(fixture.service.requests).toHaveLength(2);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("chat associates concise tool steps with narration and native final answers", async () => {
+  let calls = 0;
+  const fixture = await apiFixture(() =>
+    ++calls === 1
+      ? {
+          text: "I will check the saved memory.",
+          tools: [
+            { name: "memory_read", arguments: { scope: "bot" } },
+            { name: "read_file", arguments: { path: "../private" } },
+          ],
+        }
+      : { text: "The check is complete; the file was unavailable." },
+  );
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Projection",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.request(`bots/${bot.id}/send`, { text: "Check", requestId: "projection" });
+    const view = await settled(fixture, bot);
+    const narration = view.messages.find(
+      (message) => message.text === "I will check the saved memory.",
+    );
+    expect(narration).toMatchObject({
+      status: "Narration",
+      steps: [
+        { name: "memory_read", status: "Completed" },
+        { name: "read_file", status: "Failed" },
+      ],
+    });
+    expect(narration?.steps?.[1]?.summary).toContain("Path escapes");
+    expect(new Set(narration?.steps?.map((step) => step.callId)).size).toBe(2);
+    expect(view.messages.at(-1)).toMatchObject({
+      text: "The check is complete; the file was unavailable.",
+      status: "Completed",
+    });
+    await fixture.reopen();
+    expect((await settled(fixture, bot)).messages).toEqual(view.messages);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("tool call identifiers reused in later replies keep their own results", async () => {
+  let calls = 0;
+  const fixture = await apiFixture(() => {
+    calls++;
+    if (calls % 2 === 0) return { text: `Final answer ${calls}` };
+    const tool =
+      calls === 1
+        ? { name: "read_file", arguments: { path: "../private" } }
+        : { name: "memory_read", arguments: { scope: "bot" } };
+    return {
+      wire: `data: ${JSON.stringify({ choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: "reused-call", type: "function", function: { name: tool.name, arguments: JSON.stringify(tool.arguments) } }] }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`,
+    };
+  });
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Call identity",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.request(`bots/${bot.id}/send`, { text: "First check", requestId: "call-first" });
+    await settled(fixture, bot);
+    await fixture.request(`bots/${bot.id}/send`, {
+      text: "Second check",
+      requestId: "call-second",
+    });
+    const view = await settled(fixture, bot);
+    const steps = view.messages.flatMap((message) => message.steps ?? []);
+    expect(steps).toMatchObject([
+      { callId: "reused-call", name: "read_file", status: "Failed" },
+      { callId: "reused-call", name: "memory_read", status: "Completed" },
+    ]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a saved display receipt cannot admit different input under the same identity", async () => {
+  const fixture = await apiFixture(() => ({ status: 401 }));
+  try {
+    const bot = await fixture.request("bots", {
+      name: "Receipt",
+      instructions: "",
+      model: "deepseek/deepseek-flash",
+    });
+    await fixture.shutdown();
+    const { openAgent, context } = await import("@mybots/agent");
+    const { join } = await import("node:path");
+    const harness = await openAgent(join(fixture.root, "durable.sqlite"), []);
+    try {
+      const chat = await harness.conversation(bot.conversationId, context);
+      if (!chat) throw new Error("Missing Conversation");
+      await chat.submit(
+        {
+          type: "write",
+          requestId: "receipt:receipt-only",
+          entry: {
+            kind: "chat.input",
+            data: { requestId: "receipt-only", text: "Original input" },
+          },
+        },
+        context,
+      );
+    } finally {
+      await harness.close(context);
+    }
+    await fixture.reopen();
+    expect(await fixture.request(`bots/${bot.id}/submissions/receipt-only`)).toBeNull();
+    expect((await settled(fixture, bot)).inputs).toEqual([]);
+    expect(fixture.service.requests).toHaveLength(0);
+    const response = await fetch(new URL(`api/bots/${bot.id}/send`, fixture.url), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${fixture.credential}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text: "Changed input", requestId: "receipt-only" }),
+    });
+    expect(response.status).toBe(400);
+    expect(fixture.service.requests).toHaveLength(0);
+    await fixture.request(`bots/${bot.id}/send`, {
+      text: "Original input",
+      requestId: "receipt-only",
+    });
+    expect((await settled(fixture, bot)).inputs).toContainEqual(
+      expect.objectContaining({ text: "Original input", status: "unanswered" }),
+    );
+  } finally {
+    await fixture.close();
+  }
+});

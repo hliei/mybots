@@ -9,9 +9,42 @@ accepted only after Durable admission. Transport retries reuse the SDK submissio
 identity; the application adds no durable input queue. Reconnect reconstructs
 history and status from SDK records rather than transient streamed fragments.
 
+Before transport, Web saves one unconfirmed delivery per Bot with its Conversation,
+text and request ID in browser local storage. Reload and worker recovery only look
+up native admission; they never send automatically. Retry delivery reuses that
+identity. Discard removes only the browser record, so previously admitted work
+continues; a later intentional send or Resend uses a new identity. Draft edits
+cannot silently replace an unconfirmed delivery. Resolve an unrelated pending
+delivery before deliberately resending older unanswered input.
+
+The worker persists display text as an idempotent SDK write before input admission.
+Only a matching native input makes that text visible as queued or unanswered; an
+orphan display record never starts work. Retries must match the persisted display
+text before admitting that identity. Public SDK submission scans discover
+unanswered inputs independently of the recent chat window, including withdrawn
+inputs without a transcript entry. No SDK-private table queries are used.
+
 An idle send starts work. A busy send uses native steering at the next permitted
 boundary without interrupting active tools; if the current answer finishes
 first, the input becomes subsequent work. There is no separate input-mode selector.
+
+## Readable chat
+
+Web shows assistant narration and replies, with tool activity off by default.
+The saved browser preference enables concise collapsible steps: open while their
+Agent turn is active, folded after it settles, with manual toggles preserved
+through progress updates. Tool-only messages use activity lines rather than empty
+bubbles. Raw arguments and full tool output remain in the original-history reader
+and history tools; chat transports at most 500 characters of each tool result and
+160 characters of a step's diagnostic or current output.
+
+Each step associates its assistant entry and native call ID with its result,
+retaining failed/interrupted outcomes. Only an SDK input's answer entry is labelled Completed; narration,
+interrupted fragments and partial streams never establish completion. Projection
+uses at most 200 recent entries at the observed watch boundary, avoiding a new
+transcript or a separate event log. Outstanding inputs are read in SDK pages of
+200 without a history-age cutoff. Those reads scale with outstanding inputs;
+recent completion reads stop after passing the visible window.
 
 ## Context and history
 
