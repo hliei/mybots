@@ -4,11 +4,12 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import { getCurrentSystemMessage } from "@earendil-works/pi-ai/utils/transcript";
 import {
   createRegistry,
+  Harness as DurableHarness,
   type Extension,
   GenerationTask,
-  Harness,
   hook,
   LiveDoc,
+  type Storage,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import type { ProviderId } from "@mybots/contracts";
@@ -21,6 +22,10 @@ import { historyTools } from "./history.ts";
 export { computerTools } from "./computer-tools.ts";
 export { readHistory, searchHistory } from "./history.ts";
 export { resourceContext, resourceTools } from "./resource-tools.ts";
+
+export type Harness = DurableHarness & {
+  records: Pick<Storage, "scanSubmissions" | "submissionByRequest" | "entry">;
+};
 
 export interface HostModel {
   id: string;
@@ -163,18 +168,22 @@ export async function openAgent(
       }),
     ],
   });
-  harness = await Harness.open(
-    await openNodeSqliteStorage(file),
-    {
-      models,
-      registry,
-      identity: { userAgent: { custom: "mybots/0.0.0" }, attribution: null },
-      settings: {
-        stream: { timeoutMs: 120000, maxRetries: 0 },
-        compaction: { reserveTokens: 1024, keepRecentTokens: 2048, backgroundTokens: 0 },
+  const storage = await openNodeSqliteStorage(file);
+  harness = Object.assign(
+    await DurableHarness.open(
+      storage,
+      {
+        models,
+        registry,
+        identity: { userAgent: { custom: "mybots/0.0.0" }, attribution: null },
+        settings: {
+          stream: { timeoutMs: 120000, maxRetries: 0 },
+          compaction: { reserveTokens: 1024, keepRecentTokens: 2048, backgroundTokens: 0 },
+        },
       },
-    },
-    BACKGROUND_CONTEXT,
+      BACKGROUND_CONTEXT,
+    ),
+    { records: storage },
   );
   return harness;
 }
@@ -186,7 +195,7 @@ export type {
   ConversationWatch,
   Cursor,
   EntryRecord,
-  Harness,
+  LiveState,
   SubmissionId,
 } from "@earendil-works/pi-durable";
 export { BACKGROUND_CONTEXT as context };

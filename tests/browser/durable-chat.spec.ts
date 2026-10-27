@@ -149,10 +149,13 @@ test("built Web streams, reloads committed chat, edits Bots and keeps Threads se
     await page.screenshot({ path: "test-results/durable-chat.png", fullPage: true });
     await page.getByLabel("Message", { exact: true }).fill("Show a tool error");
     await page.getByRole("button", { name: "Send message" }).click();
-    await expect(
-      page.locator("article.assistant").filter({ hasText: "Tools: read_file" }),
-    ).toBeVisible();
-    await expect(page.locator("article.tool")).toContainText("Path escapes");
+    await expect(page.locator("article.tool")).toHaveCount(0);
+    await page.getByLabel("Tool activity", { exact: true }).check();
+    await expect(page.locator(".tool-steps").first()).toBeVisible();
+    await page.locator(".tool-steps summary").first().click();
+    await expect(page.locator(".tool-steps").first()).toContainText(
+      "read_file · Failed · Path escapes",
+    );
     await page.getByRole("button", { name: "Shared Skills", exact: true }).click();
     await page.getByLabel("Skill", { exact: true }).selectOption("writing");
     await page.getByRole("button", { name: "Remove Skill", exact: true }).click();
@@ -177,7 +180,7 @@ test("built Web streams, reloads committed chat, edits Bots and keeps Threads se
     await page.getByRole("button", { name: "Close memory", exact: true }).click();
     await expect(page.locator("#stop")).toBeDisabled();
     await page.reload();
-    await expect(page.locator("article.tool")).toContainText("Path escapes");
+    await expect(page.locator(".tool-steps").first()).toContainText("Path escapes");
     await page.getByLabel("Message", { exact: true }).fill("Render safe Markdown");
     await page.getByLabel("Message", { exact: true }).press("Shift+Enter");
     await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Render safe Markdown\n");

@@ -56,11 +56,21 @@ export function skillContent(name: string, value: unknown): Omit<Skill, "readOnl
   return { name, description: data.description.trim(), content: markdownContent(data.content) };
 }
 
+export interface ChatStep {
+  callId: string;
+  name: string;
+  status: "Pending" | "Running" | "Completed" | "Failed" | "Interrupted";
+  summary?: string;
+  resultId?: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "tool";
   text: string;
   tools: string[];
+  steps?: ChatStep[];
+  active?: boolean;
   status?: string;
 }
 
@@ -109,6 +119,7 @@ export type WorkerCommand =
   | { action: "create"; configuration: BotConfiguration }
   | { action: "configure"; botId: string }
   | { action: "send"; botId: string; text: string; requestId: string }
+  | { action: "submission"; botId: string; requestId: string }
   | { action: "stop"; botId: string }
   | { action: "view"; botId: string }
   | { action: "history-search"; botId: string; query: string; before?: number }
