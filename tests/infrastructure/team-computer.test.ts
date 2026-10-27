@@ -851,7 +851,7 @@ test("resources, compacted originals and shared Computer compose across restart 
     const beta = await fixture.request("bots", {
       name: "Reader",
       instructions: "READER_ROLE",
-      model: "deepseek/deepseek-flash",
+      model: "opencode-go/glm-5.3",
     });
     async function send(
       botId: string,
@@ -940,6 +940,8 @@ test("resources, compacted originals and shared Computer compose across restart 
       "COMBINED_ORIGINAL",
     );
     const otherContext = JSON.stringify(fixture.service.requests.slice(otherStart));
+    expect(fixture.service.wire[otherStart]?.headers.authorization).toBe("Bearer fixture-go-key");
+    expect(fixture.service.wire[otherStart]?.path).toBe("/inference/go/openai/v1/chat/completions");
     expect(otherContext).toContain("SHARED_OWNER_PREFERENCE");
     expect(otherContext).toContain("READER_PRIVATE_MEMORY");
     expect(otherContext).not.toContain("WRITER_PRIVATE_MEMORY");

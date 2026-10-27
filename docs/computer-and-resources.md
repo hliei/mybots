@@ -42,8 +42,9 @@ controlled-model/real-Docker evidence; ordinary verification needs no Docker.
 ## Bot configuration and Skills
 
 Product SQLite stores each Bot's name, role instructions and selection from
-host-configured models. Saved changes affect subsequent context loading without
-rewriting an in-flight model request or retaining Attempt configuration versions.
+the supported installation-wide provider catalog. Saved changes affect subsequent
+context loading without rewriting an in-flight model request or retaining Attempt
+configuration versions.
 
 Skills are shared across the default Space. Context includes their catalog;
 full instructions are read on demand. Owners and Agents can deliberately maintain

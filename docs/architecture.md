@@ -10,12 +10,13 @@ Bot identity, conversation and Bot memory remain separate even when files are sh
 
 The Web interface retains its current desktop appearance and provides Bot
 configuration, direct chat, streaming replies, tool activity, history, Stop,
-unprocessed inputs, shared Skills and scoped memory editing.
+unprocessed inputs, shared Skills, scoped memory editing and installation-wide
+DeepSeek/OpenCode Go provider settings.
 
 Scheduling, delegation, dedicated question/approval workflows, attachments,
 artifact management and Telegram are outside this release. So are multiple
-Spaces/users, Private Computers, mobile UI, a file browser, graphical provider
-setup and desktop/browser control. Ordinary questions remain part of chat.
+Spaces/users, Private Computers, mobile UI, a file browser, arbitrary provider
+endpoints and desktop/browser control. Ordinary questions remain part of chat.
 
 ## Process and package boundaries
 
@@ -37,8 +38,11 @@ Web → API → worker → Pi Durable
 API and worker are separate local processes. `npm start` starts the system
 on macOS; Docker is required only for Computer tools. Browser
 access stays on loopback with connection credentials and Host/Origin validation.
-Model credentials and endpoints stay in host installation configuration, outside
-browser assets, logs and Computer files. Packages are created only when used.
+Provider keys enter through authenticated Web settings and remain in owner-only
+host storage, outside browser persistence, logs and Computer files. The application
+owns the supported model/adapter catalog and endpoints; each Bot selects its model
+without automatic fallback. Saving keys makes no provider request. Packages are
+created only when used.
 
 ## Authoritative state
 
@@ -55,10 +59,16 @@ There is no distributed queue or application Task/Run/Attempt state machine.
 
 ## Transition
 
-Incompatible code and identified old runtime data may be retired without
-migration. The default entry uses only API/worker and Durable,
-without dual writes or a fallback engine. Unrelated owner files and ignored local planning remain intact. The new
-Computer workspace persists across normal shutdowns.
+The default entry uses only API/worker and Durable, without dual writes or a
+fallback engine. Upgrades preserve current Bots, history, Skills, scoped memory
+and Computer files. Normal shutdown preserves the workspace and completed-turn
+retained services. Unexpected worker exit triggers bounded restart and cleanup
+of interrupted-turn commands before supported SDK recovery. See
+[command ownership and service lifetime](adr/0005-command-ownership-and-service-lifetime.md).
+Incompatible legacy installations require explicit retirement as described in
+[local operation](durable-chat.md#retiring-an-older-installation); startup does
+not migrate or delete their records. Unrelated owner files and ignored local
+planning remain intact.
 
 See [conversation execution](conversation-execution.md),
 [Computer and resources](computer-and-resources.md), and the [decision index](README.md#decisions).

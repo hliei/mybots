@@ -1,7 +1,7 @@
 # Documentation
 
 The architecture and operation guides describe the implemented local application;
-ADRs identify accepted changes whose implementation is still pending. Controlled-model,
+ADRs describe the implemented decisions. Controlled-model,
 Docker and browser checks cover its behavior; actual-provider acceptance remains
 a separate opt-in gate. Retired runtime designs remain available in Git history.
 
@@ -19,7 +19,7 @@ configuration, context defaults and current validation scope.
 ## Decisions
 
 The ADR sequence restarts at `0001`. Decisions 0001-0004 are accepted and
-implemented; 0005 is accepted with implementation pending.
+implemented, as is 0005 for command ownership, retained services and recovery.
 
 | ADR | Decision |
 | --- | --- |

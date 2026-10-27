@@ -16,7 +16,7 @@
     "check:startup": "node scripts/check-startup.mjs",
     "verify": "npm run check && npm test && npm run build && npm run check:startup && playwright test",
     "prepare": "husky",
-    "test:infrastructure": "npm run build --workspace @mybots/web && npm run build:computer && vitest run --config tests/infrastructure/vitest.config.ts",
+    "test:infrastructure": "npm run build && npm run build:computer && vitest run --config tests/infrastructure/vitest.config.ts",
     "prebuild": "node scripts/clean-build.mjs",
     "dev": "node --conditions=mybots-source apps/api/src/index.ts",
     "start": "node apps/api/dist/index.js",
