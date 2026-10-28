@@ -472,11 +472,11 @@ controlled Docker checks remain the evidence for deterministic crash windows.
 The authorized October 29, 2026 run passed against application revision
 `836ec940714fe510e05b0aeca2efe240ba9fa589` on macOS arm64, Node.js 24.21.0 and
 Docker 28.5.1 with `mybots-computer:local`. After building, the focused command
-`npx playwright test --config tests/live/playwright.config.ts` passed in 20.7
-seconds: seven actual `deepseek-flash` requests returned HTTP 200, with streaming,
+`npx playwright test --config tests/live/playwright.config.ts` passed in 33.7
+seconds: eight actual `deepseek-flash` requests returned HTTP 200, with streaming,
 `thinking: { type: "enabled" }` and `reasoning_effort: "high"`. It observed
-reasoning deltas and reasoning retained in tool follow-ups, verified all journey
-checks above, and removed its temporary runtime resources. This records one
+reasoning deltas and reasoning retained on assistant tool calls in follow-ups,
+verified all journey checks above, and removed its temporary runtime resources. This records one
 model sample; OpenCode Go and live worker SIGKILL were not performed.
 
 ## Retiring an older installation

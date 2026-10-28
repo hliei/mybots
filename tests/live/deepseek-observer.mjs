@@ -17,7 +17,10 @@ globalThis.fetch = async (input, init) => {
     thinking: body.thinking,
     reasoningEffort: body.reasoning_effort,
     previousReasoning: body.messages.some(
-      (message) => message.role === "assistant" && Boolean(message.reasoning_content),
+      (message) =>
+        message.role === "assistant" &&
+        message.tool_calls?.length > 0 &&
+        Boolean(message.reasoning_content),
     ),
     toolResults: body.messages.filter((message) => message.role === "tool").length,
   });

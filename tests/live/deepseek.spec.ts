@@ -8,6 +8,7 @@ import type { Bot, ChatView } from "@mybots/contracts";
 import { ProductDatabase } from "@mybots/db";
 import { DockerSandbox } from "@mybots/sandbox";
 import { expect, test } from "@playwright/test";
+import { setSecretInput } from "../secret-input.ts";
 
 const exec = promisify(execFile);
 
@@ -93,10 +94,10 @@ test("DeepSeek streams, uses tools and retains a preview through Stop and reopen
       return response.json();
     }
     await page.goto(app.url);
-    await page.getByLabel("Connection credential").fill(credential);
+    await setSecretInput(page.getByLabel("Connection credential"), credential);
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await page.getByRole("button", { name: "Provider settings", exact: true }).click();
-    await page.getByLabel("DeepSeek API key", { exact: true }).fill(key);
+    await setSecretInput(page.getByLabel("DeepSeek API key", { exact: true }), key);
     await page.getByRole("button", { name: "Save DeepSeek key", exact: true }).click();
     await expect(page.locator("#deepseek-status")).toContainText("Saved locally");
     expect((await page.getByLabel("DeepSeek API key", { exact: true }).inputValue()).length).toBe(
