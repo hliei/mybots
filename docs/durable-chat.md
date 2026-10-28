@@ -438,9 +438,46 @@ not proof of an actual provider's current availability.
 Actual DeepSeek and Go requests are not performed by either command. They require
 separate explicit service-use authorization and usable credentials/subscriptions.
 Record each observed model/protocol/options and outcome separately; one live
-model cannot validate an entire catalog. Until that separate acceptance is run,
-authentication, subscription availability and live model/tool quality remain
-unverified. Controlled-model success does not establish actual-provider acceptance.
+model cannot validate an entire catalog. Authentication, subscription availability
+and live model/tool quality remain unverified for unsampled providers/models.
+Controlled-model success does not establish actual-provider acceptance.
+
+### Opt-in DeepSeek acceptance
+
+With explicit authorization to consume DeepSeek tokens, make `DEEPSEEK_API_KEY`
+available in the invoking shell and run `npm run test:live:deepseek`. This builds
+the application and uses a separate Playwright configuration under `tests/live/`;
+neither ordinary tests, browser checks nor `verify` discovers it. It requires
+Docker, the current Computer image and Chromium. Run without `NODE_OPTIONS` or
+provider fixtures so the requests reach the fixed production endpoint.
+
+The finite journey selects `deepseek/deepseek-flash` through Web, saves the key
+through Provider settings, observes visible streaming and thinking/tool exchanges,
+checks file effects and a host-browser preview, presses Stop on a running command,
+and reopens the application with its history and earlier preview intact. It then
+stops the service and checks that its address is no longer claimed live. The test
+has a five-minute deadline, no automatic retries and a 16-request limit per worker.
+Model behavior and provider availability can cause an honest failure.
+
+Only generated acceptance text is sent. Temporary data, keys, Computer and preview
+resources belong to this run and are cleaned up. The child application receives
+the key through Web settings, not the `DEEPSEEK_API_KEY` environment variable.
+The wire observer forwards the real response stream and records only model/options,
+HTTP status, event types and the presence of prior reasoning/tool results. It does
+not log credentials, prompts, responses or reasoning text. Successful output
+includes a sanitized evidence attachment with the source revision and run scope.
+OpenCode Go, other DeepSeek models and live worker-crash injection are excluded;
+controlled Docker checks remain the evidence for deterministic crash windows.
+
+The authorized October 29, 2026 run passed against application revision
+`836ec940714fe510e05b0aeca2efe240ba9fa589` on macOS arm64, Node.js 24.21.0 and
+Docker 28.5.1 with `mybots-computer:local`. After building, the focused command
+`npx playwright test --config tests/live/playwright.config.ts` passed in 20.7
+seconds: seven actual `deepseek-flash` requests returned HTTP 200, with streaming,
+`thinking: { type: "enabled" }` and `reasoning_effort: "high"`. It observed
+reasoning deltas and reasoning retained in tool follow-ups, verified all journey
+checks above, and removed its temporary runtime resources. This records one
+model sample; OpenCode Go and live worker SIGKILL were not performed.
 
 ## Retiring an older installation
 

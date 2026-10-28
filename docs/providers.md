@@ -61,3 +61,6 @@ removal between requests in one turn. Built Web verifies empty-key startup,
 settings forms, availability refresh and absence of keys in browser storage.
 These checks establish adapter integration, not real provider acceptance or
 subscription availability. No live inference is part of ordinary verification.
+The separate [opt-in DeepSeek journey](durable-chat.md#opt-in-deepseek-acceptance)
+uses real requests with explicit authorization; its single sampled model does
+not establish access to other models or OpenCode Go.

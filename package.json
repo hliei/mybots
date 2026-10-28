@@ -21,6 +21,7 @@
     "dev": "node --conditions=mybots-source apps/api/src/index.ts",
     "start": "node apps/api/dist/index.js",
     "test:browser": "npm run build && playwright test",
+    "test:live:deepseek": "npm run build && playwright test --config tests/live/playwright.config.ts",
     "build:computer": "docker build -t mybots-computer:local -f container/Computer.Dockerfile ."
   },
   "devDependencies": {
